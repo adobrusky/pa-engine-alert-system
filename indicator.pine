@@ -543,11 +543,17 @@ shortRiskValid = shortRiskPoints > 0 and not na(shortRiskDollarsPerContract) and
 
 // ===================== Alert Conditions =====================
 bullScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and thesisState == 1 and alertOnBullSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bullTierAllowed and longScalpSetupQualified and longRiskValid
+bullSwingAlert = bullScalpAlert and not bullHighVolumeAlertSignal
+bullScalpOnlyAlert = bullScalpAlert and bullHighVolumeAlertSignal
+bullAlertLabelTitle = bullSwingAlert ? "LONG SWING" : "LONG SCALP"
 
 bearScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and thesisState == -1 and alertOnBearSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bearTierAllowed and shortScalpSetupQualified and shortRiskValid
+bearSwingAlert = bearScalpAlert and not bearHighVolumeAlertSignal
+bearScalpOnlyAlert = bearScalpAlert and bearHighVolumeAlertSignal
+bearAlertLabelTitle = bearSwingAlert ? "SHORT SWING" : "SHORT SCALP"
 
 plotshape(
-     showHistoricalAlertMarkers and bullScalpAlert,
+     showHistoricalAlertMarkers and bullScalpOnlyAlert,
      title="Historical Bull Scalp Alert",
      style=shape.labelup,
      location=location.belowbar,
@@ -558,7 +564,18 @@ plotshape(
 )
 
 plotshape(
-     showHistoricalAlertMarkers and bearScalpAlert,
+     showHistoricalAlertMarkers and bullSwingAlert,
+     title="Historical Bull Swing Alert",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=color.new(color.lime, 0),
+     text="LONG\nSWING",
+     textcolor=color.white,
+     size=size.tiny
+)
+
+plotshape(
+     showHistoricalAlertMarkers and bearScalpOnlyAlert,
      title="Historical Bear Scalp Alert",
      style=shape.labeldown,
      location=location.abovebar,
@@ -568,11 +585,22 @@ plotshape(
      size=size.tiny
 )
 
+plotshape(
+     showHistoricalAlertMarkers and bearSwingAlert,
+     title="Historical Bear Swing Alert",
+     style=shape.labeldown,
+     location=location.abovebar,
+     color=color.new(color.red, 0),
+     text="SHORT\nSWING",
+     textcolor=color.white,
+     size=size.tiny
+)
+
 if showAlertEntryLabels and bullScalpAlert
     label.new(
          bar_index,
          low,
-         "LONG SCALP\n" +
+         bullAlertLabelTitle + "\n" +
          "Entry: " + f_priceText(longEntryPrice) + "\n" +
          "Stop: " + f_priceText(longStopPrice) + "\n" +
          "Contracts: " + str.tostring(longContracts) + "\n" +
@@ -587,7 +615,7 @@ if showAlertEntryLabels and bearScalpAlert
     label.new(
          bar_index,
          high,
-         "SHORT SCALP\n" +
+         bearAlertLabelTitle + "\n" +
          "Entry: " + f_priceText(shortEntryPrice) + "\n" +
          "Stop: " + f_priceText(shortStopPrice) + "\n" +
          "Contracts: " + str.tostring(shortContracts) + "\n" +
@@ -599,26 +627,27 @@ if showAlertEntryLabels and bearScalpAlert
     )
 
 // ===================== Alert Message =====================
-f_buildScalpAlertMessage(_direction, _signalTier, _signalVolumeType, _entryType, _selectedLevelName, _selectedLevelPrice, _entryPrice, _stopPrice, _riskPoints, _riskDollarsPerContract, _contracts) =>
-    "PA ENGINE SCALP ALERT\n" +
+f_buildScalpAlertMessage(_alertLabelTitle, _direction, _signalTier, _signalVolumeType, _entryType, _selectedLevelName, _selectedLevelPrice, _entryPrice, _stopPrice, _riskPoints, _riskDollarsPerContract, _contracts) =>
+    "PA ENGINE " + _alertLabelTitle + " ALERT\n" +
      "Symbol: " + syminfo.ticker + "\n" +
      "Timeframe: " + timeframe.period + "\n" +
+     "Alert Type: " + _alertLabelTitle + "\n" +
      "Direction: " + _direction + "\n" +
      "Thesis: " + f_thesisText(thesisState) + "\n" +
      "Opening Range Status: " + openingRangeStatus + "\n" +
      "Signal Tier: " + _signalTier + "\n" +
+     "Signal Volume: " + _signalVolumeType + "\n" +
      "Entry Type: " + _entryType + "\n" +
      "Selected Level Name: " + _selectedLevelName + "\n" +
-     "Selected Level Price: " + f_priceText(_selectedLevelPrice) + "\n" +
      "Entry Price: " + f_priceText(_entryPrice) + "\n" +
      "Stop Price: " + f_priceText(_stopPrice) + "\n" +
      "Risk Points: " + f_numberText(_riskPoints) + "\n" +
      "Contracts: " + str.tostring(_contracts)
 
 if bullScalpAlert
-    alert(f_buildScalpAlertMessage("Long", bullSignalTier, bullSignalVolumeType, longEntryType, longAlertLevelName, longAlertLevelPrice, longEntryPrice, longStopPrice, longRiskPoints, longRiskDollarsPerContract, longContracts), alert.freq_once_per_bar_close)
+    alert(f_buildScalpAlertMessage(bullAlertLabelTitle, "Long", bullSignalTier, bullSignalVolumeType, longEntryType, longAlertLevelName, longAlertLevelPrice, longEntryPrice, longStopPrice, longRiskPoints, longRiskDollarsPerContract, longContracts), alert.freq_once_per_bar_close)
 else if bearScalpAlert
-    alert(f_buildScalpAlertMessage("Short", bearSignalTier, bearSignalVolumeType, shortEntryType, shortAlertLevelName, shortAlertLevelPrice, shortEntryPrice, shortStopPrice, shortRiskPoints, shortRiskDollarsPerContract, shortContracts), alert.freq_once_per_bar_close)
+    alert(f_buildScalpAlertMessage(bearAlertLabelTitle, "Short", bearSignalTier, bearSignalVolumeType, shortEntryType, shortAlertLevelName, shortAlertLevelPrice, shortEntryPrice, shortStopPrice, shortRiskPoints, shortRiskDollarsPerContract, shortContracts), alert.freq_once_per_bar_close)
 
 plot(thesisLevel > 0 ? thesisLevel : na, "Scalp Thesis Level", color=color.new(color.yellow, 0), linewidth=2, style=plot.style_linebr)
 plot(showOpeningRange ? openingRangeDisplayHigh : na, "15m Opening Range High", color=color.new(color.aqua, 0), linewidth=1, style=plot.style_linebr)
