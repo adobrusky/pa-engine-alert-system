@@ -1,0 +1,666 @@
+//@version=6
+indicator("PA Engine Alert System", shorttitle = "PA Engine Alerts", overlay=true, calc_bars_count=1000, max_bars_back = 1000, max_lines_count=500, max_labels_count=500)
+
+// ===================== User Inputs =====================
+
+// ── Signal Display ──
+showBullSignals         = input.bool(true,  title="Show Bull Signals",            group="Signal Display", tooltip="Enable bullish pressure signal markers and signal-overlap indications.")
+showBearSignals         = input.bool(true,  title="Show Bear Signals",            group="Signal Display", tooltip="Enable bearish pressure signal markers and signal-overlap indications.")
+showSetupSignals        = input.bool(true,  title="Setup Signals (Circle)",       group="Signal Display", tooltip="Setup-quality bar — not standalone actionable. Best used with failed-breakout context to identify potential reversals.")
+showIgnitionSignals     = input.bool(true,  title="Ignition Signals (Triangle)",  group="Signal Display", tooltip="Actionable momentum signal that can stand on its own without requiring failed-breakout context.")
+showStrongIgnitions     = input.bool(true,  title="Strong Ignitions (Diamond)",   group="Signal Display", tooltip="Strongest ignition signal — same concept as Ignition but with higher bar quality/strength. Useful for bias shifts through key levels.")
+showSignalLegend        = input.bool(false, title="Show Signal Legend",           group="Signal Display", tooltip="Display a small on-chart legend mapping shapes to signal tiers.")
+
+// ── Signal Tuning ──
+onlyHighVolumeSignals         = input.bool(false,  title="Pressure: Only Show High-Volume Signals", group="Signal Tuning", tooltip="When enabled, pressure bull/bear signals are shown only when volume is greater than the prior bar.")
+maxLookback                   = input.int(20,      title="Pressure: Max Lookback",                  group="Signal Tuning", minval=3, tooltip="Maximum number of bars to scan backward when finding prior up/down legs for fallback midpoint checks.")
+pressureBodyWickThreshold     = input.float(0.40,  title="Pressure: Body/Wick Range Threshold",     group="Signal Tuning", minval=0.05, maxval=0.95, step=0.05, tooltip="Minimum fraction of the full bar range required for body or wick qualification in pressure bar quality checks (default 40%).")
+acceptableVolumeThreshold     = input(0.33,        title="Acceptable Volume Threshold",             group="Signal Tuning", tooltip="Set the minimum volume threshold as a multiple of the volume average (e.g., 0.33x volume average). Bars with volume below this threshold will not display indications.")
+volumeMetricLength            = input.int(50,      title="Volume SMA Length",                       group="Signal Tuning", minval=10, maxval=500, tooltip="Set the length for the volume SMA calculation.")
+acceptableVolatilityThreshold = input(0.33,        title="Acceptable Volatility Threshold",         group="Signal Tuning", tooltip="Set the minimum volatility threshold as a multiple of the ATR (e.g., 0.5x ATR). Bars with volatility below this threshold will not display indications.")
+atrLength                     = input(14,          title="ATR Length",                              group="Signal Tuning", tooltip="Set the length of the ATR calculation.")
+
+// ===================== Scalp Alert Inputs =====================
+enableScalpAlerts          = input.bool(true, title="Enable Scalp Alerts", group="Scalp Alerts")
+requireLevelBreakSetup     = input.bool(false, title="Require Level Break Setup", group="Scalp Alerts", tooltip="Require scalp alerts to have a signal bar that touches an enabled scalp entry level and closes beyond it.")
+requireTwoBarSetup         = input.bool(false, title="Require Two-Bar Setup", group="Scalp Alerts", tooltip="Require scalp alerts to have no qualifying level break plus a trend-body signal bar with confirmation from one of the prior two bars.")
+thesisLevel                = input.float(0.0, title="Thesis Level", step=0.25, group="Scalp Alerts")
+initialThesis              = input.string("Neutral", title="Initial Thesis", options=["Neutral", "Long", "Short"], group="Scalp Alerts")
+showThesisLabel            = input.bool(true, title="Show Thesis Status Table", group="Scalp Alerts")
+showOpeningRange           = input.bool(true, title="Show Opening Range", group="Scalp Alerts")
+requireOpeningRangeBreak   = input.bool(true, title="Require Opening Range Break", group="Scalp Alerts")
+waitFirst15Minutes         = input.bool(true, title="Wait First 15 Minutes", group="Scalp Alerts")
+alertOnBullSignals         = input.bool(true, title="Alert On Bull Signals", group="Scalp Alerts")
+alertOnBearSignals         = input.bool(true, title="Alert On Bear Signals", group="Scalp Alerts")
+alertVolumeMode            = input.string("High Volume Only", title="Alert Volume Mode", options=["High Volume Only", "All Signals"], group="Scalp Alerts")
+alertSetupSignals          = input.bool(true, title="Alert Setup Signals", group="Scalp Alerts")
+alertIgnitionSignals       = input.bool(true, title="Alert Ignition Signals", group="Scalp Alerts")
+alertStrongIgnitions       = input.bool(true, title="Alert Strong Ignitions", group="Scalp Alerts")
+showHistoricalAlertMarkers = input.bool(true, title="Show Alert Markers", group="Scalp Alerts")
+showAlertEntryLabels       = input.bool(true, title="Show Alert Entry Labels", group="Scalp Alerts")
+
+useManualOpeningRangeFallback = input.bool(false, title="Use Manual Opening Range Fallback", group="Opening Range Fallback")
+manualOpeningRangeHigh        = input.float(0.0, title="Manual Opening Range High", step=0.25, group="Opening Range Fallback")
+manualOpeningRangeLow         = input.float(0.0, title="Manual Opening Range Low", step=0.25, group="Opening Range Fallback")
+
+usePrevDayHighLevel = input.bool(true, title="Use Previous Day High Level", group="Scalp Entry Levels")
+prevDayHighLevel    = input.float(0.0, title="Previous Day High Level", step=0.25, group="Scalp Entry Levels")
+usePrevDayLowLevel  = input.bool(true, title="Use Previous Day Low Level", group="Scalp Entry Levels")
+prevDayLowLevel     = input.float(0.0, title="Previous Day Low Level", step=0.25, group="Scalp Entry Levels")
+useDailyOpenLevel   = input.bool(true, title="Use Daily Open Level", group="Scalp Entry Levels")
+dailyOpenLevel      = input.float(0.0, title="Daily Open Level", step=0.25, group="Scalp Entry Levels")
+usePremarketHighLevel = input.bool(true, title="Use Premarket High Level", group="Scalp Entry Levels")
+premarketHighLevel    = input.float(0.0, title="Premarket High Level", step=0.25, group="Scalp Entry Levels")
+usePremarketLowLevel  = input.bool(true, title="Use Premarket Low Level", group="Scalp Entry Levels")
+premarketLowLevel     = input.float(0.0, title="Premarket Low Level", step=0.25, group="Scalp Entry Levels")
+useOpeningRangeHighAsEntryLevel = input.bool(true, title="Use Opening Range High As Entry Level", group="Scalp Entry Levels")
+useOpeningRangeLowAsEntryLevel  = input.bool(true, title="Use Opening Range Low As Entry Level", group="Scalp Entry Levels")
+
+tickerInput         = input.string("MES", title="Ticker", options=["MES", "MNQ"], group="Scalp Risk")
+maxRiskDollars      = input.float(215.0, title="Max Risk Dollars", minval=0.0, step=10.0, group="Scalp Risk")
+commissionRoundTrip = input.float(1.24, title="Commission Per Contract, Round Trip", minval=0.0, step=0.01, group="Scalp Risk")
+useMaxContractCap   = input.bool(true, title="Use Max Contract Cap", group="Scalp Risk")
+maxContracts        = input.int(20, title="Max Contracts", minval=1, group="Scalp Risk")
+
+scalpPointValue = tickerInput == "MES" ? 5.0 : 2.0
+scalpTickSize   = 0.25
+
+// ===================== Volume Calculations =====================
+volumeSMA = ta.sma(volume, volumeMetricLength)
+sufficientVolume = na(volume) ? true : volume > volumeSMA * acceptableVolumeThreshold
+
+// ===================== Price Action Calculations =====================
+body = math.abs(close - open)
+bodyHigh = math.max(open, close)
+bodyLow = math.min(open, close)
+barRange = high - low
+upperWick = high - bodyHigh
+lowerWick = bodyLow - low
+
+// ===================== Pressure Signal Helpers =====================
+f_safeRange(_high, _low) =>
+    _r = _high - _low
+    _r > 0 ? _r : na
+
+f_closeInUpperThird(_close, _low, _range) =>
+    not na(_range) and _close >= _low + _range * (2.0 / 3.0)
+
+f_closeInLowerThird(_close, _low, _range) =>
+    not na(_range) and _close <= _low + _range * (1.0 / 3.0)
+
+f_meetsPct(_value, _range, _pct) =>
+    not na(_range) and _value >= _range * _pct
+
+f_dobruskyPressure() =>
+    gapUp   = close[1] < low  ? (low  - close[1]) : 0.0
+    gapDown = close[1] > high ? (close[1] - high) : 0.0
+
+    adjLow  = low  - gapUp
+    adjHigh = high + gapDown
+    rng     = adjHigh - adjLow
+
+    buyPressure  = na(volume) ? na : (rng != 0 ? volume * (close - adjLow) / rng : na)
+    sellPressure = volume - buyPressure
+    [buyPressure, sellPressure]
+
+f_midPriorLegDown(_maxLookback) =>
+    int legStart = na
+    bool hasSeq = false
+
+    for i = 0 to _maxLookback - 1
+        if na(high[i]) or na(high[i + 1])
+            break
+        if high[i] < high[i + 1] or (i == 0 and high[i] >= high[i + 1] and high[i + 1] < high[i + 2])
+            hasSeq := true
+            legStart := i + 1
+        else
+            break
+
+    float legHigh = na
+    float legLow = na
+    float mid = na
+
+    if hasSeq and not na(legStart)
+        for j = 0 to _maxLookback - 1
+            if j <= legStart
+                legLow := na(legLow) ? low[j] : math.min(legLow, low[j])
+                if j == legStart
+                    legHigh := high[j]
+        mid := (legHigh + legLow) / 2.0
+
+    [mid, legLow, legHigh]
+
+f_midPriorLegUp(_maxLookback) =>
+    int legStart = na
+    bool hasSeq = false
+
+    for i = 0 to _maxLookback - 1
+        if na(low[i]) or na(low[i + 1])
+            break
+        if low[i] > low[i + 1] or (i == 0 and low[i] <= low[i + 1] and low[i + 1] > low[i + 2])
+            hasSeq := true
+            legStart := i + 1
+        else
+            break
+
+    float legLow = na
+    float legHigh = na
+    float mid = na
+
+    if hasSeq and not na(legStart)
+        for j = 0 to _maxLookback - 1
+            if j <= legStart
+                legHigh := na(legHigh) ? high[j] : math.max(legHigh, high[j])
+                if j == legStart
+                    legLow := low[j]
+        mid := (legHigh + legLow) / 2.0
+
+    [mid, legLow, legHigh]
+
+// ===================== Scalp Alert Helpers =====================
+f_roundUpToScalpTick(_price) =>
+    math.ceil(_price / scalpTickSize) * scalpTickSize
+
+f_roundDownToScalpTick(_price) =>
+    math.floor(_price / scalpTickSize) * scalpTickSize
+
+f_initialThesisState(_initialThesis) =>
+    _initialThesis == "Long" ? 1 : _initialThesis == "Short" ? -1 : 0
+
+f_thesisText(_thesisState) =>
+    _thesisState == 1 ? "LONG" : _thesisState == -1 ? "SHORT" : "NEUTRAL"
+
+f_priceText(_price) =>
+    na(_price) ? "N/A" : str.tostring(_price, format.mintick)
+
+f_numberText(_value) =>
+    na(_value) ? "N/A" : str.tostring(_value, "#.##")
+
+f_boolText(_condition) =>
+    _condition ? "true" : "false"
+
+f_tickCount(_value) =>
+    int(math.round(_value / scalpTickSize))
+
+f_isBullBar(_open, _close) =>
+    not na(_open) and not na(_close) and _close > _open
+
+f_isBearBar(_open, _close) =>
+    not na(_open) and not na(_close) and _close < _open
+
+f_bullUpperThirdBar(_open, _high, _low, _close) =>
+    _range = f_safeRange(_high, _low)
+    f_isBullBar(_open, _close) and f_closeInUpperThird(_close, _low, _range)
+
+f_bearLowerThirdBar(_open, _high, _low, _close) =>
+    _range = f_safeRange(_high, _low)
+    f_isBearBar(_open, _close) and f_closeInLowerThird(_close, _low, _range)
+
+f_longLevelTouched(_enabled, _levelPrice, _signalLow, _signalHigh, _signalClose) =>
+    _enabled and _levelPrice > 0 and _levelPrice >= _signalLow and _levelPrice <= _signalHigh and _signalLow <= _levelPrice and _signalClose > _levelPrice
+
+f_shortLevelTouched(_enabled, _levelPrice, _signalLow, _signalHigh, _signalClose) =>
+    _enabled and _levelPrice > 0 and _levelPrice >= _signalLow and _levelPrice <= _signalHigh and _signalHigh >= _levelPrice and _signalClose < _levelPrice
+
+f_pickLongLevel(bool _enabled, float _levelPrice, string _levelName, float _signalLow, float _signalHigh, float _signalClose, float _bestPrice, string _bestName) =>
+    float nextPrice = _bestPrice
+    string nextName = _bestName
+    if f_longLevelTouched(_enabled, _levelPrice, _signalLow, _signalHigh, _signalClose) and (na(nextPrice) or _levelPrice > nextPrice)
+        nextPrice := _levelPrice
+        nextName := _levelName
+    [nextPrice, nextName]
+
+f_pickShortLevel(bool _enabled, float _levelPrice, string _levelName, float _signalLow, float _signalHigh, float _signalClose, float _bestPrice, string _bestName) =>
+    float nextPrice = _bestPrice
+    string nextName = _bestName
+    if f_shortLevelTouched(_enabled, _levelPrice, _signalLow, _signalHigh, _signalClose) and (na(nextPrice) or _levelPrice < nextPrice)
+        nextPrice := _levelPrice
+        nextName := _levelName
+    [nextPrice, nextName]
+
+// ===================== ATR Calculation (RTH only) =====================
+var float atrSum = 0.0
+var trArray = array.new_float(0)
+isRTH = time(timeframe.period, "0930-1600:23456", "America/New_York") != 0 or timeframe.isdwm
+trValue = ta.tr(true)
+atrValue = 0.0
+if isRTH
+    atrSum += trValue
+    array.push(trArray, trValue)
+    if array.size(trArray) > atrLength
+        removed = array.shift(trArray)
+        atrSum -= removed
+    atrValue := atrSum / array.size(trArray)
+else
+    atrValue := nz(atrValue[1])
+
+sufficientVolatility = barRange >= atrValue * acceptableVolatilityThreshold
+
+// ===================== RTH / Opening Range Logic =====================
+scalpRTHTime = time(timeframe.period, "0930-1600:23456", "America/New_York")
+openingRangeTime = time(timeframe.period, "0930-0945:23456", "America/New_York")
+inScalpRTHSession = not na(scalpRTHTime)
+inOpeningRangeWindow = inScalpRTHSession and not na(openingRangeTime)
+newScalpRTHSession = inScalpRTHSession and (bar_index == 0 or not inScalpRTHSession[1])
+
+var float autoOpeningRangeHigh = na
+var float autoOpeningRangeLow = na
+var bool openingRangeComplete = false
+var bool openingRangeHasBroken = false
+var string openingRangeBreakDirection = "None"
+
+if newScalpRTHSession
+    autoOpeningRangeHigh := na
+    autoOpeningRangeLow := na
+    openingRangeComplete := false
+    openingRangeHasBroken := false
+    openingRangeBreakDirection := "None"
+
+if inOpeningRangeWindow
+    autoOpeningRangeHigh := na(autoOpeningRangeHigh) ? high : math.max(autoOpeningRangeHigh, high)
+    autoOpeningRangeLow := na(autoOpeningRangeLow) ? low : math.min(autoOpeningRangeLow, low)
+
+if inScalpRTHSession and not inOpeningRangeWindow and not openingRangeComplete and not na(autoOpeningRangeHigh) and not na(autoOpeningRangeLow)
+    openingRangeComplete := true
+
+openingRangeHigh = useManualOpeningRangeFallback and manualOpeningRangeHigh > 0 ? manualOpeningRangeHigh : autoOpeningRangeHigh
+openingRangeLow = useManualOpeningRangeFallback and manualOpeningRangeLow > 0 ? manualOpeningRangeLow : autoOpeningRangeLow
+openingRangeReady = not na(openingRangeHigh) and not na(openingRangeLow)
+openingRangeLevelsReady = openingRangeReady and (useManualOpeningRangeFallback or openingRangeComplete)
+openingRangeDisplayHigh = openingRangeLevelsReady ? openingRangeHigh : na
+openingRangeDisplayLow = openingRangeLevelsReady ? openingRangeLow : na
+
+if barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow
+    if not openingRangeHasBroken and close > openingRangeHigh
+        openingRangeHasBroken := true
+        openingRangeBreakDirection := "First Break Up"
+    else if not openingRangeHasBroken and close < openingRangeLow
+        openingRangeHasBroken := true
+        openingRangeBreakDirection := "First Break Down"
+
+first15FilterAllowsAlerts = not waitFirst15Minutes or (inScalpRTHSession and not inOpeningRangeWindow)
+
+openingRangeAllowsAlerts = not requireOpeningRangeBreak or openingRangeHasBroken
+
+openingRangeStatus = not openingRangeLevelsReady ? "WAITING" : openingRangeHasBroken ? "BROKEN - " + openingRangeBreakDirection : "WAITING FOR ANY BREAK"
+
+// ===================== Thesis State Logic =====================
+var int thesisState = f_initialThesisState(initialThesis)
+var bool pendingBullClearance = false
+var bool pendingBearClearance = false
+var int pendingBullExpirationBar = na
+var int pendingBearExpirationBar = na
+
+if newScalpRTHSession
+    thesisState := f_initialThesisState(initialThesis)
+    pendingBullClearance := false
+    pendingBearClearance := false
+    pendingBullExpirationBar := na
+    pendingBearExpirationBar := na
+
+validThesisLevel = thesisLevel > 0
+thesisRangeValid = barRange > 0
+thesisTolerance = scalpTickSize * 0.1
+
+bullLowerThirdBoundaryRaw = low + barRange * (1.0 / 3.0)
+bullUpperThirdCloseBoundaryRaw = low + barRange * (2.0 / 3.0)
+bearUpperThirdBoundaryRaw = high - barRange * (1.0 / 3.0)
+bearLowerThirdCloseBoundaryRaw = low + barRange * (1.0 / 3.0)
+bullLowerThirdBoundary = f_roundUpToScalpTick(bullLowerThirdBoundaryRaw)
+bullUpperThirdCloseBoundary = f_roundUpToScalpTick(bullUpperThirdCloseBoundaryRaw)
+bearUpperThirdBoundary = f_roundDownToScalpTick(bearUpperThirdBoundaryRaw)
+bearLowerThirdCloseBoundary = f_roundUpToScalpTick(bearLowerThirdCloseBoundaryRaw)
+barRangeTicks = math.max(f_tickCount(barRange), 1)
+bodyTicks = f_tickCount(body)
+closeAboveLowTicks = f_tickCount(close - low)
+bullRangeAboveThesisTicks = f_tickCount(high - thesisLevel)
+bearRangeBelowThesisTicks = f_tickCount(thesisLevel - low)
+
+strongThesisBody = body + thesisTolerance >= barRange * 0.5 or bodyTicks * 2 >= barRangeTicks
+strongBullCloseInUpperThird = close + thesisTolerance >= bullUpperThirdCloseBoundary or closeAboveLowTicks * 3 >= barRangeTicks * 2
+strongBearCloseInLowerThird = close - thesisTolerance <= bearLowerThirdCloseBoundary or closeAboveLowTicks * 3 <= barRangeTicks
+
+strongBullThesisBar = validThesisLevel and thesisRangeValid and close > open and strongThesisBody and strongBullCloseInUpperThird and close > thesisLevel
+strongBearThesisBar = validThesisLevel and thesisRangeValid and close < open and strongThesisBody and strongBearCloseInLowerThird and close < thesisLevel
+
+bullTwoThirdsBeyondLevel = validThesisLevel and thesisRangeValid and thesisLevel <= bullLowerThirdBoundary + thesisTolerance
+bearTwoThirdsBeyondLevel = validThesisLevel and thesisRangeValid and thesisLevel >= bearUpperThirdBoundary - thesisTolerance
+
+bullDirectClearance = strongBullThesisBar and (bullTwoThirdsBeyondLevel or low > thesisLevel)
+bearDirectClearance = strongBearThesisBar and (bearTwoThirdsBeyondLevel or high < thesisLevel)
+bullPendingFollowThrough = validThesisLevel and pendingBullClearance and not na(pendingBullExpirationBar) and bar_index <= pendingBullExpirationBar and low > thesisLevel
+bearPendingFollowThrough = validThesisLevel and pendingBearClearance and not na(pendingBearExpirationBar) and bar_index <= pendingBearExpirationBar and high < thesisLevel
+
+if barstate.isconfirmed
+    if pendingBullClearance and not na(pendingBullExpirationBar) and bar_index > pendingBullExpirationBar
+        pendingBullClearance := false
+        pendingBullExpirationBar := na
+    if pendingBearClearance and not na(pendingBearExpirationBar) and bar_index > pendingBearExpirationBar
+        pendingBearClearance := false
+        pendingBearExpirationBar := na
+
+    bool bullThesisCleared = bullDirectClearance or bullPendingFollowThrough
+    bool bearThesisCleared = bearDirectClearance or bearPendingFollowThrough
+
+    if bullThesisCleared and not bearThesisCleared
+        thesisState := 1
+        pendingBullClearance := false
+        pendingBearClearance := false
+        pendingBullExpirationBar := na
+        pendingBearExpirationBar := na
+    else if bearThesisCleared and not bullThesisCleared
+        thesisState := -1
+        pendingBullClearance := false
+        pendingBearClearance := false
+        pendingBullExpirationBar := na
+        pendingBearExpirationBar := na
+    else
+        if strongBullThesisBar and not bullDirectClearance
+            pendingBullClearance := true
+            pendingBullExpirationBar := bar_index + 2
+        if strongBearThesisBar and not bearDirectClearance
+            pendingBearClearance := true
+            pendingBearExpirationBar := bar_index + 2
+        if not validThesisLevel
+            pendingBullClearance := false
+            pendingBearClearance := false
+            pendingBullExpirationBar := na
+            pendingBearExpirationBar := na
+
+// ===================== Pre-computed Conditions =====================
+sufficientVolumeAndVolatility = sufficientVolume and sufficientVolatility
+
+// ===================== Pressure Signal Conditions =====================
+pressureRange = f_safeRange(high, low)
+closeUpperThird = f_closeInUpperThird(close, low, pressureRange)
+closeLowerThird = f_closeInLowerThird(close, low, pressureRange)
+
+isBodyThreshold = f_meetsPct(body, pressureRange, pressureBodyWickThreshold)
+isMostlyBody = f_meetsPct(body, pressureRange, 0.5)
+isLowerWickThreshold = f_meetsPct(lowerWick, pressureRange, pressureBodyWickThreshold)
+isUpperWickThreshold = f_meetsPct(upperWick, pressureRange, pressureBodyWickThreshold)
+
+bullBarQuality = closeUpperThird and (isBodyThreshold or isLowerWickThreshold)
+bearBarQuality = closeLowerThird and (isBodyThreshold or isUpperWickThreshold)
+
+[buyPressure, sellPressure] = f_dobruskyPressure()
+
+pressureReady = not na(buyPressure) and not na(sellPressure) and not na(buyPressure[1]) and not na(sellPressure[1])
+priorDominantlyBear = pressureReady and (sellPressure[1] > buyPressure[1])
+priorDominantlyBull = pressureReady and (buyPressure[1] >= sellPressure[1])
+
+bullPressureA = pressureReady and ((priorDominantlyBear and buyPressure > sellPressure[1]) or (priorDominantlyBull and buyPressure > buyPressure[1]))
+bearPressureA = pressureReady and ((priorDominantlyBull and sellPressure > buyPressure[1]) or (priorDominantlyBear and sellPressure > sellPressure[1]))
+
+[midDown, legDownLow, legDownHigh] = f_midPriorLegDown(maxLookback)
+[midUp, legUpLow, legUpHigh] = f_midPriorLegUp(maxLookback)
+
+bullFallbackB = not na(midDown) and close > midDown
+bearFallbackB = not na(midUp) and close < midUp
+
+bullPressurePass = (bullPressureA and not na(volume)) or (bullFallbackB and isBodyThreshold)
+bearPressurePass = (bearPressureA and not na(volume)) or (bearFallbackB and isBodyThreshold)
+isHighVolume = not na(volume) and volume > volume[1]
+
+bullSignalBase = sufficientVolumeAndVolatility and bullBarQuality
+bearSignalBase = sufficientVolumeAndVolatility and bearBarQuality
+
+bullSignalHighVol = bullSignalBase and isHighVolume
+bearSignalHighVol = bearSignalBase and isHighVolume
+bullSignalNormalVol = bullSignalBase and bullPressurePass and not isHighVolume and not onlyHighVolumeSignals
+bearSignalNormalVol = bearSignalBase and bearPressurePass and not isHighVolume and not onlyHighVolumeSignals
+
+// ===================== Plotting =====================
+plotBullSignalHighVol = showBullSignals and bullSignalHighVol
+plotBullSignalNormalVol = showBullSignals and bullSignalNormalVol
+plotBearSignalHighVol = showBearSignals and bearSignalHighVol
+plotBearSignalNormalVol = showBearSignals and bearSignalNormalVol
+
+hasBullSignal = plotBullSignalHighVol or plotBullSignalNormalVol
+hasBearSignal = plotBearSignalHighVol or plotBearSignalNormalVol
+hasSignal = hasBullSignal or hasBearSignal
+onlyBullSignal = hasBullSignal
+onlyBearSignal = hasBearSignal
+
+// Confirmed signals close beyond the prior bar extreme; unconfirmed keep signal logic but use alternate markers.
+bullSignalConfirmed = close > high[1]
+bearSignalConfirmed = close < low[1]
+
+// Signal-tier visibility filters
+plotBullHV_diamond  = plotBullSignalHighVol and showStrongIgnitions
+plotBullHV_tri      = plotBullSignalHighVol and showIgnitionSignals
+plotBullHV_circle   = plotBullSignalHighVol and showSetupSignals
+plotBearHV_diamond  = plotBearSignalHighVol and showStrongIgnitions
+plotBearHV_tri      = plotBearSignalHighVol and showIgnitionSignals
+plotBearHV_circle   = plotBearSignalHighVol and showSetupSignals
+plotBullNV_diamond  = plotBullSignalNormalVol and showStrongIgnitions
+plotBullNV_tri      = plotBullSignalNormalVol and showIgnitionSignals
+plotBullNV_circle   = plotBullSignalNormalVol and showSetupSignals
+plotBearNV_diamond  = plotBearSignalNormalVol and showStrongIgnitions
+plotBearNV_tri      = plotBearSignalNormalVol and showIgnitionSignals
+plotBearNV_circle   = plotBearSignalNormalVol and showSetupSignals
+
+// ===================== Alert Volume Filter Logic =====================
+bullHighVolumeAlertSignal = bullSignalHighVol
+bearHighVolumeAlertSignal = bearSignalHighVol
+bullNormalVolumeAlertSignal = alertVolumeMode == "All Signals" and bullSignalNormalVol
+bearNormalVolumeAlertSignal = alertVolumeMode == "All Signals" and bearSignalNormalVol
+bullVolumeAllowedSignal = bullHighVolumeAlertSignal or bullNormalVolumeAlertSignal
+bearVolumeAllowedSignal = bearHighVolumeAlertSignal or bearNormalVolumeAlertSignal
+bullSignalVolumeType = bullHighVolumeAlertSignal ? "High Volume" : "Normal Volume"
+bearSignalVolumeType = bearHighVolumeAlertSignal ? "High Volume" : "Normal Volume"
+
+bullAlertSetupTier = bullVolumeAllowedSignal and not bullSignalConfirmed
+bullAlertIgnitionTier = bullVolumeAllowedSignal and bullSignalConfirmed and not isMostlyBody
+bullAlertStrongIgnitionTier = bullVolumeAllowedSignal and bullSignalConfirmed and isMostlyBody
+bearAlertSetupTier = bearVolumeAllowedSignal and not bearSignalConfirmed
+bearAlertIgnitionTier = bearVolumeAllowedSignal and bearSignalConfirmed and not isMostlyBody
+bearAlertStrongIgnitionTier = bearVolumeAllowedSignal and bearSignalConfirmed and isMostlyBody
+
+bullTierAllowed = (alertSetupSignals and bullAlertSetupTier) or (alertIgnitionSignals and bullAlertIgnitionTier) or (alertStrongIgnitions and bullAlertStrongIgnitionTier)
+bearTierAllowed = (alertSetupSignals and bearAlertSetupTier) or (alertIgnitionSignals and bearAlertIgnitionTier) or (alertStrongIgnitions and bearAlertStrongIgnitionTier)
+bullSignalTier = bullAlertStrongIgnitionTier ? "Strong Ignition" : bullAlertIgnitionTier ? "Ignition" : bullAlertSetupTier ? "Setup" : "N/A"
+bearSignalTier = bearAlertStrongIgnitionTier ? "Strong Ignition" : bearAlertIgnitionTier ? "Ignition" : bearAlertSetupTier ? "Setup" : "N/A"
+
+// ===================== Manual Level Priority Logic =====================
+scalpSignalHigh = high
+scalpSignalLow = low
+scalpSignalClose = close
+scalpEntry50Raw = (scalpSignalHigh + scalpSignalLow) / 2.0
+longEntry50 = f_roundDownToScalpTick(scalpEntry50Raw)
+shortEntry50 = f_roundUpToScalpTick(scalpEntry50Raw)
+float noSelectedLevelPrice = na
+string noSelectedLevelName = "N/A"
+
+[longGroup1AfterPDHPrice, longGroup1AfterPDHName] = f_pickLongLevel(usePrevDayHighLevel, prevDayHighLevel, "PDH", scalpSignalLow, scalpSignalHigh, scalpSignalClose, noSelectedLevelPrice, noSelectedLevelName)
+[longGroup1Price, longGroup1Name] = f_pickLongLevel(usePrevDayLowLevel, prevDayLowLevel, "PDL", scalpSignalLow, scalpSignalHigh, scalpSignalClose, longGroup1AfterPDHPrice, longGroup1AfterPDHName)
+[longGroup2Price, longGroup2Name] = f_pickLongLevel(useDailyOpenLevel, dailyOpenLevel, "OP", scalpSignalLow, scalpSignalHigh, scalpSignalClose, noSelectedLevelPrice, noSelectedLevelName)
+[longGroup3AfterPMHPrice, longGroup3AfterPMHName] = f_pickLongLevel(usePremarketHighLevel, premarketHighLevel, "Premarket High", scalpSignalLow, scalpSignalHigh, scalpSignalClose, noSelectedLevelPrice, noSelectedLevelName)
+[longGroup3Price, longGroup3Name] = f_pickLongLevel(usePremarketLowLevel, premarketLowLevel, "Premarket Low", scalpSignalLow, scalpSignalHigh, scalpSignalClose, longGroup3AfterPMHPrice, longGroup3AfterPMHName)
+[longGroup4AfterORHPrice, longGroup4AfterORHName] = f_pickLongLevel(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, "15m OR High", scalpSignalLow, scalpSignalHigh, scalpSignalClose, noSelectedLevelPrice, noSelectedLevelName)
+[longGroup4Price, longGroup4Name] = f_pickLongLevel(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, "15m OR Low", scalpSignalLow, scalpSignalHigh, scalpSignalClose, longGroup4AfterORHPrice, longGroup4AfterORHName)
+
+[shortGroup1AfterPDHPrice, shortGroup1AfterPDHName] = f_pickShortLevel(usePrevDayHighLevel, prevDayHighLevel, "PDH", scalpSignalLow, scalpSignalHigh, scalpSignalClose, noSelectedLevelPrice, noSelectedLevelName)
+[shortGroup1Price, shortGroup1Name] = f_pickShortLevel(usePrevDayLowLevel, prevDayLowLevel, "PDL", scalpSignalLow, scalpSignalHigh, scalpSignalClose, shortGroup1AfterPDHPrice, shortGroup1AfterPDHName)
+[shortGroup2Price, shortGroup2Name] = f_pickShortLevel(useDailyOpenLevel, dailyOpenLevel, "OP", scalpSignalLow, scalpSignalHigh, scalpSignalClose, noSelectedLevelPrice, noSelectedLevelName)
+[shortGroup3AfterPMHPrice, shortGroup3AfterPMHName] = f_pickShortLevel(usePremarketHighLevel, premarketHighLevel, "Premarket High", scalpSignalLow, scalpSignalHigh, scalpSignalClose, noSelectedLevelPrice, noSelectedLevelName)
+[shortGroup3Price, shortGroup3Name] = f_pickShortLevel(usePremarketLowLevel, premarketLowLevel, "Premarket Low", scalpSignalLow, scalpSignalHigh, scalpSignalClose, shortGroup3AfterPMHPrice, shortGroup3AfterPMHName)
+[shortGroup4AfterORHPrice, shortGroup4AfterORHName] = f_pickShortLevel(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, "15m OR High", scalpSignalLow, scalpSignalHigh, scalpSignalClose, noSelectedLevelPrice, noSelectedLevelName)
+[shortGroup4Price, shortGroup4Name] = f_pickShortLevel(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, "15m OR Low", scalpSignalLow, scalpSignalHigh, scalpSignalClose, shortGroup4AfterORHPrice, shortGroup4AfterORHName)
+
+longSelectedLevelPrice = not na(longGroup1Price) ? longGroup1Price : not na(longGroup2Price) ? longGroup2Price : not na(longGroup3Price) ? longGroup3Price : longGroup4Price
+longSelectedLevelName = not na(longGroup1Price) ? longGroup1Name : not na(longGroup2Price) ? longGroup2Name : not na(longGroup3Price) ? longGroup3Name : not na(longGroup4Price) ? longGroup4Name : "N/A"
+shortSelectedLevelPrice = not na(shortGroup1Price) ? shortGroup1Price : not na(shortGroup2Price) ? shortGroup2Price : not na(shortGroup3Price) ? shortGroup3Price : shortGroup4Price
+shortSelectedLevelName = not na(shortGroup1Price) ? shortGroup1Name : not na(shortGroup2Price) ? shortGroup2Name : not na(shortGroup3Price) ? shortGroup3Name : not na(shortGroup4Price) ? shortGroup4Name : "N/A"
+
+// ===================== Scalp Setup Qualification Logic =====================
+// Level-break setups reuse the enabled scalp entry level checks above. A selected
+// level only exists after the signal bar range includes that level and closes beyond it.
+longLevelBreakSetup = not na(longSelectedLevelPrice)
+shortLevelBreakSetup = not na(shortSelectedLevelPrice)
+
+// Two-bar setups are fallback qualifiers: no qualifying level break, a trend-body
+// signal bar, and one of the prior two bars closing strongly in the signal direction.
+longSignalTrendBar = f_isBullBar(open, close) and isBodyThreshold
+shortSignalTrendBar = f_isBearBar(open, close) and isBodyThreshold
+priorBullUpperThirdBar = f_bullUpperThirdBar(open[1], high[1], low[1], close[1]) or f_bullUpperThirdBar(open[2], high[2], low[2], close[2])
+priorBearLowerThirdBar = f_bearLowerThirdBar(open[1], high[1], low[1], close[1]) or f_bearLowerThirdBar(open[2], high[2], low[2], close[2])
+longTwoBarSetup = not longLevelBreakSetup and longSignalTrendBar and priorBullUpperThirdBar
+shortTwoBarSetup = not shortLevelBreakSetup and shortSignalTrendBar and priorBearLowerThirdBar
+
+// Requirement toggles act as filters. If neither setup is required, preserve the
+// original behavior and allow any alert that otherwise passes the alert conditions.
+requireAnyScalpSetup = requireLevelBreakSetup or requireTwoBarSetup
+longRequiredSetupMatched = (requireLevelBreakSetup and longLevelBreakSetup) or (requireTwoBarSetup and longTwoBarSetup)
+shortRequiredSetupMatched = (requireLevelBreakSetup and shortLevelBreakSetup) or (requireTwoBarSetup and shortTwoBarSetup)
+longScalpSetupQualified = not requireAnyScalpSetup or longRequiredSetupMatched
+shortScalpSetupQualified = not requireAnyScalpSetup or shortRequiredSetupMatched
+
+// ===================== Scalp Entry / Stop / Risk Logic =====================
+longUsePriorityLevel = not na(longSelectedLevelPrice) and longSelectedLevelPrice >= longEntry50 and longSelectedLevelPrice < scalpSignalClose
+shortUsePriorityLevel = not na(shortSelectedLevelPrice) and shortSelectedLevelPrice <= shortEntry50 and shortSelectedLevelPrice > scalpSignalClose
+longEntryType = longUsePriorityLevel ? longSelectedLevelName : "50%"
+shortEntryType = shortUsePriorityLevel ? shortSelectedLevelName : "50%"
+longAlertLevelName = longUsePriorityLevel ? longSelectedLevelName : "N/A"
+shortAlertLevelName = shortUsePriorityLevel ? shortSelectedLevelName : "N/A"
+longAlertLevelPrice = longUsePriorityLevel ? longSelectedLevelPrice : na
+shortAlertLevelPrice = shortUsePriorityLevel ? shortSelectedLevelPrice : na
+
+longEntryPrice = longUsePriorityLevel ? longSelectedLevelPrice : longEntry50
+shortEntryPrice = shortUsePriorityLevel ? shortSelectedLevelPrice : shortEntry50
+longStopPrice = scalpSignalLow - scalpTickSize
+shortStopPrice = scalpSignalHigh + scalpTickSize
+longRiskPoints = longEntryPrice - longStopPrice
+shortRiskPoints = shortStopPrice - shortEntryPrice
+longRiskDollarsPerContract = longRiskPoints > 0 ? longRiskPoints * scalpPointValue + commissionRoundTrip : na
+shortRiskDollarsPerContract = shortRiskPoints > 0 ? shortRiskPoints * scalpPointValue + commissionRoundTrip : na
+longRawContracts = not na(longRiskDollarsPerContract) and longRiskDollarsPerContract > 0 ? int(math.floor(maxRiskDollars / longRiskDollarsPerContract)) : 0
+shortRawContracts = not na(shortRiskDollarsPerContract) and shortRiskDollarsPerContract > 0 ? int(math.floor(maxRiskDollars / shortRiskDollarsPerContract)) : 0
+longContracts = useMaxContractCap ? math.min(longRawContracts, maxContracts) : longRawContracts
+shortContracts = useMaxContractCap ? math.min(shortRawContracts, maxContracts) : shortRawContracts
+longRiskValid = longRiskPoints > 0 and not na(longRiskDollarsPerContract) and longRiskDollarsPerContract > 0 and longContracts >= 1
+shortRiskValid = shortRiskPoints > 0 and not na(shortRiskDollarsPerContract) and shortRiskDollarsPerContract > 0 and shortContracts >= 1
+
+// ===================== Alert Conditions =====================
+bullScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and thesisState == 1 and alertOnBullSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bullTierAllowed and longScalpSetupQualified and longRiskValid
+
+bearScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and thesisState == -1 and alertOnBearSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bearTierAllowed and shortScalpSetupQualified and shortRiskValid
+
+plotshape(
+     showHistoricalAlertMarkers and bullScalpAlert,
+     title="Historical Bull Scalp Alert",
+     style=shape.labelup,
+     location=location.belowbar,
+     color=color.new(color.lime, 0),
+     text="LONG",
+     textcolor=color.white,
+     size=size.tiny
+)
+
+plotshape(
+     showHistoricalAlertMarkers and bearScalpAlert,
+     title="Historical Bear Scalp Alert",
+     style=shape.labeldown,
+     location=location.abovebar,
+     color=color.new(color.red, 0),
+     text="SHORT",
+     textcolor=color.white,
+     size=size.tiny
+)
+
+if showAlertEntryLabels and bullScalpAlert
+    label.new(
+         bar_index,
+         low,
+         "LONG SCALP\n" +
+         "Entry: " + f_priceText(longEntryPrice) + "\n" +
+         "Stop: " + f_priceText(longStopPrice) + "\n" +
+         "Contracts: " + str.tostring(longContracts) + "\n" +
+         "Type: " + longEntryType,
+         style=label.style_label_up,
+         textcolor=color.white,
+         color=color.new(color.lime, 0),
+         size=size.small
+    )
+
+if showAlertEntryLabels and bearScalpAlert
+    label.new(
+         bar_index,
+         high,
+         "SHORT SCALP\n" +
+         "Entry: " + f_priceText(shortEntryPrice) + "\n" +
+         "Stop: " + f_priceText(shortStopPrice) + "\n" +
+         "Contracts: " + str.tostring(shortContracts) + "\n" +
+         "Type: " + shortEntryType,
+         style=label.style_label_down,
+         textcolor=color.white,
+         color=color.new(color.red, 0),
+         size=size.small
+    )
+
+// ===================== Alert Message =====================
+f_buildScalpAlertMessage(_direction, _signalTier, _signalVolumeType, _entryType, _selectedLevelName, _selectedLevelPrice, _entryPrice, _stopPrice, _riskPoints, _riskDollarsPerContract, _contracts) =>
+    "PA ENGINE SCALP ALERT\n" +
+     "Symbol: " + syminfo.ticker + "\n" +
+     "Timeframe: " + timeframe.period + "\n" +
+     "Direction: " + _direction + "\n" +
+     "Thesis: " + f_thesisText(thesisState) + "\n" +
+     "Opening Range Status: " + openingRangeStatus + "\n" +
+     "Signal Tier: " + _signalTier + "\n" +
+     "Entry Type: " + _entryType + "\n" +
+     "Selected Level Name: " + _selectedLevelName + "\n" +
+     "Selected Level Price: " + f_priceText(_selectedLevelPrice) + "\n" +
+     "Entry Price: " + f_priceText(_entryPrice) + "\n" +
+     "Stop Price: " + f_priceText(_stopPrice) + "\n" +
+     "Risk Points: " + f_numberText(_riskPoints) + "\n" +
+     "Contracts: " + str.tostring(_contracts)
+
+if bullScalpAlert
+    alert(f_buildScalpAlertMessage("Long", bullSignalTier, bullSignalVolumeType, longEntryType, longAlertLevelName, longAlertLevelPrice, longEntryPrice, longStopPrice, longRiskPoints, longRiskDollarsPerContract, longContracts), alert.freq_once_per_bar_close)
+else if bearScalpAlert
+    alert(f_buildScalpAlertMessage("Short", bearSignalTier, bearSignalVolumeType, shortEntryType, shortAlertLevelName, shortAlertLevelPrice, shortEntryPrice, shortStopPrice, shortRiskPoints, shortRiskDollarsPerContract, shortContracts), alert.freq_once_per_bar_close)
+
+plot(thesisLevel > 0 ? thesisLevel : na, "Scalp Thesis Level", color=color.new(color.yellow, 0), linewidth=2, style=plot.style_linebr)
+plot(showOpeningRange ? openingRangeDisplayHigh : na, "15m Opening Range High", color=color.new(color.aqua, 0), linewidth=1, style=plot.style_linebr)
+plot(showOpeningRange ? openingRangeDisplayLow : na, "15m Opening Range Low", color=color.new(color.aqua, 0), linewidth=1, style=plot.style_linebr)
+
+// Signals
+plotshape(plotBullHV_diamond and onlyBullSignal and bullSignalConfirmed and isMostlyBody, style=shape.diamond, size=size.small, location=location.belowbar, color=color.lime)
+plotshape(plotBullHV_tri and onlyBullSignal and bullSignalConfirmed and not isMostlyBody, style=shape.triangleup, size=size.small, location=location.belowbar, color=color.lime)
+plotshape(plotBullHV_circle and onlyBullSignal and not bullSignalConfirmed, style=shape.circle, size=size.small, location=location.belowbar, color=color.lime)
+plotshape(plotBearHV_diamond and onlyBearSignal and bearSignalConfirmed and isMostlyBody, style=shape.diamond, size=size.small, location=location.abovebar, color=color.red)
+plotshape(plotBearHV_tri and onlyBearSignal and bearSignalConfirmed and not isMostlyBody, style=shape.triangledown, size=size.small, location=location.abovebar, color=color.red)
+plotshape(plotBearHV_circle and onlyBearSignal and not bearSignalConfirmed, style=shape.circle, size=size.small, location=location.abovebar, color=color.red)
+plotshape(plotBullNV_diamond and onlyBullSignal and bullSignalConfirmed and isMostlyBody, style=shape.diamond, size=size.tiny, location=location.belowbar, color=color.new(color.lime, 55))
+plotshape(plotBullNV_tri and onlyBullSignal and bullSignalConfirmed and not isMostlyBody, style=shape.triangleup, size=size.tiny, location=location.belowbar, color=color.new(color.lime, 55))
+plotshape(plotBullNV_circle and onlyBullSignal and not bullSignalConfirmed, style=shape.circle, size=size.tiny, location=location.belowbar, color=color.new(color.lime, 55))
+plotshape(plotBearNV_diamond and onlyBearSignal and bearSignalConfirmed and isMostlyBody, style=shape.diamond, size=size.tiny, location=location.abovebar, color=color.new(color.red, 55))
+plotshape(plotBearNV_tri and onlyBearSignal and bearSignalConfirmed and not isMostlyBody, style=shape.triangledown, size=size.tiny, location=location.abovebar, color=color.new(color.red, 55))
+plotshape(plotBearNV_circle and onlyBearSignal and not bearSignalConfirmed, style=shape.circle, size=size.tiny, location=location.abovebar, color=color.new(color.red, 55))
+
+// ===================== Signal Legend =====================
+var table legendTable = table.new(position.top_right, 2, 3, bgcolor=color.new(color.black, 85), border_width=0)
+if barstate.islast and showSignalLegend
+    table.cell(legendTable, 0, 0, "○",  text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_center)
+    table.cell(legendTable, 1, 0, " Setup",           text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+    table.cell(legendTable, 0, 1, "△",  text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_center)
+    table.cell(legendTable, 1, 1, " Ignition",        text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+    table.cell(legendTable, 0, 2, "◇",  text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_center)
+    table.cell(legendTable, 1, 2, " Strong Ignition",  text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+
+// ===================== Scalp Status Table =====================
+var table scalpStatusTable = table.new(position.bottom_right, 2, 5, bgcolor=color.new(color.black, 85), border_width=0)
+if barstate.islast and showThesisLabel
+    statusTextColor = thesisState == 1 ? color.lime : thesisState == -1 ? color.red : color.rgb(220, 220, 220)
+    alertsStatusText = enableScalpAlerts ? "ENABLED" : "DISABLED"
+    alertVolumeTableText = alertVolumeMode == "High Volume Only" ? "HIGH VOLUME ONLY" : "ALL SIGNALS"
+    table.cell(scalpStatusTable, 0, 0, "Thesis", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+    table.cell(scalpStatusTable, 1, 0, f_thesisText(thesisState), text_color=statusTextColor, text_size=size.small, text_halign=text.align_right)
+    table.cell(scalpStatusTable, 0, 1, "OR Status", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+    table.cell(scalpStatusTable, 1, 1, openingRangeStatus, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+    table.cell(scalpStatusTable, 0, 2, "Alerts", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+    table.cell(scalpStatusTable, 1, 2, alertsStatusText, text_color=enableScalpAlerts ? color.lime : color.red, text_size=size.small, text_halign=text.align_right)
+    table.cell(scalpStatusTable, 0, 3, "Volume Mode", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+    table.cell(scalpStatusTable, 1, 3, alertVolumeTableText, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+    table.cell(scalpStatusTable, 0, 4, "Thesis Level", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+    table.cell(scalpStatusTable, 1, 4, f_priceText(thesisLevel), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
