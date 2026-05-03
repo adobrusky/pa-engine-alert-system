@@ -1,5 +1,5 @@
 //@version=6
-indicator("PA Engine Alert System", shorttitle = "PA Engine Alerts", overlay=true, calc_bars_count=1000, max_bars_back = 1000, max_lines_count=500, max_labels_count=500)
+indicator("PA Engine Alert System", shorttitle = "PA Engine Alerts", overlay=true, calc_bars_count=1000, max_bars_back = 1000, max_lines_count=500, max_labels_count=500, dynamic_requests=true)
 
 // ===================== User Inputs =====================
 
@@ -38,6 +38,16 @@ alertIgnitionSignals       = input.bool(true, title="Alert Ignition Signals", gr
 alertStrongIgnitions       = input.bool(true, title="Alert Strong Ignitions", group="Scalp Alerts")
 showHistoricalAlertMarkers = input.bool(true, title="Show Alert Markers", group="Scalp Alerts")
 showAlertEntryLabels       = input.bool(true, title="Show Alert Entry Labels", group="Scalp Alerts")
+
+useAutoThesis = input.bool(true, "Use Auto Thesis", group="Auto Thesis")
+autoThesisFallbackToManual = input.bool(true, "Fallback To Manual Thesis If Auto Unavailable", group="Auto Thesis")
+autoThesisAtrMultiplier = input.float(0.75, "Auto Thesis ATR Multiplier", minval=0.1, step=0.05, group="Auto Thesis")
+thesisSourceMode = input.string("Auto From Ticker", "Thesis Source Mode", options=["Auto From Ticker", "Manual Source"], group="Auto Thesis")
+manualThesisSourceSymbol = input.symbol("AMEX:SPY", "Manual Thesis Source Symbol", group="Auto Thesis")
+thesisConversionMode = input.string("RTH Open Ratio", "Thesis Conversion Mode", options=["RTH Open Ratio", "Current Price Ratio"], group="Auto Thesis")
+includeDailyGapsInAutoThesis = input.bool(true, "Include Daily Gaps In Auto Thesis", group="Auto Thesis")
+showAutoThesisLevel = input.bool(true, "Show Auto/Effective Thesis Level", group="Auto Thesis")
+showAutoThesisDebug = input.bool(false, "Show Auto Thesis Debug", group="Auto Thesis")
 
 requireValidTarget = input.bool(true, title="Require Valid Target", group="Scalp Targets")
 minTargetRR = input.float(1.0, title="Minimum Target R:R", minval=0.25, step=0.05, group="Scalp Targets")
@@ -128,7 +138,7 @@ f_midPriorLegDown(_maxLookback) =>
         else
             break
 
-    float legHigh = na
+    float legHigh = na 
     float legLow = na
     float mid = na
 
@@ -199,6 +209,114 @@ f_boolText(_condition) =>
 
 f_tickCount(_value) =>
     int(math.round(_value / scalpTickSize))
+
+f_roundToScalpTick(_price) =>
+    math.round(_price / scalpTickSize) * scalpTickSize
+
+f_validSourcePrice(_price) =>
+    not na(_price) and _price > 0
+
+f_autoCandidateQualifies(float _price, float _sourceOpen, float _threshold) =>
+    f_validSourcePrice(_price) and f_validSourcePrice(_sourceOpen) and not na(_threshold) and _threshold >= 0 and math.abs(_price - _sourceOpen) <= _threshold
+
+f_pickAutoThesisCandidate(float _candidatePrice, string _candidateName, int _candidatePriority, float _sourceOpen, float _threshold, float _bestPrice, string _bestName, int _bestPriority, float _bestDistance) =>
+    float nextPrice = _bestPrice
+    string nextName = _bestName
+    int nextPriority = _bestPriority
+    float nextDistance = _bestDistance
+    if f_autoCandidateQualifies(_candidatePrice, _sourceOpen, _threshold)
+        float candidateDistance = math.abs(_candidatePrice - _sourceOpen)
+        bool betterCandidate = na(nextPrice) or _candidatePriority < nextPriority or (_candidatePriority == nextPriority and (na(nextDistance) or candidateDistance < nextDistance))
+        if betterCandidate
+            nextPrice := _candidatePrice
+            nextName := _candidateName
+            nextPriority := _candidatePriority
+            nextDistance := candidateDistance
+    [nextPrice, nextName, nextPriority, nextDistance]
+
+f_currentRthOpen() =>
+    var float rthOpen = na
+    bool inRth = not na(time(timeframe.period, "0930-1600:23456", "America/New_York"))
+    int dateKey = year(time, "America/New_York") * 10000 + month(time, "America/New_York") * 100 + dayofmonth(time, "America/New_York")
+    int priorDateKey = bar_index > 0 ? dateKey[1] : dateKey
+    bool wasInRth = bar_index > 0 ? inRth[1] : false
+    bool newRth = inRth and (not wasInRth or dateKey != priorDateKey)
+    if newRth
+        rthOpen := open
+    else if not inRth and dateKey != priorDateKey
+        rthOpen := na
+    rthOpen
+
+getHighLowOpenClose() =>
+    [high[1], low[1], open, close[1]]
+
+getHigherTimeframeData(_timeframe, _ticker) =>
+    // Mirrors the PA Engine level request: previous completed H/L/C plus current HTF open.
+    request.security(_ticker, _timeframe, getHighLowOpenClose(), lookahead=barmerge.lookahead_on, calc_bars_count=2)
+
+getGaps(_lookBack) =>
+    map<int, string> gapsDict = map.new<int, string>()
+    i = _lookBack
+    float atrSumForGaps = 0.0
+    while i >= 0
+        dailyOpen = open[i]
+        dailyLow = low[i]
+        dailyHigh = high[i]
+        prevClose = close[i + 1]
+        if i < atrLength
+            atrSumForGaps := atrSumForGaps + math.max(dailyHigh - dailyLow, math.max(math.abs(dailyHigh - prevClose), math.abs(dailyLow - prevClose)))
+        if dailyOpen != prevClose
+            gapHigh = str.tostring(math.max(dailyOpen, prevClose))
+            gapLow = str.tostring(math.min(dailyOpen, prevClose))
+            isGapUp = dailyOpen > prevClose
+            dir = isGapUp ? "U" : "D"
+            gapsDict.put(time[i], dir + "|" + gapHigh + "," + gapLow + ":" + gapHigh + "," + gapLow)
+
+        keysToRemove = array.new_int(0)
+        if not barstate.isrealtime[i]
+            for [key, value] in gapsDict
+                gapOriginalAndPartial = str.split(value, ":")
+                partialGapHighAndLow = str.split(array.get(gapOriginalAndPartial, 1), ",")
+                partialGapHigh = str.tonumber(array.get(partialGapHighAndLow, 0))
+                partialGapLow = str.tonumber(array.get(partialGapHighAndLow, 1))
+                if dailyLow <= partialGapLow and dailyHigh >= partialGapHigh
+                    array.push(keysToRemove, key)
+                else
+                    if dailyLow > partialGapLow and dailyLow < partialGapHigh
+                        partialGapHigh := dailyLow
+                        gapsDict.put(key, array.get(gapOriginalAndPartial, 0) + ":" + str.tostring(partialGapHigh) + "," + str.tostring(partialGapLow))
+                    if dailyHigh < partialGapHigh and dailyHigh > partialGapLow
+                        partialGapLow := dailyHigh
+                        gapsDict.put(key, array.get(gapOriginalAndPartial, 0) + ":" + str.tostring(partialGapHigh) + "," + str.tostring(partialGapLow))
+        for key in keysToRemove
+            gapsDict.remove(key)
+        i := i - 1
+    keysToRemove = array.new_int(0)
+    atrForGaps = atrSumForGaps / atrLength
+    for [key, value] in gapsDict
+        gapOriginalAndPartial = str.split(value, ":")
+        partialGapHighAndLow = str.split(array.get(gapOriginalAndPartial, 1), ",")
+        gapSize = math.abs(str.tonumber(array.get(partialGapHighAndLow, 0)) - str.tonumber(array.get(partialGapHighAndLow, 1)))
+        if gapSize < atrForGaps * 0.1
+            array.push(keysToRemove, key)
+    for key in keysToRemove
+        gapsDict.remove(key)
+    gapsDict
+
+f_gapEndPriceFromRecord(string _gapRecord) =>
+    float gapEndPrice = na
+    parts = str.split(_gapRecord, "|")
+    if array.size(parts) == 2
+        dir = array.get(parts, 0)
+        rest = array.get(parts, 1)
+        gapOriginalAndPartial = str.split(rest, ":")
+        if array.size(gapOriginalAndPartial) > 0
+            gapHighAndLow = str.split(array.get(gapOriginalAndPartial, 0), ",")
+            if array.size(gapHighAndLow) == 2
+                gapHigh = str.tonumber(array.get(gapHighAndLow, 0))
+                gapLow = str.tonumber(array.get(gapHighAndLow, 1))
+                gapEndPrice := dir == "U" ? gapHigh : gapLow
+    gapEndPrice
 
 f_isBullBar(_open, _close) =>
     not na(_open) and not na(_close) and _close > _open
@@ -395,6 +513,98 @@ prevDayHighLowSource = useAutoPrevDayHighLow ? (not na(autoPrevDayHigh) and not 
 dailyOpenSource = useAutoDailyOpen ? (not na(autoDailyOpen) ? "Auto" : "Manual Fallback") : "Manual"
 premarketSource = useAutoPremarketHighLow ? (not na(finalizedPremarketHigh) and not na(finalizedPremarketLow) ? "Auto" : "Manual Fallback") : "Manual"
 
+// ===================== Auto Thesis Source Levels =====================
+int autoThesisGapLookback = 200
+autoDefaultThesisSourceSymbol = tickerInput == "MES" ? "AMEX:SPY" : "NASDAQ:QQQ"
+autoDefaultThesisSourceTicker = tickerInput == "MES" ? ticker.new("AMEX", "SPY", "us_regular:23456") : ticker.new("NASDAQ", "QQQ", "us_regular:23456")
+thesisSourceSymbol = thesisSourceMode == "Manual Source" ? manualThesisSourceSymbol : autoDefaultThesisSourceSymbol
+thesisSourceTicker = thesisSourceMode == "Manual Source" ? manualThesisSourceSymbol : autoDefaultThesisSourceTicker
+
+// The HTF requests intentionally mirror the PA Engine approach: previous completed
+// H/L/C plus the current period open are requested with lookahead_on.
+[sourcePrevDayHigh, sourcePrevDayLow, sourceDayOpenHTF, sourcePrevDayClose] = getHigherTimeframeData("1440", thesisSourceTicker)
+[sourcePrevWeekHigh, sourcePrevWeekLow, sourceWeekOpen, sourcePrevWeekClose] = getHigherTimeframeData("W", thesisSourceTicker)
+[sourcePrevMonthHigh, sourcePrevMonthLow, sourceMonthOpen, sourcePrevMonthClose] = getHigherTimeframeData("M", thesisSourceTicker)
+
+sourceDayOpenIntraday = request.security(thesisSourceTicker, "5", f_currentRthOpen(), lookahead=barmerge.lookahead_off, calc_bars_count=500)
+sourceDayOpen = f_validSourcePrice(sourceDayOpenHTF) ? sourceDayOpenHTF : sourceDayOpenIntraday
+source1hRthAtr = request.security(thesisSourceTicker, "60", ta.atr(atrLength), lookahead=barmerge.lookahead_off, calc_bars_count=500)
+sourceCloseForConversion = request.security(thesisSourceTicker, timeframe.period, close, lookahead=barmerge.lookahead_off, calc_bars_count=2)
+sourceDailyGaps = request.security(thesisSourceTicker, "1440", getGaps(autoThesisGapLookback), lookahead=barmerge.lookahead_on, calc_bars_count=202)
+
+float sourceGapEndPrice = na
+float sourceGapEndDistance = na
+if includeDailyGapsInAutoThesis and f_validSourcePrice(sourceDayOpen)
+    for [sourceGapKey, sourceGapValue] in sourceDailyGaps
+        float gapEndCandidate = f_gapEndPriceFromRecord(sourceGapValue)
+        if f_validSourcePrice(gapEndCandidate)
+            float gapEndDistance = math.abs(gapEndCandidate - sourceDayOpen)
+            if na(sourceGapEndDistance) or gapEndDistance < sourceGapEndDistance
+                sourceGapEndPrice := gapEndCandidate
+                sourceGapEndDistance := gapEndDistance
+
+sourceAtrThreshold = f_validSourcePrice(source1hRthAtr) ? source1hRthAtr * autoThesisAtrMultiplier : na
+float noAutoThesisCandidatePrice = na
+string noAutoThesisCandidateName = "N/A"
+int noAutoThesisCandidatePriority = 999
+float noAutoThesisCandidateDistance = na
+
+[autoAfterLMHPrice, autoAfterLMHName, autoAfterLMHPriority, autoAfterLMHDistance] = f_pickAutoThesisCandidate(sourcePrevMonthHigh, "Last Month High", 1, sourceDayOpen, sourceAtrThreshold, noAutoThesisCandidatePrice, noAutoThesisCandidateName, noAutoThesisCandidatePriority, noAutoThesisCandidateDistance)
+[autoAfterLMLPrice, autoAfterLMLName, autoAfterLMLPriority, autoAfterLMLDistance] = f_pickAutoThesisCandidate(sourcePrevMonthLow, "Last Month Low", 1, sourceDayOpen, sourceAtrThreshold, autoAfterLMHPrice, autoAfterLMHName, autoAfterLMHPriority, autoAfterLMHDistance)
+[autoAfterMonthOpenPrice, autoAfterMonthOpenName, autoAfterMonthOpenPriority, autoAfterMonthOpenDistance] = f_pickAutoThesisCandidate(sourceMonthOpen, "Monthly Open", 2, sourceDayOpen, sourceAtrThreshold, autoAfterLMLPrice, autoAfterLMLName, autoAfterLMLPriority, autoAfterLMLDistance)
+[autoAfterLWHPrice, autoAfterLWHName, autoAfterLWHPriority, autoAfterLWHDistance] = f_pickAutoThesisCandidate(sourcePrevWeekHigh, "Last Week High", 3, sourceDayOpen, sourceAtrThreshold, autoAfterMonthOpenPrice, autoAfterMonthOpenName, autoAfterMonthOpenPriority, autoAfterMonthOpenDistance)
+[autoAfterLWLPrice, autoAfterLWLName, autoAfterLWLPriority, autoAfterLWLDistance] = f_pickAutoThesisCandidate(sourcePrevWeekLow, "Last Week Low", 3, sourceDayOpen, sourceAtrThreshold, autoAfterLWHPrice, autoAfterLWHName, autoAfterLWHPriority, autoAfterLWHDistance)
+[autoAfterWeekOpenPrice, autoAfterWeekOpenName, autoAfterWeekOpenPriority, autoAfterWeekOpenDistance] = f_pickAutoThesisCandidate(sourceWeekOpen, "Weekly Open", 4, sourceDayOpen, sourceAtrThreshold, autoAfterLWLPrice, autoAfterLWLName, autoAfterLWLPriority, autoAfterLWLDistance)
+[autoAfterLDHPrice, autoAfterLDHName, autoAfterLDHPriority, autoAfterLDHDistance] = f_pickAutoThesisCandidate(sourcePrevDayHigh, "Last Day High", 5, sourceDayOpen, sourceAtrThreshold, autoAfterWeekOpenPrice, autoAfterWeekOpenName, autoAfterWeekOpenPriority, autoAfterWeekOpenDistance)
+[autoAfterLDLPrice, autoAfterLDLName, autoAfterLDLPriority, autoAfterLDLDistance] = f_pickAutoThesisCandidate(sourcePrevDayLow, "Last Day Low", 5, sourceDayOpen, sourceAtrThreshold, autoAfterLDHPrice, autoAfterLDHName, autoAfterLDHPriority, autoAfterLDHDistance)
+// Daily gap starts are intentionally excluded from auto-thesis selection.
+[autoAfterGapEndPrice, autoAfterGapEndName, autoAfterGapEndPriority, autoAfterGapEndDistance] = f_pickAutoThesisCandidate(sourceGapEndPrice, "Gap End", 6, sourceDayOpen, sourceAtrThreshold, autoAfterLDLPrice, autoAfterLDLName, autoAfterLDLPriority, autoAfterLDLDistance)
+
+autoHigherPriorityThesisFound = not na(autoAfterGapEndPrice)
+selectedAutoThesisSourcePrice = autoHigherPriorityThesisFound ? autoAfterGapEndPrice : sourceDayOpen
+selectedAutoThesisName = autoHigherPriorityThesisFound ? autoAfterGapEndName : "Daily Open"
+selectedAutoThesisPriority = autoHigherPriorityThesisFound ? autoAfterGapEndPriority : 8
+selectedAutoThesisDistance = autoHigherPriorityThesisFound ? autoAfterGapEndDistance : 0.0
+selectedAutoThesisAtrThreshold = sourceAtrThreshold
+autoThesisSelectionValid = f_validSourcePrice(selectedAutoThesisSourcePrice) and f_validSourcePrice(sourceDayOpen) and not na(selectedAutoThesisAtrThreshold)
+autoThesisUsedDailyOpenDefault = autoThesisSelectionValid and not autoHigherPriorityThesisFound
+
+chartConversionBase = thesisConversionMode == "RTH Open Ratio" ? autoDailyOpen : close
+sourceConversionBase = thesisConversionMode == "RTH Open Ratio" ? sourceDayOpen : sourceCloseForConversion
+convertedAutoThesisRaw = useAutoThesis and autoThesisSelectionValid and f_validSourcePrice(chartConversionBase) and f_validSourcePrice(sourceConversionBase) ? selectedAutoThesisSourcePrice * (chartConversionBase / sourceConversionBase) : na
+convertedAutoThesisLevel = f_validSourcePrice(convertedAutoThesisRaw) ? f_roundToScalpTick(convertedAutoThesisRaw) : na
+autoThesisConvertedValid = f_validSourcePrice(convertedAutoThesisLevel)
+autoThesisUnavailableReason = not useAutoThesis ? "Auto disabled" : not f_validSourcePrice(sourceDayOpen) ? "No source daily open" : not f_validSourcePrice(source1hRthAtr) ? "No source ATR" : not autoThesisSelectionValid ? "No source selection" : thesisConversionMode == "RTH Open Ratio" and not f_validSourcePrice(autoDailyOpen) ? "No chart RTH open" : thesisConversionMode == "Current Price Ratio" and not f_validSourcePrice(sourceCloseForConversion) ? "No source close" : not autoThesisConvertedValid ? "Conversion invalid" : "Auto ready"
+
+float effectiveThesisLevel = na
+string effectiveThesisSource = "Unavailable"
+string effectiveThesisName = "N/A"
+string effectiveThesisSourceSymbol = "N/A"
+float effectiveThesisSourcePrice = na
+bool effectiveThesisIsAuto = false
+
+if useAutoThesis and autoThesisConvertedValid
+    effectiveThesisLevel := convertedAutoThesisLevel
+    effectiveThesisSource := "Auto"
+    effectiveThesisName := selectedAutoThesisName
+    effectiveThesisSourceSymbol := thesisSourceSymbol
+    effectiveThesisSourcePrice := selectedAutoThesisSourcePrice
+    effectiveThesisIsAuto := true
+else if useAutoThesis and autoThesisFallbackToManual and thesisLevel > 0
+    effectiveThesisLevel := thesisLevel
+    effectiveThesisSource := "Manual Fallback"
+    effectiveThesisName := "Manual"
+    effectiveThesisSourceSymbol := "N/A"
+    effectiveThesisSourcePrice := na
+    effectiveThesisIsAuto := false
+else if not useAutoThesis and thesisLevel > 0
+    effectiveThesisLevel := thesisLevel
+    effectiveThesisSource := "Manual"
+    effectiveThesisName := "Manual"
+    effectiveThesisSourceSymbol := "N/A"
+    effectiveThesisSourcePrice := na
+    effectiveThesisIsAuto := false
+
 var float autoOpeningRangeHigh = na
 var float autoOpeningRangeLow = na
 var bool openingRangeComplete = false
@@ -521,17 +731,28 @@ var bool pendingBullClearance = false
 var bool pendingBearClearance = false
 var int pendingBullExpirationBar = na
 var int pendingBearExpirationBar = na
+var bool thesisInitializedForSession = false
 
 if newScalpRTHSession
     thesisState := f_initialThesisState(initialThesis)
+    thesisInitializedForSession := false
     pendingBullClearance := false
     pendingBearClearance := false
     pendingBullExpirationBar := na
     pendingBearExpirationBar := na
 
-validThesisLevel = thesisLevel > 0
+validThesisLevel = not na(effectiveThesisLevel) and effectiveThesisLevel > 0
 thesisRangeValid = barRange > 0
 thesisTolerance = scalpTickSize * 0.1
+
+if inScalpRTHSession and validThesisLevel and not thesisInitializedForSession
+    if close > effectiveThesisLevel
+        thesisState := 1
+    else if close < effectiveThesisLevel
+        thesisState := -1
+    else
+        thesisState := f_initialThesisState(initialThesis)
+    thesisInitializedForSession := true
 
 bullLowerThirdBoundaryRaw = low + barRange * (1.0 / 3.0)
 bullUpperThirdCloseBoundaryRaw = low + barRange * (2.0 / 3.0)
@@ -544,23 +765,23 @@ bearLowerThirdCloseBoundary = f_roundUpToScalpTick(bearLowerThirdCloseBoundaryRa
 barRangeTicks = math.max(f_tickCount(barRange), 1)
 bodyTicks = f_tickCount(body)
 closeAboveLowTicks = f_tickCount(close - low)
-bullRangeAboveThesisTicks = f_tickCount(high - thesisLevel)
-bearRangeBelowThesisTicks = f_tickCount(thesisLevel - low)
+bullRangeAboveThesisTicks = f_tickCount(high - effectiveThesisLevel)
+bearRangeBelowThesisTicks = f_tickCount(effectiveThesisLevel - low)
 
 strongThesisBody = body + thesisTolerance >= barRange * 0.5 or bodyTicks * 2 >= barRangeTicks
 strongBullCloseInUpperThird = close + thesisTolerance >= bullUpperThirdCloseBoundary or closeAboveLowTicks * 3 >= barRangeTicks * 2
 strongBearCloseInLowerThird = close - thesisTolerance <= bearLowerThirdCloseBoundary or closeAboveLowTicks * 3 <= barRangeTicks
 
-strongBullThesisBar = validThesisLevel and thesisRangeValid and close > open and strongThesisBody and strongBullCloseInUpperThird and close > thesisLevel
-strongBearThesisBar = validThesisLevel and thesisRangeValid and close < open and strongThesisBody and strongBearCloseInLowerThird and close < thesisLevel
+strongBullThesisBar = validThesisLevel and thesisRangeValid and close > open and strongThesisBody and strongBullCloseInUpperThird and close > effectiveThesisLevel
+strongBearThesisBar = validThesisLevel and thesisRangeValid and close < open and strongThesisBody and strongBearCloseInLowerThird and close < effectiveThesisLevel
 
-bullTwoThirdsBeyondLevel = validThesisLevel and thesisRangeValid and thesisLevel <= bullLowerThirdBoundary + thesisTolerance
-bearTwoThirdsBeyondLevel = validThesisLevel and thesisRangeValid and thesisLevel >= bearUpperThirdBoundary - thesisTolerance
+bullTwoThirdsBeyondLevel = validThesisLevel and thesisRangeValid and effectiveThesisLevel <= bullLowerThirdBoundary + thesisTolerance
+bearTwoThirdsBeyondLevel = validThesisLevel and thesisRangeValid and effectiveThesisLevel >= bearUpperThirdBoundary - thesisTolerance
 
-bullDirectClearance = strongBullThesisBar and (bullTwoThirdsBeyondLevel or low > thesisLevel)
-bearDirectClearance = strongBearThesisBar and (bearTwoThirdsBeyondLevel or high < thesisLevel)
-bullPendingFollowThrough = validThesisLevel and pendingBullClearance and not na(pendingBullExpirationBar) and bar_index <= pendingBullExpirationBar and low > thesisLevel
-bearPendingFollowThrough = validThesisLevel and pendingBearClearance and not na(pendingBearExpirationBar) and bar_index <= pendingBearExpirationBar and high < thesisLevel
+bullDirectClearance = strongBullThesisBar and (bullTwoThirdsBeyondLevel or low > effectiveThesisLevel)
+bearDirectClearance = strongBearThesisBar and (bearTwoThirdsBeyondLevel or high < effectiveThesisLevel)
+bullPendingFollowThrough = validThesisLevel and pendingBullClearance and not na(pendingBullExpirationBar) and bar_index <= pendingBullExpirationBar and low > effectiveThesisLevel
+bearPendingFollowThrough = validThesisLevel and pendingBearClearance and not na(pendingBearExpirationBar) and bar_index <= pendingBearExpirationBar and high < effectiveThesisLevel
 
 if barstate.isconfirmed
     if pendingBullClearance and not na(pendingBullExpirationBar) and bar_index > pendingBullExpirationBar
@@ -838,10 +1059,10 @@ longTargetFilterPassed = not requireValidTarget or longTargetValid
 shortTargetFilterPassed = not requireValidTarget or shortTargetValid
 
 // ===================== Alert Conditions =====================
-bullScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and thesisState == 1 and alertOnBullSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bullTierAllowed and longScalpSetupQualified and longRiskValid and longTargetFilterPassed
+bullScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == 1 and alertOnBullSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bullTierAllowed and longScalpSetupQualified and longRiskValid and longTargetFilterPassed
 bullAlertLabelTitle = "LONG"
 
-bearScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and thesisState == -1 and alertOnBearSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bearTierAllowed and shortScalpSetupQualified and shortRiskValid and shortTargetFilterPassed
+bearScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == -1 and alertOnBearSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bearTierAllowed and shortScalpSetupQualified and shortRiskValid and shortTargetFilterPassed
 bearAlertLabelTitle = "SHORT"
 
 if showHistoricalAlertMarkers and bullScalpAlert
@@ -914,6 +1135,9 @@ f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _setupTextFull, _e
      "Symbol: " + syminfo.ticker + "\n" +
      "Timeframe: " + timeframe.period + "\n" +
      "Thesis: " + f_thesisText(thesisState) + "\n" +
+     "Thesis Level: " + f_priceText(effectiveThesisLevel) + "\n" +
+     "Thesis Name: " + effectiveThesisName + "\n" +
+     "Source Symbol: " + effectiveThesisSourceSymbol + "\n" +
      "Opening Range: " + openingRangeStatus + "\n" +
      "Entry: " + f_priceText(_entryPrice) + "\n" +
      "Stop: " + f_priceText(_stopPrice) + "\n" +
@@ -929,7 +1153,7 @@ if bullScalpAlert
 else if bearScalpAlert
     alert(f_buildScalpAlertMessage(bearAlertLabelTitle, bearCompactSignalText, shortSetupTextFull, shortEntryType, shortEntryPrice, shortStopPrice, shortTargetPrice, shortTargetType, shortTargetRR, shortRiskPoints, shortContracts), alert.freq_once_per_bar_close)
 
-plot(thesisLevel > 0 ? thesisLevel : na, "Scalp Thesis Level", color=color.new(color.yellow, 0), linewidth=2, style=plot.style_linebr)
+plot(showAutoThesisLevel and not na(effectiveThesisLevel) ? effectiveThesisLevel : na, "Effective Thesis Level", color=color.new(color.yellow, 0), linewidth=2, style=plot.style_linebr)
 plot(showOpeningRange ? openingRangeDisplayHigh : na, "15m Opening Range High", color=color.green, linewidth=1, style=plot.style_linebr)
 plot(showOpeningRange ? openingRangeDisplayLow : na, "15m Opening Range Low", color=color.green, linewidth=1, style=plot.style_linebr)
 plot(showAutoScalpLevels and effectivePrevDayHigh > 0 ? effectivePrevDayHigh : na, "Auto/Effective PDH", color=color.green, linewidth=2, style=plot.style_linebr)
@@ -963,39 +1187,52 @@ if barstate.islast and showSignalLegend
     table.cell(legendTable, 1, 2, " Strong Ignition",  text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
 
 // ===================== Scalp Status Table =====================
-var table scalpStatusTable = table.new(position.bottom_right, 2, 14, bgcolor=color.new(color.black, 85), border_width=0)
+var table scalpStatusTable = table.new(position.bottom_right, 2, 26, bgcolor=color.new(color.black, 85), border_width=0)
 if barstate.islast
-    table.clear(scalpStatusTable, 0, 0, 1, 13)
+    table.clear(scalpStatusTable, 0, 0, 1, 25)
     if showThesisLabel
         statusTextColor = thesisState == 1 ? color.lime : thesisState == -1 ? color.red : color.rgb(220, 220, 220)
         alertsStatusText = enableScalpAlerts ? "ENABLED" : "DISABLED"
         alertVolumeTableText = alertVolumeMode == "High Volume Only" ? "HIGH VOLUME ONLY" : "ALL"
         table.cell(scalpStatusTable, 0, 0, "Thesis", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
         table.cell(scalpStatusTable, 1, 0, f_thesisText(thesisState), text_color=statusTextColor, text_size=size.small, text_halign=text.align_right)
-        table.cell(scalpStatusTable, 0, 1, "Opening Range", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, 1, openingRangeStatus, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-        table.cell(scalpStatusTable, 0, 2, "Alerts", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, 2, alertsStatusText, text_color=enableScalpAlerts ? color.lime : color.red, text_size=size.small, text_halign=text.align_right)
-        table.cell(scalpStatusTable, 0, 3, "Volume Mode", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, 3, alertVolumeTableText, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-        table.cell(scalpStatusTable, 0, 4, "Thesis Level", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, 4, f_priceText(thesisLevel), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+        table.cell(scalpStatusTable, 0, 1, "Thesis Level", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+        table.cell(scalpStatusTable, 1, 1, f_priceText(effectiveThesisLevel), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+        table.cell(scalpStatusTable, 0, 3, "Thesis Name", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+        table.cell(scalpStatusTable, 1, 3, effectiveThesisName, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+        table.cell(scalpStatusTable, 0, 4, "Source Symbol", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+        table.cell(scalpStatusTable, 1, 4, effectiveThesisSourceSymbol, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+        table.cell(scalpStatusTable, 0, 10, "Opening Range", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+        table.cell(scalpStatusTable, 1, 10, openingRangeStatus, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+        table.cell(scalpStatusTable, 0, 11, "Alerts", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+        table.cell(scalpStatusTable, 1, 11, alertsStatusText, text_color=enableScalpAlerts ? color.lime : color.red, text_size=size.small, text_halign=text.align_right)
+        table.cell(scalpStatusTable, 0, 12, "Volume Mode", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+        table.cell(scalpStatusTable, 1, 12, alertVolumeTableText, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
         if showDetailedLevelStatus
-            table.cell(scalpStatusTable, 0, 5, "PDH", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 5, f_priceText(effectivePrevDayHigh), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 6, "PDL", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 6, f_priceText(effectivePrevDayLow), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 7, "OP", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 7, f_priceText(effectiveDailyOpen), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 8, "PMH", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 8, f_priceText(effectivePremarketHigh), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 9, "PML", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 9, f_priceText(effectivePremarketLow), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 10, "PDH/PDL Source", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 10, prevDayHighLowSource, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 11, "OP Source", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 11, dailyOpenSource, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 12, "PM Source", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 12, premarketSource, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 13, "Auto Note", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 13, "Intraday, ideally 5m", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            table.cell(scalpStatusTable, 0, 13, "PDH", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, 13, f_priceText(effectivePrevDayHigh), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            table.cell(scalpStatusTable, 0, 14, "PDL", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, 14, f_priceText(effectivePrevDayLow), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            table.cell(scalpStatusTable, 0, 15, "OP", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, 15, f_priceText(effectiveDailyOpen), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            table.cell(scalpStatusTable, 0, 16, "PMH", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, 16, f_priceText(effectivePremarketHigh), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            table.cell(scalpStatusTable, 0, 17, "PML", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, 17, f_priceText(effectivePremarketLow), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            table.cell(scalpStatusTable, 0, 18, "PDH/PDL Source", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, 18, prevDayHighLowSource, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            table.cell(scalpStatusTable, 0, 19, "OP Source", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, 19, dailyOpenSource, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            table.cell(scalpStatusTable, 0, 20, "PM Source", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, 20, premarketSource, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            table.cell(scalpStatusTable, 0, 21, "Auto Note", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, 21, "Intraday, ideally 5m", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+        if showAutoThesisDebug
+            table.cell(scalpStatusTable, 0, 22, "Auto Distance", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, 22, useAutoThesis ? f_pointsText(selectedAutoThesisDistance) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            table.cell(scalpStatusTable, 0, 23, "Daily Open Default", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, 23, useAutoThesis ? f_boolText(autoThesisUsedDailyOpenDefault) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            table.cell(scalpStatusTable, 0, 24, "Auto Status", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, 24, autoThesisUnavailableReason, text_color=autoThesisConvertedValid ? color.lime : color.red, text_size=size.small, text_halign=text.align_right)
+            table.cell(scalpStatusTable, 0, 25, "Auto Priority", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, 25, useAutoThesis and autoThesisSelectionValid ? str.tostring(selectedAutoThesisPriority) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
