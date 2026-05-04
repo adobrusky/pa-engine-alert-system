@@ -332,24 +332,21 @@ f_bearLowerThirdBar(_open, _high, _low, _close) =>
     _range = f_safeRange(_high, _low)
     f_isBearBar(_open, _close) and f_closeInLowerThird(_close, _low, _range)
 
-f_longLevelTouched(_enabled, _levelPrice, _signalLow, _signalHigh, _signalClose) =>
-    _enabled and _levelPrice > 0 and _levelPrice >= _signalLow and _levelPrice <= _signalHigh and _signalLow <= _levelPrice and _signalClose > _levelPrice
+f_levelTouched(bool _enabled, float _levelPrice, float _signalLow, float _signalHigh) =>
+    _enabled and _levelPrice > 0 and _levelPrice >= _signalLow and _levelPrice <= _signalHigh
 
-f_shortLevelTouched(_enabled, _levelPrice, _signalLow, _signalHigh, _signalClose) =>
-    _enabled and _levelPrice > 0 and _levelPrice >= _signalLow and _levelPrice <= _signalHigh and _signalHigh >= _levelPrice and _signalClose < _levelPrice
-
-f_pickLongLevel(bool _enabled, float _levelPrice, string _levelName, float _signalLow, float _signalHigh, float _signalClose, float _bestPrice, string _bestName) =>
+f_pickLongTouchedLevel(bool _enabled, float _levelPrice, string _levelName, float _signalLow, float _signalHigh, float _bestPrice, string _bestName) =>
     float nextPrice = _bestPrice
     string nextName = _bestName
-    if f_longLevelTouched(_enabled, _levelPrice, _signalLow, _signalHigh, _signalClose) and (na(nextPrice) or _levelPrice > nextPrice)
+    if f_levelTouched(_enabled, _levelPrice, _signalLow, _signalHigh) and (na(nextPrice) or _levelPrice > nextPrice)
         nextPrice := _levelPrice
         nextName := _levelName
     [nextPrice, nextName]
 
-f_pickShortLevel(bool _enabled, float _levelPrice, string _levelName, float _signalLow, float _signalHigh, float _signalClose, float _bestPrice, string _bestName) =>
+f_pickShortTouchedLevel(bool _enabled, float _levelPrice, string _levelName, float _signalLow, float _signalHigh, float _bestPrice, string _bestName) =>
     float nextPrice = _bestPrice
     string nextName = _bestName
-    if f_shortLevelTouched(_enabled, _levelPrice, _signalLow, _signalHigh, _signalClose) and (na(nextPrice) or _levelPrice < nextPrice)
+    if f_levelTouched(_enabled, _levelPrice, _signalLow, _signalHigh) and (na(nextPrice) or _levelPrice < nextPrice)
         nextPrice := _levelPrice
         nextName := _levelName
     [nextPrice, nextName]
@@ -926,32 +923,45 @@ shortEntry50 = f_roundUpToScalpTick(scalpEntry50Raw)
 float noSelectedLevelPrice = na
 string noSelectedLevelName = "N/A"
 
-[longGroup1AfterPDHPrice, longGroup1AfterPDHName] = f_pickLongLevel(usePrevDayHighLevel, effectivePrevDayHigh, "PDH", scalpSignalLow, scalpSignalHigh, scalpSignalClose, noSelectedLevelPrice, noSelectedLevelName)
-[longGroup1Price, longGroup1Name] = f_pickLongLevel(usePrevDayLowLevel, effectivePrevDayLow, "PDL", scalpSignalLow, scalpSignalHigh, scalpSignalClose, longGroup1AfterPDHPrice, longGroup1AfterPDHName)
-[longGroup2Price, longGroup2Name] = f_pickLongLevel(useDailyOpenLevel, effectiveDailyOpen, "OP", scalpSignalLow, scalpSignalHigh, scalpSignalClose, noSelectedLevelPrice, noSelectedLevelName)
-[longGroup3AfterPMHPrice, longGroup3AfterPMHName] = f_pickLongLevel(usePremarketHighLevel, effectivePremarketHigh, "PMH", scalpSignalLow, scalpSignalHigh, scalpSignalClose, noSelectedLevelPrice, noSelectedLevelName)
-[longGroup3Price, longGroup3Name] = f_pickLongLevel(usePremarketLowLevel, effectivePremarketLow, "PML", scalpSignalLow, scalpSignalHigh, scalpSignalClose, longGroup3AfterPMHPrice, longGroup3AfterPMHName)
-[longGroup4AfterORHPrice, longGroup4AfterORHName] = f_pickLongLevel(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, "ORH", scalpSignalLow, scalpSignalHigh, scalpSignalClose, noSelectedLevelPrice, noSelectedLevelName)
-[longGroup4Price, longGroup4Name] = f_pickLongLevel(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, "ORL", scalpSignalLow, scalpSignalHigh, scalpSignalClose, longGroup4AfterORHPrice, longGroup4AfterORHName)
+[longGroup1AfterPDHPrice, longGroup1AfterPDHName] = f_pickLongTouchedLevel(usePrevDayHighLevel, effectivePrevDayHigh, "PDH", scalpSignalLow, scalpSignalHigh, noSelectedLevelPrice, noSelectedLevelName)
+[longGroup1Price, longGroup1Name] = f_pickLongTouchedLevel(usePrevDayLowLevel, effectivePrevDayLow, "PDL", scalpSignalLow, scalpSignalHigh, longGroup1AfterPDHPrice, longGroup1AfterPDHName)
+[longGroup2Price, longGroup2Name] = f_pickLongTouchedLevel(useDailyOpenLevel, effectiveDailyOpen, "OP", scalpSignalLow, scalpSignalHigh, noSelectedLevelPrice, noSelectedLevelName)
+[longGroup3AfterPMHPrice, longGroup3AfterPMHName] = f_pickLongTouchedLevel(usePremarketHighLevel, effectivePremarketHigh, "PMH", scalpSignalLow, scalpSignalHigh, noSelectedLevelPrice, noSelectedLevelName)
+[longGroup3Price, longGroup3Name] = f_pickLongTouchedLevel(usePremarketLowLevel, effectivePremarketLow, "PML", scalpSignalLow, scalpSignalHigh, longGroup3AfterPMHPrice, longGroup3AfterPMHName)
+[longGroup4AfterORHPrice, longGroup4AfterORHName] = f_pickLongTouchedLevel(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, "ORH", scalpSignalLow, scalpSignalHigh, noSelectedLevelPrice, noSelectedLevelName)
+[longGroup4Price, longGroup4Name] = f_pickLongTouchedLevel(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, "ORL", scalpSignalLow, scalpSignalHigh, longGroup4AfterORHPrice, longGroup4AfterORHName)
 
-[shortGroup1AfterPDHPrice, shortGroup1AfterPDHName] = f_pickShortLevel(usePrevDayHighLevel, effectivePrevDayHigh, "PDH", scalpSignalLow, scalpSignalHigh, scalpSignalClose, noSelectedLevelPrice, noSelectedLevelName)
-[shortGroup1Price, shortGroup1Name] = f_pickShortLevel(usePrevDayLowLevel, effectivePrevDayLow, "PDL", scalpSignalLow, scalpSignalHigh, scalpSignalClose, shortGroup1AfterPDHPrice, shortGroup1AfterPDHName)
-[shortGroup2Price, shortGroup2Name] = f_pickShortLevel(useDailyOpenLevel, effectiveDailyOpen, "OP", scalpSignalLow, scalpSignalHigh, scalpSignalClose, noSelectedLevelPrice, noSelectedLevelName)
-[shortGroup3AfterPMHPrice, shortGroup3AfterPMHName] = f_pickShortLevel(usePremarketHighLevel, effectivePremarketHigh, "PMH", scalpSignalLow, scalpSignalHigh, scalpSignalClose, noSelectedLevelPrice, noSelectedLevelName)
-[shortGroup3Price, shortGroup3Name] = f_pickShortLevel(usePremarketLowLevel, effectivePremarketLow, "PML", scalpSignalLow, scalpSignalHigh, scalpSignalClose, shortGroup3AfterPMHPrice, shortGroup3AfterPMHName)
-[shortGroup4AfterORHPrice, shortGroup4AfterORHName] = f_pickShortLevel(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, "ORH", scalpSignalLow, scalpSignalHigh, scalpSignalClose, noSelectedLevelPrice, noSelectedLevelName)
-[shortGroup4Price, shortGroup4Name] = f_pickShortLevel(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, "ORL", scalpSignalLow, scalpSignalHigh, scalpSignalClose, shortGroup4AfterORHPrice, shortGroup4AfterORHName)
+[shortGroup1AfterPDHPrice, shortGroup1AfterPDHName] = f_pickShortTouchedLevel(usePrevDayHighLevel, effectivePrevDayHigh, "PDH", scalpSignalLow, scalpSignalHigh, noSelectedLevelPrice, noSelectedLevelName)
+[shortGroup1Price, shortGroup1Name] = f_pickShortTouchedLevel(usePrevDayLowLevel, effectivePrevDayLow, "PDL", scalpSignalLow, scalpSignalHigh, shortGroup1AfterPDHPrice, shortGroup1AfterPDHName)
+[shortGroup2Price, shortGroup2Name] = f_pickShortTouchedLevel(useDailyOpenLevel, effectiveDailyOpen, "OP", scalpSignalLow, scalpSignalHigh, noSelectedLevelPrice, noSelectedLevelName)
+[shortGroup3AfterPMHPrice, shortGroup3AfterPMHName] = f_pickShortTouchedLevel(usePremarketHighLevel, effectivePremarketHigh, "PMH", scalpSignalLow, scalpSignalHigh, noSelectedLevelPrice, noSelectedLevelName)
+[shortGroup3Price, shortGroup3Name] = f_pickShortTouchedLevel(usePremarketLowLevel, effectivePremarketLow, "PML", scalpSignalLow, scalpSignalHigh, shortGroup3AfterPMHPrice, shortGroup3AfterPMHName)
+[shortGroup4AfterORHPrice, shortGroup4AfterORHName] = f_pickShortTouchedLevel(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, "ORH", scalpSignalLow, scalpSignalHigh, noSelectedLevelPrice, noSelectedLevelName)
+[shortGroup4Price, shortGroup4Name] = f_pickShortTouchedLevel(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, "ORL", scalpSignalLow, scalpSignalHigh, shortGroup4AfterORHPrice, shortGroup4AfterORHName)
 
-longSelectedLevelPrice = not na(longGroup1Price) ? longGroup1Price : not na(longGroup2Price) ? longGroup2Price : not na(longGroup3Price) ? longGroup3Price : longGroup4Price
-longSelectedLevelName = not na(longGroup1Price) ? longGroup1Name : not na(longGroup2Price) ? longGroup2Name : not na(longGroup3Price) ? longGroup3Name : not na(longGroup4Price) ? longGroup4Name : "N/A"
-shortSelectedLevelPrice = not na(shortGroup1Price) ? shortGroup1Price : not na(shortGroup2Price) ? shortGroup2Price : not na(shortGroup3Price) ? shortGroup3Price : shortGroup4Price
-shortSelectedLevelName = not na(shortGroup1Price) ? shortGroup1Name : not na(shortGroup2Price) ? shortGroup2Name : not na(shortGroup3Price) ? shortGroup3Name : not na(shortGroup4Price) ? shortGroup4Name : "N/A"
+longMostKeyTouchedLevelPrice = not na(longGroup1Price) ? longGroup1Price : not na(longGroup2Price) ? longGroup2Price : not na(longGroup3Price) ? longGroup3Price : longGroup4Price
+longMostKeyTouchedLevelName = not na(longGroup1Price) ? longGroup1Name : not na(longGroup2Price) ? longGroup2Name : not na(longGroup3Price) ? longGroup3Name : not na(longGroup4Price) ? longGroup4Name : "N/A"
+
+shortMostKeyTouchedLevelPrice = not na(shortGroup1Price) ? shortGroup1Price : not na(shortGroup2Price) ? shortGroup2Price : not na(shortGroup3Price) ? shortGroup3Price : shortGroup4Price
+shortMostKeyTouchedLevelName = not na(shortGroup1Price) ? shortGroup1Name : not na(shortGroup2Price) ? shortGroup2Name : not na(shortGroup3Price) ? shortGroup3Name : not na(shortGroup4Price) ? shortGroup4Name : "N/A"
+
+longAnyEntryLevelTouched = not na(longMostKeyTouchedLevelPrice)
+shortAnyEntryLevelTouched = not na(shortMostKeyTouchedLevelPrice)
+
+longMostKeyTouchedLevelBroken = longAnyEntryLevelTouched and scalpSignalClose > longMostKeyTouchedLevelPrice
+shortMostKeyTouchedLevelBroken = shortAnyEntryLevelTouched and scalpSignalClose < shortMostKeyTouchedLevelPrice
+
+longSelectedLevelPrice = longMostKeyTouchedLevelBroken ? longMostKeyTouchedLevelPrice : na
+longSelectedLevelName = longMostKeyTouchedLevelBroken ? longMostKeyTouchedLevelName : "N/A"
+
+shortSelectedLevelPrice = shortMostKeyTouchedLevelBroken ? shortMostKeyTouchedLevelPrice : na
+shortSelectedLevelName = shortMostKeyTouchedLevelBroken ? shortMostKeyTouchedLevelName : "N/A"
 
 // ===================== Scalp Setup Qualification Logic =====================
 // Level-break setups reuse the enabled scalp entry level checks above. A selected
 // level only exists after the signal bar range includes that level and closes beyond it.
-longLevelBreakSetup = not na(longSelectedLevelPrice)
-shortLevelBreakSetup = not na(shortSelectedLevelPrice)
+longLevelBreakSetup = longMostKeyTouchedLevelBroken
+shortLevelBreakSetup = shortMostKeyTouchedLevelBroken
 
 // Two-bar setups are fallback qualifiers: no qualifying level break, a trend-body
 // signal bar, and one of the prior two bars closing strongly in the signal direction.
@@ -959,8 +969,8 @@ longSignalTrendBar = f_isBullBar(open, close) and isBodyThreshold
 shortSignalTrendBar = f_isBearBar(open, close) and isBodyThreshold
 priorBullUpperThirdBar = f_bullUpperThirdBar(open[1], high[1], low[1], close[1]) or f_bullUpperThirdBar(open[2], high[2], low[2], close[2])
 priorBearLowerThirdBar = f_bearLowerThirdBar(open[1], high[1], low[1], close[1]) or f_bearLowerThirdBar(open[2], high[2], low[2], close[2])
-longTwoBarSetup = not longLevelBreakSetup and longSignalTrendBar and priorBullUpperThirdBar
-shortTwoBarSetup = not shortLevelBreakSetup and shortSignalTrendBar and priorBearLowerThirdBar
+longTwoBarSetup = not longAnyEntryLevelTouched and longSignalTrendBar and priorBullUpperThirdBar
+shortTwoBarSetup = not shortAnyEntryLevelTouched and shortSignalTrendBar and priorBearLowerThirdBar
 longSetupTextShort = longLevelBreakSetup ? "LB" : longTwoBarSetup ? "2B" : "None"
 shortSetupTextShort = shortLevelBreakSetup ? "LB" : shortTwoBarSetup ? "2B" : "None"
 longSetupTextFull = longLevelBreakSetup ? "Level Break" : longTwoBarSetup ? "Two-Bar Play" : "None"
@@ -1156,8 +1166,11 @@ else if bearScalpAlert
 plot(showAutoThesisLevel and not na(effectiveThesisLevel) ? effectiveThesisLevel : na, "Effective Thesis Level", color=color.new(color.yellow, 0), linewidth=2, style=plot.style_linebr)
 plot(showOpeningRange ? openingRangeDisplayHigh : na, "15m Opening Range High", color=color.green, linewidth=1, style=plot.style_linebr)
 plot(showOpeningRange ? openingRangeDisplayLow : na, "15m Opening Range Low", color=color.green, linewidth=1, style=plot.style_linebr)
-plot(showAutoScalpLevels and effectivePrevDayHigh > 0 ? effectivePrevDayHigh : na, "Auto/Effective PDH", color=color.green, linewidth=2, style=plot.style_linebr)
-plot(showAutoScalpLevels and effectivePrevDayLow > 0 ? effectivePrevDayLow : na, "Auto/Effective PDL", color=color.red, linewidth=2, style=plot.style_linebr)
+pdhPlot = showAutoScalpLevels and inScalpRTHSession and not newScalpRTHSession and effectivePrevDayHigh > 0 ? effectivePrevDayHigh : na
+pdlPlot = showAutoScalpLevels and inScalpRTHSession and not newScalpRTHSession and effectivePrevDayLow > 0 ? effectivePrevDayLow : na
+
+plot(pdhPlot, "Auto/Effective PDH", color=color.green, linewidth=2, style=plot.style_linebr)
+plot(pdlPlot, "Auto/Effective PDL", color=color.red, linewidth=2, style=plot.style_linebr)
 plot(showAutoScalpLevels and effectiveDailyOpen > 0 ? effectiveDailyOpen : na, "Auto/Effective OP", color=color.orange, linewidth=1, style=plot.style_linebr)
 plot(showAutoScalpLevels and effectivePremarketHigh > 0 ? effectivePremarketHigh : na, "Auto/Effective Premarket High", color=color.blue, linewidth=1, style=plot.style_linebr)
 plot(showAutoScalpLevels and effectivePremarketLow > 0 ? effectivePremarketLow : na, "Auto/Effective Premarket Low", color=color.blue, linewidth=1, style=plot.style_linebr)
