@@ -43,7 +43,7 @@ useAutoThesis = input.bool(true, "Use Auto Thesis", group="Auto Thesis")
 autoThesisFallbackToManual = input.bool(true, "Fallback To Manual Thesis If Auto Unavailable", group="Auto Thesis")
 autoThesisAtrMultiplier = input.float(0.75, "Auto Thesis ATR Multiplier", minval=0.1, step=0.05, group="Auto Thesis")
 thesisSourceMode = input.string("Auto From Ticker", "Thesis Source Mode", options=["Auto From Ticker", "Manual Source"], group="Auto Thesis")
-manualThesisSourceSymbol = input.symbol("AMEX:SPY", "Manual Thesis Source Symbol", group="Auto Thesis")
+manualThesisSourceSymbol = input.string("AMEX:SPY", "Manual Thesis Source Symbol", group="Auto Thesis")
 thesisConversionMode = input.string("RTH Open Ratio", "Thesis Conversion Mode", options=["RTH Open Ratio", "Current Price Ratio"], group="Auto Thesis")
 includeDailyGapsInAutoThesis = input.bool(true, "Include Daily Gaps In Auto Thesis", group="Auto Thesis")
 showAutoThesisLevel = input.bool(true, "Show Auto/Effective Thesis Level", group="Auto Thesis")
@@ -512,26 +512,60 @@ premarketSource = useAutoPremarketHighLow ? (not na(finalizedPremarketHigh) and 
 
 // ===================== Auto Thesis Source Levels =====================
 int autoThesisGapLookback = 200
+// MES defaults to AMEX:SPY. TradingView alerts may require real-time entitlement
+// for the exact feed used by request.security(), even if it appears usable on charts.
 autoDefaultThesisSourceSymbol = tickerInput == "MES" ? "AMEX:SPY" : "NASDAQ:QQQ"
 autoDefaultThesisSourceTicker = tickerInput == "MES" ? ticker.new("AMEX", "SPY", "us_regular:23456") : ticker.new("NASDAQ", "QQQ", "us_regular:23456")
-thesisSourceSymbol = thesisSourceMode == "Manual Source" ? manualThesisSourceSymbol : autoDefaultThesisSourceSymbol
-thesisSourceTicker = thesisSourceMode == "Manual Source" ? manualThesisSourceSymbol : autoDefaultThesisSourceTicker
+thesisSourceSymbol = useAutoThesis ? (thesisSourceMode == "Manual Source" ? manualThesisSourceSymbol : autoDefaultThesisSourceSymbol) : "None"
+thesisSourceTicker = useAutoThesis ? (thesisSourceMode == "Manual Source" ? manualThesisSourceSymbol : autoDefaultThesisSourceTicker) : ""
+requestedThesisSourceSymbol = useAutoThesis ? thesisSourceSymbol : "None"
 
 // The HTF requests intentionally mirror the PA Engine approach: previous completed
 // H/L/C plus the current period open are requested with lookahead_on.
-[sourcePrevDayHigh, sourcePrevDayLow, sourceDayOpenHTF, sourcePrevDayClose] = getHigherTimeframeData("1440", thesisSourceTicker)
-[sourcePrevWeekHigh, sourcePrevWeekLow, sourceWeekOpen, sourcePrevWeekClose] = getHigherTimeframeData("W", thesisSourceTicker)
-[sourcePrevMonthHigh, sourcePrevMonthLow, sourceMonthOpen, sourcePrevMonthClose] = getHigherTimeframeData("M", thesisSourceTicker)
+float sourcePrevDayHigh = na
+float sourcePrevDayLow = na
+float sourceDayOpenHTF = na
+float sourcePrevDayClose = na
+float sourcePrevWeekHigh = na
+float sourcePrevWeekLow = na
+float sourceWeekOpen = na
+float sourcePrevWeekClose = na
+float sourcePrevMonthHigh = na
+float sourcePrevMonthLow = na
+float sourceMonthOpen = na
+float sourcePrevMonthClose = na
+float sourceDayOpenIntraday = na
+float sourceDayOpen = na
+float source1hRthAtr = na
+float sourceCloseForConversion = na
+map<int, string> sourceDailyGaps = na
 
-sourceDayOpenIntraday = request.security(thesisSourceTicker, "5", f_currentRthOpen(), lookahead=barmerge.lookahead_off, calc_bars_count=500)
-sourceDayOpen = f_validSourcePrice(sourceDayOpenHTF) ? sourceDayOpenHTF : sourceDayOpenIntraday
-source1hRthAtr = request.security(thesisSourceTicker, "60", ta.atr(atrLength), lookahead=barmerge.lookahead_off, calc_bars_count=500)
-sourceCloseForConversion = request.security(thesisSourceTicker, timeframe.period, close, lookahead=barmerge.lookahead_off, calc_bars_count=2)
-sourceDailyGaps = request.security(thesisSourceTicker, "1440", getGaps(autoThesisGapLookback), lookahead=barmerge.lookahead_on, calc_bars_count=202)
+if useAutoThesis
+    [requestedPrevDayHigh, requestedPrevDayLow, requestedDayOpenHTF, requestedPrevDayClose] = getHigherTimeframeData("1440", thesisSourceTicker)
+    [requestedPrevWeekHigh, requestedPrevWeekLow, requestedWeekOpen, requestedPrevWeekClose] = getHigherTimeframeData("W", thesisSourceTicker)
+    [requestedPrevMonthHigh, requestedPrevMonthLow, requestedMonthOpen, requestedPrevMonthClose] = getHigherTimeframeData("M", thesisSourceTicker)
+    sourcePrevDayHigh := requestedPrevDayHigh
+    sourcePrevDayLow := requestedPrevDayLow
+    sourceDayOpenHTF := requestedDayOpenHTF
+    sourcePrevDayClose := requestedPrevDayClose
+    sourcePrevWeekHigh := requestedPrevWeekHigh
+    sourcePrevWeekLow := requestedPrevWeekLow
+    sourceWeekOpen := requestedWeekOpen
+    sourcePrevWeekClose := requestedPrevWeekClose
+    sourcePrevMonthHigh := requestedPrevMonthHigh
+    sourcePrevMonthLow := requestedPrevMonthLow
+    sourceMonthOpen := requestedMonthOpen
+    sourcePrevMonthClose := requestedPrevMonthClose
+    sourceDayOpenIntraday := request.security(thesisSourceTicker, "5", f_currentRthOpen(), lookahead=barmerge.lookahead_off, calc_bars_count=500)
+    sourceDayOpen := f_validSourcePrice(sourceDayOpenHTF) ? sourceDayOpenHTF : sourceDayOpenIntraday
+    source1hRthAtr := request.security(thesisSourceTicker, "60", ta.atr(atrLength), lookahead=barmerge.lookahead_off, calc_bars_count=500)
+    sourceCloseForConversion := request.security(thesisSourceTicker, timeframe.period, close, lookahead=barmerge.lookahead_off, calc_bars_count=2)
+    if includeDailyGapsInAutoThesis
+        sourceDailyGaps := request.security(thesisSourceTicker, "1440", getGaps(autoThesisGapLookback), lookahead=barmerge.lookahead_on, calc_bars_count=202)
 
 float sourceGapEndPrice = na
 float sourceGapEndDistance = na
-if includeDailyGapsInAutoThesis and f_validSourcePrice(sourceDayOpen)
+if useAutoThesis and includeDailyGapsInAutoThesis and f_validSourcePrice(sourceDayOpen) and not na(sourceDailyGaps)
     for [sourceGapKey, sourceGapValue] in sourceDailyGaps
         float gapEndCandidate = f_gapEndPriceFromRecord(sourceGapValue)
         if f_validSourcePrice(gapEndCandidate)
