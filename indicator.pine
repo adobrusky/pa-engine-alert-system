@@ -334,7 +334,9 @@ f_gapEndPriceFromRecord(string _gapRecord) =>
             if array.size(gapHighAndLow) == 2
                 gapHigh = str.tonumber(array.get(gapHighAndLow, 0))
                 gapLow = str.tonumber(array.get(gapHighAndLow, 1))
-                gapEndPrice := dir == "U" ? gapHigh : gapLow
+                // Gap end = prior-close side of the gap.
+                // Gap up: low side. Gap down: high side.
+                gapEndPrice := dir == "U" ? gapLow : gapHigh
     gapEndPrice
 
 f_isBullBar(_open, _close) =>
