@@ -3,86 +3,105 @@ indicator("PA Engine Alert System", shorttitle = "PA Engine Alerts", overlay=tru
 
 // ===================== User Inputs =====================
 
-// ── Signal Display ──
-showBullSignals         = input.bool(true,  title="Show Bull Signals",            group="Signal Display", tooltip="Enable bullish pressure signal markers and signal-overlap indications.")
-showBearSignals         = input.bool(true,  title="Show Bear Signals",            group="Signal Display", tooltip="Enable bearish pressure signal markers and signal-overlap indications.")
-showSetupSignals        = input.bool(true,  title="Setup Signals (Circle)",       group="Signal Display", tooltip="Setup-quality bar — not standalone actionable. Best used with failed-breakout context to identify potential reversals.")
-showIgnitionSignals     = input.bool(true,  title="Ignition Signals (Triangle)",  group="Signal Display", tooltip="Actionable momentum signal that can stand on its own without requiring failed-breakout context.")
-showStrongIgnitions     = input.bool(true,  title="Strong Ignitions (Diamond)",   group="Signal Display", tooltip="Strongest ignition signal — same concept as Ignition but with higher bar quality/strength. Useful for bias shifts through key levels.")
-showSignalLegend        = input.bool(false, title="Show Signal Legend",           group="Signal Display", tooltip="Display a small on-chart legend mapping shapes to signal tiers.")
+groupCoreAlerts = "01. Core Alert Controls"
+groupSetupFilters = "02. Setup Filters"
+groupThesis = "03. Thesis"
+groupScalpLevels = "04. Scalp Levels"
+groupOpeningRange = "05. Opening Range"
+groupRisk = "06. Risk / Position Sizing"
+groupTargets = "07. Target Settings"
+groupSignalEngine = "08. Signal Engine Tuning"
+groupDisplay = "09. Display / Visuals"
+groupDebug = "10. Debug / Advanced"
 
-// ── Signal Tuning ──
-onlyHighVolumeSignals         = input.bool(false,  title="Pressure: Only Show High-Volume Signals", group="Signal Tuning", tooltip="When enabled, pressure bull/bear signals are shown only when volume is greater than the prior bar.")
-maxLookback                   = input.int(20,      title="Pressure: Max Lookback",                  group="Signal Tuning", minval=3, tooltip="Maximum number of bars to scan backward when finding prior up/down legs for fallback midpoint checks.")
-pressureBodyWickThreshold     = input.float(0.40,  title="Pressure: Body/Wick Range Threshold",     group="Signal Tuning", minval=0.05, maxval=0.95, step=0.05, tooltip="Minimum fraction of the full bar range required for body or wick qualification in pressure bar quality checks (default 40%).")
-acceptableVolumeThreshold     = input(0.33,        title="Acceptable Volume Threshold",             group="Signal Tuning", tooltip="Set the minimum volume threshold as a multiple of the volume average (e.g., 0.33x volume average). Bars with volume below this threshold will not display indications.")
-volumeMetricLength            = input.int(50,      title="Volume SMA Length",                       group="Signal Tuning", minval=10, maxval=500, tooltip="Set the length for the volume SMA calculation.")
-acceptableVolatilityThreshold = input(0.33,        title="Acceptable Volatility Threshold",         group="Signal Tuning", tooltip="Set the minimum volatility threshold as a multiple of the ATR (e.g., 0.5x ATR). Bars with volatility below this threshold will not display indications.")
-atrLength                     = input(14,          title="ATR Length",                              group="Signal Tuning", tooltip="Set the length of the ATR calculation.")
+// 01. Core Alert Controls
+enableScalpAlerts        = input.bool(true, title="Enable Scalp Alerts", group=groupCoreAlerts)
+tickerInput              = input.string("MES", title="Ticker", options=["MES", "MNQ"], group=groupCoreAlerts)
+alertOnBullSignals       = input.bool(true, title="Alert On Bull Signals", group=groupCoreAlerts)
+alertOnBearSignals       = input.bool(true, title="Alert On Bear Signals", group=groupCoreAlerts)
+alertVolumeMode          = input.string("High Volume Only", title="Alert Volume Mode", options=["High Volume Only", "All"], group=groupCoreAlerts)
+waitFirst15Minutes       = input.bool(true, title="Wait First 15 Minutes", group=groupCoreAlerts)
+requireOpeningRangeBreak = input.bool(true, title="Require Opening Range Break", group=groupCoreAlerts)
+requireValidTarget       = input.bool(true, title="Require Valid Target", group=groupCoreAlerts)
+minTargetRR              = input.float(1.0, title="Minimum Target R:R", minval=0.25, step=0.05, group=groupCoreAlerts)
 
-// ===================== Scalp Alert Inputs =====================
-enableScalpAlerts          = input.bool(true, title="Enable Scalp Alerts", group="Scalp Alerts")
-requireLevelBreakSetup     = input.bool(true, title="Require Level Break Setup", group="Scalp Alerts", tooltip="Require scalp alerts to have a signal bar that touches an enabled scalp entry level and closes beyond it.")
-requireTwoBarSetup         = input.bool(true, title="Require Two-Bar Setup", group="Scalp Alerts", tooltip="Require scalp alerts to have no qualifying level break plus a trend-body signal bar with confirmation from one of the prior two bars.")
-thesisLevel                = input.float(0.0, title="Thesis Level", step=0.25, group="Scalp Alerts")
-initialThesis              = input.string("Neutral", title="Initial Thesis", options=["Neutral", "Long", "Short"], group="Scalp Alerts")
-showThesisLabel            = input.bool(true, title="Show Thesis Status Table", group="Scalp Alerts")
-showOpeningRange           = input.bool(true, title="Show Opening Range", group="Scalp Alerts")
-requireOpeningRangeBreak   = input.bool(true, title="Require Opening Range Break", group="Scalp Alerts")
-waitFirst15Minutes         = input.bool(true, title="Wait First 15 Minutes", group="Scalp Alerts")
-alertOnBullSignals         = input.bool(true, title="Alert On Bull Signals", group="Scalp Alerts")
-alertOnBearSignals         = input.bool(true, title="Alert On Bear Signals", group="Scalp Alerts")
-alertVolumeMode            = input.string("High Volume Only", title="Alert Volume Mode", options=["High Volume Only", "All"], group="Scalp Alerts")
-alertSetupSignals          = input.bool(true, title="Alert Setup Signals", group="Scalp Alerts")
-alertIgnitionSignals       = input.bool(true, title="Alert Ignition Signals", group="Scalp Alerts")
-alertStrongIgnitions       = input.bool(true, title="Alert Strong Ignitions", group="Scalp Alerts")
-showHistoricalAlertMarkers = input.bool(true, title="Show Alert Markers", group="Scalp Alerts")
-showAlertEntryLabels       = input.bool(true, title="Show Alert Entry Labels", group="Scalp Alerts")
+// 02. Setup Filters
+requireLevelBreakSetup   = input.bool(true, title="Require Level Break Setup", group=groupSetupFilters, tooltip="Require scalp alerts to have a signal bar that touches an enabled scalp entry level and closes beyond it.")
+requireTwoBarSetup       = input.bool(true, title="Require Two-Bar Setup", group=groupSetupFilters, tooltip="Require scalp alerts to have no qualifying level break plus a trend-body signal bar with confirmation from one of the prior two bars.")
+minLevelEntryRetracement = input.float(0.20, title="Minimum Level Entry Retracement", minval=0.0, maxval=0.5, step=0.05, group=groupSetupFilters)
+alertSetupSignals        = input.bool(true, title="Allow Setup Signals", group=groupSetupFilters)
+alertIgnitionSignals     = input.bool(true, title="Allow Ignition Signals", group=groupSetupFilters)
+alertStrongIgnitions     = input.bool(true, title="Allow Strong Ignitions", group=groupSetupFilters)
 
-useAutoThesis = input.bool(true, "Use Auto Thesis", group="Auto Thesis")
-autoThesisFallbackToManual = input.bool(true, "Fallback To Manual Thesis If Auto Unavailable", group="Auto Thesis")
-autoThesisAtrMultiplier = input.float(0.75, "Auto Thesis ATR Multiplier", minval=0.1, step=0.05, group="Auto Thesis")
-thesisSourceMode = input.string("Auto From Ticker", "Thesis Source Mode", options=["Auto From Ticker", "Manual Source"], group="Auto Thesis")
-manualThesisSourceSymbol = input.string("AMEX:SPY", "Manual Thesis Source Symbol", group="Auto Thesis")
-thesisConversionMode = input.string("RTH Open Ratio", "Thesis Conversion Mode", options=["RTH Open Ratio", "Current Price Ratio"], group="Auto Thesis")
-includeDailyGapsInAutoThesis = input.bool(true, "Include Daily Gaps In Auto Thesis", group="Auto Thesis")
-showAutoThesisLevel = input.bool(true, "Show Auto/Effective Thesis Level", group="Auto Thesis")
-showAutoThesisDebug = input.bool(false, "Show Auto Thesis Debug", group="Auto Thesis")
+// 03. Thesis
+useAutoThesis                 = input.bool(true, title="Use Auto Thesis", group=groupThesis)
+autoThesisFallbackToManual    = input.bool(true, title="Fallback To Manual Thesis If Auto Unavailable", group=groupThesis)
+initialThesis                 = input.string("Neutral", title="Initial Thesis", options=["Neutral", "Long", "Short"], group=groupThesis)
+thesisLevel                   = input.float(0.0, title="Manual Thesis Level", step=0.25, group=groupThesis)
+autoThesisAtrMultiplier       = input.float(0.75, title="Auto Thesis ATR Multiplier", minval=0.1, step=0.05, group=groupThesis)
+thesisSourceMode              = input.string("Auto From Ticker", title="Thesis Source Mode", options=["Auto From Ticker", "Manual Source"], group=groupThesis)
+manualThesisSourceSymbol      = input.string("AMEX:SPY", title="Manual Thesis Source Symbol", group=groupThesis)
+thesisConversionMode          = input.string("RTH Open Ratio", title="Thesis Conversion Mode", options=["RTH Open Ratio", "Current Price Ratio"], group=groupThesis)
+includeDailyGapsInAutoThesis  = input.bool(true, title="Include Daily Gaps In Auto Thesis", group=groupThesis)
+showAutoThesisLevel           = input.bool(true, title="Show Auto/Effective Thesis Level", group=groupThesis)
+showThesisLabel               = input.bool(true, title="Show Thesis Status Table", group=groupThesis)
 
-requireValidTarget = input.bool(true, title="Require Valid Target", group="Scalp Targets")
-minTargetRR = input.float(1.0, title="Minimum Target R:R", minval=0.25, step=0.05, group="Scalp Targets")
-allowSignalExtremeHodLodTarget = input.bool(true, title="Allow Signal-Bar HOD/LOD Edge Target", group="Scalp Targets", tooltip="Allows HOD/LOD as the target when the signal bar itself made HOD/LOD and the entry is a 50% retracement, even if the R:R is slightly below 1:1 because the stop is one tick beyond the signal bar.")
-hodLodEdgeToleranceTicks = input.int(1, title="HOD/LOD Edge Tolerance Ticks", minval=0, maxval=4, group="Scalp Targets")
-maxTrackedSwingTargets = input.int(100, title="Max Tracked Swing Targets", minval=20, maxval=300, group="Scalp Targets")
+// 04. Scalp Levels
+useAutoPrevDayHighLow            = input.bool(true, title="Use Auto PDH/PDL", group=groupScalpLevels)
+usePrevDayHighLevel              = input.bool(true, title="Use PDH Level", group=groupScalpLevels)
+prevDayHighLevel                 = input.float(0.0, title="Manual/Fallback PDH Level", step=0.25, group=groupScalpLevels)
+usePrevDayLowLevel               = input.bool(true, title="Use PDL Level", group=groupScalpLevels)
+prevDayLowLevel                  = input.float(0.0, title="Manual/Fallback PDL Level", step=0.25, group=groupScalpLevels)
+useAutoDailyOpen                 = input.bool(true, title="Use Auto Daily Open", group=groupScalpLevels)
+useDailyOpenLevel                = input.bool(true, title="Use Daily Open Level", group=groupScalpLevels)
+dailyOpenLevel                   = input.float(0.0, title="Manual/Fallback Daily Open", step=0.25, group=groupScalpLevels)
+useAutoPremarketHighLow          = input.bool(true, title="Use Auto PMH/PML", group=groupScalpLevels)
+usePremarketHighLevel            = input.bool(true, title="Use PMH Level", group=groupScalpLevels)
+premarketHighLevel               = input.float(0.0, title="Manual/Fallback PMH Level", step=0.25, group=groupScalpLevels)
+usePremarketLowLevel             = input.bool(true, title="Use PML Level", group=groupScalpLevels)
+premarketLowLevel                = input.float(0.0, title="Manual/Fallback PML Level", step=0.25, group=groupScalpLevels)
+useOpeningRangeHighAsEntryLevel  = input.bool(true, title="Use ORH As Entry Level", group=groupScalpLevels)
+useOpeningRangeLowAsEntryLevel   = input.bool(true, title="Use ORL As Entry Level", group=groupScalpLevels)
+showAutoScalpLevels              = input.bool(true, title="Show Auto/Effective Scalp Levels", group=groupScalpLevels)
 
-useManualOpeningRangeFallback = input.bool(false, title="Use Manual Opening Range Fallback", group="Opening Range Fallback")
-manualOpeningRangeHigh        = input.float(0.0, title="Manual Opening Range High", step=0.25, group="Opening Range Fallback")
-manualOpeningRangeLow         = input.float(0.0, title="Manual Opening Range Low", step=0.25, group="Opening Range Fallback")
+// 05. Opening Range
+showOpeningRange                 = input.bool(true, title="Show Opening Range", group=groupOpeningRange)
+useManualOpeningRangeFallback    = input.bool(false, title="Use Manual Opening Range Fallback", group=groupOpeningRange)
+manualOpeningRangeHigh           = input.float(0.0, title="Manual Opening Range High", step=0.25, group=groupOpeningRange)
+manualOpeningRangeLow            = input.float(0.0, title="Manual Opening Range Low", step=0.25, group=groupOpeningRange)
 
-usePrevDayHighLevel = input.bool(true, title="Use Previous Day High Level", group="Scalp Entry Levels")
-prevDayHighLevel    = input.float(0.0, title="Previous Day High Level", step=0.25, group="Scalp Entry Levels")
-usePrevDayLowLevel  = input.bool(true, title="Use Previous Day Low Level", group="Scalp Entry Levels")
-prevDayLowLevel     = input.float(0.0, title="Previous Day Low Level", step=0.25, group="Scalp Entry Levels")
-useDailyOpenLevel   = input.bool(true, title="Use Daily Open Level", group="Scalp Entry Levels")
-dailyOpenLevel      = input.float(0.0, title="Daily Open Level", step=0.25, group="Scalp Entry Levels")
-usePremarketHighLevel = input.bool(true, title="Use Premarket High Level", group="Scalp Entry Levels")
-premarketHighLevel    = input.float(0.0, title="Premarket High Level", step=0.25, group="Scalp Entry Levels")
-usePremarketLowLevel  = input.bool(true, title="Use Premarket Low Level", group="Scalp Entry Levels")
-premarketLowLevel     = input.float(0.0, title="Premarket Low Level", step=0.25, group="Scalp Entry Levels")
-useOpeningRangeHighAsEntryLevel = input.bool(true, title="Use Opening Range High As Entry Level", group="Scalp Entry Levels")
-useOpeningRangeLowAsEntryLevel  = input.bool(true, title="Use Opening Range Low As Entry Level", group="Scalp Entry Levels")
+// 06. Risk / Position Sizing
+maxRiskDollars      = input.float(215.0, title="Max Risk Dollars", minval=0.0, step=10.0, group=groupRisk)
+commissionRoundTrip = input.float(1.24, title="Commission Per Contract, Round Trip", minval=0.0, step=0.01, group=groupRisk)
+useMaxContractCap   = input.bool(true, title="Use Max Contract Cap", group=groupRisk)
+maxContracts        = input.int(20, title="Max Contracts", minval=1, group=groupRisk)
 
-useAutoPrevDayHighLow    = input.bool(true, title="Use Auto Previous Day High/Low", group="Auto Scalp Levels")
-useAutoDailyOpen         = input.bool(true, title="Use Auto Daily Open", group="Auto Scalp Levels")
-useAutoPremarketHighLow  = input.bool(true, title="Use Auto Premarket High/Low", group="Auto Scalp Levels")
-showAutoScalpLevels      = input.bool(true, title="Show Auto/Effective Scalp Levels", group="Auto Scalp Levels")
-showDetailedLevelStatus  = input.bool(false, title="Show Detailed Level Status", group="Auto Scalp Levels")
+// 07. Target Settings
+allowSignalExtremeHodLodTarget = input.bool(true, title="Allow Signal-Bar HOD/LOD Edge Target", group=groupTargets, tooltip="Allows HOD/LOD as the target when the signal bar itself made HOD/LOD and the entry is a 50% retracement, even if the R:R is slightly below 1:1 because the stop is one tick beyond the signal bar.")
+hodLodEdgeToleranceTicks       = input.int(1, title="HOD/LOD Edge Tolerance Ticks", minval=0, maxval=4, group=groupTargets)
+maxTrackedSwingTargets         = input.int(100, title="Max Tracked Swing Targets", minval=20, maxval=300, group=groupTargets)
 
-tickerInput         = input.string("MES", title="Ticker", options=["MES", "MNQ"], group="Scalp Risk")
-maxRiskDollars      = input.float(215.0, title="Max Risk Dollars", minval=0.0, step=10.0, group="Scalp Risk")
-commissionRoundTrip = input.float(1.24, title="Commission Per Contract, Round Trip", minval=0.0, step=0.01, group="Scalp Risk")
-useMaxContractCap   = input.bool(true, title="Use Max Contract Cap", group="Scalp Risk")
-maxContracts        = input.int(20, title="Max Contracts", minval=1, group="Scalp Risk")
+// 08. Signal Engine Tuning
+onlyHighVolumeSignals         = input.bool(false, title="Pressure: Only Show High-Volume Signals", group=groupSignalEngine, tooltip="When enabled, pressure bull/bear signals are shown only when volume is greater than the prior bar.")
+maxLookback                   = input.int(20, title="Pressure: Max Lookback", group=groupSignalEngine, minval=3, tooltip="Maximum number of bars to scan backward when finding prior up/down legs for fallback midpoint checks.")
+pressureBodyWickThreshold     = input.float(0.40, title="Pressure: Body/Wick Range Threshold", group=groupSignalEngine, minval=0.05, maxval=0.95, step=0.05, tooltip="Minimum fraction of the full bar range required for body or wick qualification in pressure bar quality checks (default 40%).")
+acceptableVolumeThreshold     = input(0.33, title="Acceptable Volume Threshold", group=groupSignalEngine, tooltip="Set the minimum volume threshold as a multiple of the volume average (e.g., 0.33x volume average). Bars with volume below this threshold will not display indications.")
+volumeMetricLength            = input.int(50, title="Volume SMA Length", group=groupSignalEngine, minval=10, maxval=500, tooltip="Set the length for the volume SMA calculation.")
+acceptableVolatilityThreshold = input(0.33, title="Acceptable Volatility Threshold", group=groupSignalEngine, tooltip="Set the minimum volatility threshold as a multiple of the ATR (e.g., 0.5x ATR). Bars with volatility below this threshold will not display indications.")
+atrLength                     = input(14, title="ATR Length", group=groupSignalEngine, tooltip="Set the length of the ATR calculation.")
+
+// 09. Display / Visuals
+showBullSignals              = input.bool(true, title="Show Bull Signals", group=groupDisplay, tooltip="Enable bullish pressure signal markers and signal-overlap indications.")
+showBearSignals              = input.bool(true, title="Show Bear Signals", group=groupDisplay, tooltip="Enable bearish pressure signal markers and signal-overlap indications.")
+showSetupSignals             = input.bool(true, title="Setup Signals (Circle)", group=groupDisplay, tooltip="Setup-quality bar, not standalone actionable. Best used with failed-breakout context to identify potential reversals.")
+showIgnitionSignals          = input.bool(true, title="Ignition Signals (Triangle)", group=groupDisplay, tooltip="Actionable momentum signal that can stand on its own without requiring failed-breakout context.")
+showStrongIgnitions          = input.bool(true, title="Strong Ignitions (Diamond)", group=groupDisplay, tooltip="Strongest ignition signal; same concept as Ignition but with higher bar quality/strength. Useful for bias shifts through key levels.")
+showSignalLegend             = input.bool(false, title="Show Signal Legend", group=groupDisplay, tooltip="Display a small on-chart legend mapping shapes to signal tiers.")
+alertLabelMode               = input.string("Compact", title="Historical Alert Labels", options=["Off", "Marker Only", "Compact"], group=groupDisplay)
+
+// 10. Debug / Advanced
+showAutoThesisDebug    = input.bool(false, title="Show Auto Thesis Debug", group=groupDebug)
+showDetailedLevelStatus = input.bool(false, title="Show Detailed Level Status", group=groupDebug)
 
 scalpPointValue = tickerInput == "MES" ? 5.0 : 2.0
 scalpTickSize   = 0.25
@@ -942,8 +961,8 @@ bullTierAllowed = (alertSetupSignals and bullAlertSetupTier) or (alertIgnitionSi
 bearTierAllowed = (alertSetupSignals and bearAlertSetupTier) or (alertIgnitionSignals and bearAlertIgnitionTier) or (alertStrongIgnitions and bearAlertStrongIgnitionTier)
 bullVolumeTextShort = bullHighVolumeAlertSignal ? "HV" : "LV"
 bearVolumeTextShort = bearHighVolumeAlertSignal ? "HV" : "LV"
-bullSignalTierShort = bullAlertStrongIgnitionTier ? "S-IGN" : bullAlertIgnitionTier ? "IGN" : bullAlertSetupTier ? "FBO" : "N/A"
-bearSignalTierShort = bearAlertStrongIgnitionTier ? "S-IGN" : bearAlertIgnitionTier ? "IGN" : bearAlertSetupTier ? "FBO" : "N/A"
+bullSignalTierShort = bullAlertStrongIgnitionTier or bullAlertIgnitionTier ? "IGN" : bullAlertSetupTier ? "FBO" : "N/A"
+bearSignalTierShort = bearAlertStrongIgnitionTier or bearAlertIgnitionTier ? "IGN" : bearAlertSetupTier ? "FBO" : "N/A"
 bullCompactSignalText = bullVolumeTextShort + " " + bullSignalTierShort
 bearCompactSignalText = bearVolumeTextShort + " " + bearSignalTierShort
 
@@ -991,11 +1010,20 @@ longSelectedLevelName = longMostKeyTouchedLevelBroken ? longMostKeyTouchedLevelN
 shortSelectedLevelPrice = shortMostKeyTouchedLevelBroken ? shortMostKeyTouchedLevelPrice : na
 shortSelectedLevelName = shortMostKeyTouchedLevelBroken ? shortMostKeyTouchedLevelName : "N/A"
 
+// Level-entry retracement validation only applies when the broken level would be the entry.
+levelEntryRange = scalpSignalHigh - scalpSignalLow
+longLevelEntryRequired = not na(longSelectedLevelPrice) and longSelectedLevelPrice >= longEntry50 and longSelectedLevelPrice < scalpSignalClose
+shortLevelEntryRequired = not na(shortSelectedLevelPrice) and shortSelectedLevelPrice <= shortEntry50 and shortSelectedLevelPrice > scalpSignalClose
+float longLevelEntryRetracement = (levelEntryRange > 0 and longLevelEntryRequired) ? (scalpSignalHigh - longSelectedLevelPrice) / levelEntryRange : na
+float shortLevelEntryRetracement = (levelEntryRange > 0 and shortLevelEntryRequired) ? (shortSelectedLevelPrice - scalpSignalLow) / levelEntryRange : na
+longLevelEntryRetracementOk = not longLevelEntryRequired or (not na(longLevelEntryRetracement) and longLevelEntryRetracement >= minLevelEntryRetracement)
+shortLevelEntryRetracementOk = not shortLevelEntryRequired or (not na(shortLevelEntryRetracement) and shortLevelEntryRetracement >= minLevelEntryRetracement)
+
 // ===================== Scalp Setup Qualification Logic =====================
 // Level-break setups reuse the enabled scalp entry level checks above. A selected
 // level only exists after the signal bar range includes that level and closes beyond it.
-longLevelBreakSetup = longMostKeyTouchedLevelBroken
-shortLevelBreakSetup = shortMostKeyTouchedLevelBroken
+longLevelBreakSetup = longMostKeyTouchedLevelBroken and longLevelEntryRetracementOk
+shortLevelBreakSetup = shortMostKeyTouchedLevelBroken and shortLevelEntryRetracementOk
 
 // Two-bar setups are fallback qualifiers: no qualifying level break, a trend-body
 // signal bar, and one of the prior two bars closing strongly in the signal direction.
@@ -1019,8 +1047,8 @@ longScalpSetupQualified = not requireAnyScalpSetup or longRequiredSetupMatched
 shortScalpSetupQualified = not requireAnyScalpSetup or shortRequiredSetupMatched
 
 // ===================== Scalp Entry / Stop / Risk Logic =====================
-longUsePriorityLevel = not na(longSelectedLevelPrice) and longSelectedLevelPrice >= longEntry50 and longSelectedLevelPrice < scalpSignalClose
-shortUsePriorityLevel = not na(shortSelectedLevelPrice) and shortSelectedLevelPrice <= shortEntry50 and shortSelectedLevelPrice > scalpSignalClose
+longUsePriorityLevel = longLevelEntryRequired and longLevelEntryRetracementOk
+shortUsePriorityLevel = shortLevelEntryRequired and shortLevelEntryRetracementOk
 longEntryType = longUsePriorityLevel ? longSelectedLevelName : "50%"
 shortEntryType = shortUsePriorityLevel ? shortSelectedLevelName : "50%"
 
@@ -1109,80 +1137,47 @@ bullAlertLabelTitle = "LONG"
 bearScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == -1 and alertOnBearSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bearTierAllowed and shortScalpSetupQualified and shortRiskValid and shortTargetFilterPassed
 bearAlertLabelTitle = "SHORT"
 
-if showHistoricalAlertMarkers and bullScalpAlert
+showHistoricalAlertLabels = alertLabelMode != "Off"
+showCompactAlertLabels = alertLabelMode == "Compact"
+
+f_buildMarkerChartLabel(_direction, _compactSignalText) =>
+    _direction + "\n" + _compactSignalText
+
+f_buildCompactChartLabel(_direction, _compactSignalText, _setupTextShort, _entryPrice, _targetPrice, _targetType, _targetRR, _contracts) =>
+    _direction + " " + _compactSignalText + "\n" +
+     _setupTextShort + " | E " + f_priceText(_entryPrice) + "\n" +
+     "T " + f_priceText(_targetPrice) + " " + _targetType + "\n" +
+     str.tostring(_contracts) + "ct | " + f_rrText(_targetRR)
+
+if showHistoricalAlertLabels and bullScalpAlert
+    string bullChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bullAlertLabelTitle, bullCompactSignalText, longSetupTextShort, longEntryPrice, longTargetPrice, longTargetType, longTargetRR, longContracts) : f_buildMarkerChartLabel(bullAlertLabelTitle, bullCompactSignalText)
     label.new(
          bar_index,
          low,
-         "LONG\n" + bullCompactSignalText,
+         bullChartLabelText,
          style=label.style_label_up,
          textcolor=color.white,
          color=color.new(color.lime, 0),
-         size=size.tiny
+         size=showCompactAlertLabels ? size.small : size.tiny
     )
 
-if showHistoricalAlertMarkers and bearScalpAlert
+if showHistoricalAlertLabels and bearScalpAlert
+    string bearChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bearAlertLabelTitle, bearCompactSignalText, shortSetupTextShort, shortEntryPrice, shortTargetPrice, shortTargetType, shortTargetRR, shortContracts) : f_buildMarkerChartLabel(bearAlertLabelTitle, bearCompactSignalText)
     label.new(
          bar_index,
          high,
-         "SHORT\n" + bearCompactSignalText,
+         bearChartLabelText,
          style=label.style_label_down,
          textcolor=color.white,
          color=color.new(color.red, 0),
-         size=size.tiny
-    )
-
-if showAlertEntryLabels and bullScalpAlert
-    label.new(
-         bar_index,
-         low,
-         bullAlertLabelTitle + "\n" +
-         bullCompactSignalText + "\n" +
-         "Setup: " + longSetupTextShort + "\n" +
-         "Entry: " + f_priceText(longEntryPrice) + "\n" +
-         "Stop: " + f_priceText(longStopPrice) + "\n" +
-         "Target: " + f_priceText(longTargetPrice) + "\n" +
-         "Target Type: " + longTargetType + "\n" +
-         "R:R: " + f_rrText(longTargetRR) + "\n" +
-         "Contracts: " + str.tostring(longContracts) + "\n" +
-         "Entry Type: " + longEntryType,
-         style=label.style_label_up,
-         textcolor=color.white,
-         color=color.new(color.lime, 0),
-         size=size.small
-    )
-
-if showAlertEntryLabels and bearScalpAlert
-    label.new(
-         bar_index,
-         high,
-         bearAlertLabelTitle + "\n" +
-         bearCompactSignalText + "\n" +
-         "Setup: " + shortSetupTextShort + "\n" +
-         "Entry: " + f_priceText(shortEntryPrice) + "\n" +
-         "Stop: " + f_priceText(shortStopPrice) + "\n" +
-         "Target: " + f_priceText(shortTargetPrice) + "\n" +
-         "Target Type: " + shortTargetType + "\n" +
-         "R:R: " + f_rrText(shortTargetRR) + "\n" +
-         "Contracts: " + str.tostring(shortContracts) + "\n" +
-         "Entry Type: " + shortEntryType,
-         style=label.style_label_down,
-         textcolor=color.white,
-         color=color.new(color.red, 0),
-         size=size.small
+         size=showCompactAlertLabels ? size.small : size.tiny
     )
 
 // ===================== Alert Message =====================
 f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _setupTextFull, _entryType, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _riskPoints, _contracts) =>
     "PA ENGINE " + _directionTitle + "\n" +
-     _compactSignalText + "\n" +
-     "Setup: " + _setupTextFull + "\n" +
-     "Symbol: " + syminfo.ticker + "\n" +
-     "Timeframe: " + timeframe.period + "\n" +
-     "Thesis: " + f_thesisText(thesisState) + "\n" +
-     "Thesis Level: " + f_priceText(effectiveThesisLevel) + "\n" +
-     "Thesis Name: " + effectiveThesisName + "\n" +
-     "Source Symbol: " + effectiveThesisSourceSymbol + "\n" +
-     "Opening Range: " + openingRangeStatus + "\n" +
+     _compactSignalText + " | " + _setupTextFull + "\n" +
+     syminfo.ticker + " " + timeframe.period + "\n\n" +
      "Entry: " + f_priceText(_entryPrice) + "\n" +
      "Stop: " + f_priceText(_stopPrice) + "\n" +
      "Target: " + f_priceText(_targetPrice) + "\n" +
@@ -1190,18 +1185,22 @@ f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _setupTextFull, _e
      "R:R: " + f_rrText(_targetRR) + "\n" +
      "Risk: " + f_pointsText(_riskPoints) + " pts\n" +
      "Contracts: " + str.tostring(_contracts) + "\n" +
-     "Entry Type: " + _entryType
+     "Entry Type: " + _entryType + "\n\n" +
+     "Thesis: " + f_thesisText(thesisState) + "\n" +
+     "Thesis Level: " + f_priceText(effectiveThesisLevel) + "\n" +
+     "Opening Range: " + openingRangeStatus
 
 if bullScalpAlert
     alert(f_buildScalpAlertMessage(bullAlertLabelTitle, bullCompactSignalText, longSetupTextFull, longEntryType, longEntryPrice, longStopPrice, longTargetPrice, longTargetType, longTargetRR, longRiskPoints, longContracts), alert.freq_once_per_bar_close)
 else if bearScalpAlert
     alert(f_buildScalpAlertMessage(bearAlertLabelTitle, bearCompactSignalText, shortSetupTextFull, shortEntryType, shortEntryPrice, shortStopPrice, shortTargetPrice, shortTargetType, shortTargetRR, shortRiskPoints, shortContracts), alert.freq_once_per_bar_close)
 
-plot(showAutoThesisLevel and not na(effectiveThesisLevel) ? effectiveThesisLevel : na, "Effective Thesis Level", color=color.new(color.yellow, 0), linewidth=2, style=plot.style_linebr)
+thesisPlot = showAutoThesisLevel and inScalpRTHSession and not na(effectiveThesisLevel) and effectiveThesisLevel > 0 ? effectiveThesisLevel : na
+plot(thesisPlot, "Effective Thesis Level", color=color.new(color.yellow, 0), linewidth=2, style=plot.style_linebr)
 plot(showOpeningRange ? openingRangeDisplayHigh : na, "15m Opening Range High", color=color.green, linewidth=1, style=plot.style_linebr)
 plot(showOpeningRange ? openingRangeDisplayLow : na, "15m Opening Range Low", color=color.green, linewidth=1, style=plot.style_linebr)
-pdhPlot = showAutoScalpLevels and inScalpRTHSession and not newScalpRTHSession and effectivePrevDayHigh > 0 ? effectivePrevDayHigh : na
-pdlPlot = showAutoScalpLevels and inScalpRTHSession and not newScalpRTHSession and effectivePrevDayLow > 0 ? effectivePrevDayLow : na
+pdhPlot = showAutoScalpLevels and inScalpRTHSession and effectivePrevDayHigh > 0 ? effectivePrevDayHigh : na
+pdlPlot = showAutoScalpLevels and inScalpRTHSession and effectivePrevDayLow > 0 ? effectivePrevDayLow : na
 
 plot(pdhPlot, "Auto/Effective PDH", color=color.green, linewidth=2, style=plot.style_linebr)
 plot(pdlPlot, "Auto/Effective PDL", color=color.red, linewidth=2, style=plot.style_linebr)
@@ -1234,52 +1233,68 @@ if barstate.islast and showSignalLegend
     table.cell(legendTable, 1, 2, " Strong Ignition",  text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
 
 // ===================== Scalp Status Table =====================
-var table scalpStatusTable = table.new(position.bottom_right, 2, 26, bgcolor=color.new(color.black, 85), border_width=0)
+var table scalpStatusTable = table.new(position.bottom_right, 2, 19, bgcolor=color.new(color.black, 85), border_width=0)
 if barstate.islast
-    table.clear(scalpStatusTable, 0, 0, 1, 25)
+    table.clear(scalpStatusTable, 0, 0, 1, 18)
     if showThesisLabel
         statusTextColor = thesisState == 1 ? color.lime : thesisState == -1 ? color.red : color.rgb(220, 220, 220)
-        alertsStatusText = enableScalpAlerts ? "ENABLED" : "DISABLED"
         alertVolumeTableText = alertVolumeMode == "High Volume Only" ? "HIGH VOLUME ONLY" : "ALL"
-        table.cell(scalpStatusTable, 0, 0, "Thesis", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, 0, f_thesisText(thesisState), text_color=statusTextColor, text_size=size.small, text_halign=text.align_right)
-        table.cell(scalpStatusTable, 0, 1, "Thesis Level", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, 1, f_priceText(effectiveThesisLevel), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-        table.cell(scalpStatusTable, 0, 3, "Thesis Name", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, 3, effectiveThesisName, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-        table.cell(scalpStatusTable, 0, 4, "Source Symbol", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, 4, effectiveThesisSourceSymbol, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-        table.cell(scalpStatusTable, 0, 10, "Opening Range", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, 10, openingRangeStatus, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-        table.cell(scalpStatusTable, 0, 11, "Alerts", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, 11, alertsStatusText, text_color=enableScalpAlerts ? color.lime : color.red, text_size=size.small, text_halign=text.align_right)
-        table.cell(scalpStatusTable, 0, 12, "Volume Mode", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, 12, alertVolumeTableText, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+        int scalpStatusRow = 0
+        table.cell(scalpStatusTable, 0, scalpStatusRow, "Thesis", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+        table.cell(scalpStatusTable, 1, scalpStatusRow, f_thesisText(thesisState), text_color=statusTextColor, text_size=size.small, text_halign=text.align_right)
+        scalpStatusRow += 1
+        table.cell(scalpStatusTable, 0, scalpStatusRow, "Thesis Level", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+        table.cell(scalpStatusTable, 1, scalpStatusRow, f_priceText(effectiveThesisLevel), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+        scalpStatusRow += 1
+        table.cell(scalpStatusTable, 0, scalpStatusRow, "Thesis Name", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+        table.cell(scalpStatusTable, 1, scalpStatusRow, effectiveThesisName, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+        scalpStatusRow += 1
+        table.cell(scalpStatusTable, 0, scalpStatusRow, "Source Symbol", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+        table.cell(scalpStatusTable, 1, scalpStatusRow, effectiveThesisSourceSymbol, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+        scalpStatusRow += 1
+        table.cell(scalpStatusTable, 0, scalpStatusRow, "Opening Range", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+        table.cell(scalpStatusTable, 1, scalpStatusRow, openingRangeStatus, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+        scalpStatusRow += 1
+        table.cell(scalpStatusTable, 0, scalpStatusRow, "Volume Mode", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+        table.cell(scalpStatusTable, 1, scalpStatusRow, alertVolumeTableText, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+        scalpStatusRow += 1
         if showDetailedLevelStatus
-            table.cell(scalpStatusTable, 0, 13, "PDH", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 13, f_priceText(effectivePrevDayHigh), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 14, "PDL", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 14, f_priceText(effectivePrevDayLow), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 15, "OP", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 15, f_priceText(effectiveDailyOpen), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 16, "PMH", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 16, f_priceText(effectivePremarketHigh), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 17, "PML", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 17, f_priceText(effectivePremarketLow), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 18, "PDH/PDL Source", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 18, prevDayHighLowSource, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 19, "OP Source", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 19, dailyOpenSource, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 20, "PM Source", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 20, premarketSource, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 21, "Auto Note", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 21, "Intraday, ideally 5m", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "PDH", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, f_priceText(effectivePrevDayHigh), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "PDL", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, f_priceText(effectivePrevDayLow), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "OP", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, f_priceText(effectiveDailyOpen), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "PMH", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, f_priceText(effectivePremarketHigh), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "PML", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, f_priceText(effectivePremarketLow), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "PDH/PDL Source", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, prevDayHighLowSource, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "OP Source", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, dailyOpenSource, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "PM Source", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, premarketSource, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "Auto Note", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, "Intraday, ideally 5m", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
         if showAutoThesisDebug
-            table.cell(scalpStatusTable, 0, 22, "Auto Distance", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 22, useAutoThesis ? f_pointsText(selectedAutoThesisDistance) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 23, "Daily Open Default", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 23, useAutoThesis ? f_boolText(autoThesisUsedDailyOpenDefault) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 24, "Auto Status", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 24, autoThesisUnavailableReason, text_color=autoThesisConvertedValid ? color.lime : color.red, text_size=size.small, text_halign=text.align_right)
-            table.cell(scalpStatusTable, 0, 25, "Auto Priority", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, 25, useAutoThesis and autoThesisSelectionValid ? str.tostring(selectedAutoThesisPriority) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "Auto Distance", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis ? f_pointsText(selectedAutoThesisDistance) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "Daily Open Default", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis ? f_boolText(autoThesisUsedDailyOpenDefault) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "Auto Status", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, autoThesisUnavailableReason, text_color=autoThesisConvertedValid ? color.lime : color.red, text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "Auto Priority", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis and autoThesisSelectionValid ? str.tostring(selectedAutoThesisPriority) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
