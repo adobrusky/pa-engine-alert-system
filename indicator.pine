@@ -28,6 +28,9 @@ minTargetRR              = input.float(1.0, title="Minimum Target R:R", minval=0
 // 02. Setup Filters
 requireLevelBreakSetup   = input.bool(true, title="Require Level Break Setup", group=groupSetupFilters, tooltip="Require scalp alerts to have a signal bar that touches an enabled scalp entry level and closes beyond it.")
 requireTwoBarSetup       = input.bool(true, title="Require Two-Bar Setup", group=groupSetupFilters, tooltip="Require scalp alerts to have no qualifying level break plus a trend-body signal bar with confirmation from one of the prior two bars.")
+requireTwoBarIgnition    = input.bool(true, title="Require Ignition for Two-Bar Setups", group=groupSetupFilters)
+skipFiveBarExtension     = input.bool(true, title="Skip 5+ Bar Extension", group=groupSetupFilters)
+skipStrongMicrochannelExtension = input.bool(true, title="Skip 3+ Bar Strong Extension", group=groupSetupFilters)
 minLevelEntryRetracement = input.float(0.20, title="Minimum Level Entry Retracement", minval=0.0, maxval=0.5, step=0.05, group=groupSetupFilters)
 alertSetupSignals        = input.bool(true, title="Allow Setup Signals", group=groupSetupFilters)
 alertIgnitionSignals     = input.bool(true, title="Allow Ignition Signals", group=groupSetupFilters)
@@ -115,6 +118,9 @@ body = math.abs(close - open)
 bodyHigh = math.max(open, close)
 bodyLow = math.min(open, close)
 barRange = high - low
+bodyPct = barRange > 0 ? body / barRange : 0.0
+closeInUpperThird = barRange > 0 and close >= low + barRange * (2.0 / 3.0)
+closeInLowerThird = barRange > 0 and close <= low + barRange * (1.0 / 3.0)
 upperWick = high - bodyHigh
 lowerWick = bodyLow - low
 
@@ -1027,18 +1033,44 @@ shortLevelEntryRetracementOk = not shortLevelEntryRequired or (not na(shortLevel
 longLevelBreakSetup = longMostKeyTouchedLevelBroken and longLevelEntryRetracementOk
 shortLevelBreakSetup = shortMostKeyTouchedLevelBroken and shortLevelEntryRetracementOk
 
+longPullbackBreak = not na(low[1]) and low < low[1]
+shortPullbackBreak = not na(high[1]) and high > high[1]
+longNoPullbackBreak = not na(low[1]) and not longPullbackBreak
+shortNoPullbackBreak = not na(high[1]) and not shortPullbackBreak
+var int longBarsWithoutPullbackBreak = 0
+var int shortBarsWithoutPullbackBreak = 0
+longBarsWithoutPullbackBreak := longNoPullbackBreak ? nz(longBarsWithoutPullbackBreak[1]) + 1 : 0
+shortBarsWithoutPullbackBreak := shortNoPullbackBreak ? nz(shortBarsWithoutPullbackBreak[1]) + 1 : 0
+
 // Two-bar setups are fallback qualifiers: no qualifying level break, a trend-body
 // signal bar, and one of the prior two bars closing strongly in the signal direction.
 longSignalTrendBar = f_isBullBar(open, close) and isBodyThreshold
 shortSignalTrendBar = f_isBearBar(open, close) and isBodyThreshold
 priorBullUpperThirdBar = f_bullUpperThirdBar(open[1], high[1], low[1], close[1]) or f_bullUpperThirdBar(open[2], high[2], low[2], close[2])
 priorBearLowerThirdBar = f_bearLowerThirdBar(open[1], high[1], low[1], close[1]) or f_bearLowerThirdBar(open[2], high[2], low[2], close[2])
-longTwoBarSetup = not longAnyEntryLevelTouched and longSignalTrendBar and priorBullUpperThirdBar
-shortTwoBarSetup = not shortAnyEntryLevelTouched and shortSignalTrendBar and priorBearLowerThirdBar
+longTwoBarSetupRaw = not longAnyEntryLevelTouched and longSignalTrendBar and priorBullUpperThirdBar
+shortTwoBarSetupRaw = not shortAnyEntryLevelTouched and shortSignalTrendBar and priorBearLowerThirdBar
+longTwoBarIgnitionOk = not requireTwoBarIgnition or scalpSignalClose > high[1]
+shortTwoBarIgnitionOk = not requireTwoBarIgnition or scalpSignalClose < low[1]
+longTwoBarSetup = longTwoBarSetupRaw and longTwoBarIgnitionOk
+shortTwoBarSetup = shortTwoBarSetupRaw and shortTwoBarIgnitionOk
 longSetupTextShort = longLevelBreakSetup ? "LB" : longTwoBarSetup ? "2B" : "None"
 shortSetupTextShort = shortLevelBreakSetup ? "LB" : shortTwoBarSetup ? "2B" : "None"
 longSetupTextFull = longLevelBreakSetup ? "Level Break" : longTwoBarSetup ? "Two-Bar Play" : "None"
 shortSetupTextFull = shortLevelBreakSetup ? "Level Break" : shortTwoBarSetup ? "Two-Bar Play" : "None"
+
+prior1StrongBull = f_isBullBar(open[1], close[1]) and bodyPct[1] >= 0.50 and closeInUpperThird[1]
+prior2StrongBull = f_isBullBar(open[2], close[2]) and bodyPct[2] >= 0.50 and closeInUpperThird[2]
+prior1StrongBear = f_isBearBar(open[1], close[1]) and bodyPct[1] >= 0.50 and closeInLowerThird[1]
+prior2StrongBear = f_isBearBar(open[2], close[2]) and bodyPct[2] >= 0.50 and closeInLowerThird[2]
+longFiveBarExtension = longBarsWithoutPullbackBreak >= 5
+shortFiveBarExtension = shortBarsWithoutPullbackBreak >= 5
+longStrongMicrochannelExtension = longBarsWithoutPullbackBreak >= 3 and prior1StrongBull and prior2StrongBull
+shortStrongMicrochannelExtension = shortBarsWithoutPullbackBreak >= 3 and prior1StrongBear and prior2StrongBear
+longExtendedSetup = longFiveBarExtension or longStrongMicrochannelExtension
+shortExtendedSetup = shortFiveBarExtension or shortStrongMicrochannelExtension
+longExtendedSetupBlocked = longExtendedSetup and ((skipFiveBarExtension and longFiveBarExtension) or (skipStrongMicrochannelExtension and longStrongMicrochannelExtension))
+shortExtendedSetupBlocked = shortExtendedSetup and ((skipFiveBarExtension and shortFiveBarExtension) or (skipStrongMicrochannelExtension and shortStrongMicrochannelExtension))
 
 // Requirement toggles act as filters. If neither setup is required, preserve the
 // original behavior and allow any alert that otherwise passes the alert conditions.
@@ -1133,10 +1165,10 @@ longTargetFilterPassed = not requireValidTarget or longTargetValid
 shortTargetFilterPassed = not requireValidTarget or shortTargetValid
 
 // ===================== Alert Conditions =====================
-bullScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == 1 and alertOnBullSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bullTierAllowed and longScalpSetupQualified and longRiskValid and longTargetFilterPassed
+bullScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == 1 and alertOnBullSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bullTierAllowed and longScalpSetupQualified and not longExtendedSetupBlocked and longRiskValid and longTargetFilterPassed
 bullAlertLabelTitle = "LONG"
 
-bearScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == -1 and alertOnBearSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bearTierAllowed and shortScalpSetupQualified and shortRiskValid and shortTargetFilterPassed
+bearScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == -1 and alertOnBearSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bearTierAllowed and shortScalpSetupQualified and not shortExtendedSetupBlocked and shortRiskValid and shortTargetFilterPassed
 bearAlertLabelTitle = "SHORT"
 
 showHistoricalAlertLabels = alertLabelMode != "Off"
