@@ -31,6 +31,13 @@ requireTwoBarSetup       = input.bool(true, title="Require Two-Bar Setup", group
 requireTwoBarIgnition    = input.bool(true, title="Require Ignition for Two-Bar Setups", group=groupSetupFilters)
 skipFiveBarExtension     = input.bool(true, title="Skip 5+ Bar Extension", group=groupSetupFilters)
 skipStrongMicrochannelExtension = input.bool(true, title="Skip 3+ Bar Strong Extension", group=groupSetupFilters)
+skipTwoBarSameColorExtension = input.bool(true, title="Skip 5 Same-Color Bars For Two-Bar Setups", group=groupSetupFilters)
+useFboImpulseFilter      = input.bool(true, title="Use FBO Impulse Filter", group=groupSetupFilters)
+fboImpulseTolerance      = input.float(0.0, title="FBO Impulse Tolerance", minval=0.0, step=0.05, group=groupSetupFilters)
+impulseLookback          = input.int(3, title="Impulse Lookback", minval=1, maxval=20, group=groupSetupFilters)
+impulseAtrLength         = input.int(14, title="Impulse ATR Length", minval=1, maxval=200, group=groupSetupFilters)
+esImpulseSymbol          = input.symbol("CME_MINI:ES1!", title="ES Impulse Symbol", group=groupSetupFilters)
+nqImpulseSymbol          = input.symbol("CME_MINI:NQ1!", title="NQ Impulse Symbol", group=groupSetupFilters)
 minLevelEntryRetracement = input.float(0.20, title="Minimum Level Entry Retracement", minval=0.0, maxval=0.5, step=0.05, group=groupSetupFilters)
 alertSetupSignals        = input.bool(true, title="Allow Setup Signals", group=groupSetupFilters)
 alertIgnitionSignals     = input.bool(true, title="Allow Ignition Signals", group=groupSetupFilters)
@@ -41,10 +48,11 @@ useAutoThesis                 = input.bool(true, title="Use Auto Thesis", group=
 autoThesisFallbackToManual    = input.bool(true, title="Fallback To Manual Thesis If Auto Unavailable", group=groupThesis)
 initialThesis                 = input.string("Neutral", title="Initial Thesis", options=["Neutral", "Long", "Short"], group=groupThesis)
 thesisLevel                   = input.float(0.0, title="Manual Thesis Level", step=0.25, group=groupThesis)
+thesisFollowThroughBars       = input.int(5, title="Thesis Follow-Through Bars", minval=1, maxval=20, group=groupThesis)
 autoThesisAtrMultiplier       = input.float(0.75, title="Auto Thesis ATR Multiplier", minval=0.1, step=0.05, group=groupThesis)
 thesisSourceMode              = input.string("Auto From Ticker", title="Thesis Source Mode", options=["Auto From Ticker", "Manual Source"], group=groupThesis)
 manualThesisSourceSymbol      = input.string("AMEX:SPY", title="Manual Thesis Source Symbol", group=groupThesis)
-thesisConversionMode          = input.string("RTH Open Ratio", title="Thesis Conversion Mode", options=["RTH Open Ratio", "Current Price Ratio"], group=groupThesis)
+thesisConversionMode          = input.string("Anchored RTH Ratio", title="Thesis Conversion Mode", options=["Anchored RTH Ratio", "RTH Open Ratio", "Current Price Ratio"], group=groupThesis)
 includeDailyGapsInAutoThesis  = input.bool(true, title="Include Daily Gaps In Auto Thesis", group=groupThesis)
 showAutoThesisLevel           = input.bool(true, title="Show Auto/Effective Thesis Level", group=groupThesis)
 showThesisLabel               = input.bool(true, title="Show Thesis Status Table", group=groupThesis)
@@ -101,6 +109,7 @@ showIgnitionSignals          = input.bool(true, title="Ignition Signals (Triangl
 showStrongIgnitions          = input.bool(true, title="Strong Ignitions (Diamond)", group=groupDisplay, tooltip="Strongest ignition signal; same concept as Ignition but with higher bar quality/strength. Useful for bias shifts through key levels.")
 showSignalLegend             = input.bool(false, title="Show Signal Legend", group=groupDisplay, tooltip="Display a small on-chart legend mapping shapes to signal tiers.")
 alertLabelMode               = input.string("Compact", title="Historical Alert Labels", options=["Off", "Marker Only", "Compact"], group=groupDisplay)
+showScalpSignalDetails       = input.bool(false, title="Show Scalp Signal Details", group=groupDisplay)
 
 // 10. Debug / Advanced
 showAutoThesisDebug    = input.bool(false, title="Show Auto Thesis Debug", group=groupDebug)
@@ -627,12 +636,19 @@ selectedAutoThesisAtrThreshold = sourceAtrThreshold
 autoThesisSelectionValid = f_validSourcePrice(selectedAutoThesisSourcePrice) and f_validSourcePrice(sourceDayOpen) and not na(selectedAutoThesisAtrThreshold)
 autoThesisUsedDailyOpenDefault = autoThesisSelectionValid and not autoHigherPriorityThesisFound
 
-chartConversionBase = thesisConversionMode == "RTH Open Ratio" ? autoDailyOpen : close
-sourceConversionBase = thesisConversionMode == "RTH Open Ratio" ? sourceDayOpen : sourceCloseForConversion
-convertedAutoThesisRaw = useAutoThesis and autoThesisSelectionValid and f_validSourcePrice(chartConversionBase) and f_validSourcePrice(sourceConversionBase) ? selectedAutoThesisSourcePrice * (chartConversionBase / sourceConversionBase) : na
+chartDailyOpenForThesis = f_validSourcePrice(autoDailyOpen) ? autoDailyOpen : f_validSourcePrice(effectiveDailyOpen) ? effectiveDailyOpen : na
+rthOpenRatioConverted = autoThesisSelectionValid and f_validSourcePrice(autoDailyOpen) and f_validSourcePrice(sourceDayOpen) ? selectedAutoThesisSourcePrice * (autoDailyOpen / sourceDayOpen) : na
+currentPriceRatioConverted = autoThesisSelectionValid and f_validSourcePrice(close) and f_validSourcePrice(sourceCloseForConversion) ? selectedAutoThesisSourcePrice * (close / sourceCloseForConversion) : na
+anchoredRthRatioConverted = autoThesisSelectionValid and f_validSourcePrice(autoDailyOpen) and f_validSourcePrice(sourceDayOpen) ? autoDailyOpen + (selectedAutoThesisSourcePrice - sourceDayOpen) * (autoDailyOpen / sourceDayOpen) : na
+convertedAutoThesisByMode = thesisConversionMode == "Anchored RTH Ratio" ? anchoredRthRatioConverted : thesisConversionMode == "RTH Open Ratio" ? rthOpenRatioConverted : currentPriceRatioConverted
+autoThesisUsesChartDailyOpen = selectedAutoThesisName == "Daily Open" and f_validSourcePrice(chartDailyOpenForThesis)
+convertedAutoThesisRaw = useAutoThesis and autoThesisSelectionValid ? (autoThesisUsesChartDailyOpen ? chartDailyOpenForThesis : convertedAutoThesisByMode) : na
 convertedAutoThesisLevel = f_validSourcePrice(convertedAutoThesisRaw) ? f_roundToScalpTick(convertedAutoThesisRaw) : na
 autoThesisConvertedValid = f_validSourcePrice(convertedAutoThesisLevel)
-autoThesisUnavailableReason = not useAutoThesis ? "Auto disabled" : not f_validSourcePrice(sourceDayOpen) ? "No source daily open" : not f_validSourcePrice(source1hRthAtr) ? "No source ATR" : not autoThesisSelectionValid ? "No source selection" : thesisConversionMode == "RTH Open Ratio" and not f_validSourcePrice(autoDailyOpen) ? "No chart RTH open" : thesisConversionMode == "Current Price Ratio" and not f_validSourcePrice(sourceCloseForConversion) ? "No source close" : not autoThesisConvertedValid ? "Conversion invalid" : "Auto ready"
+autoThesisConversionMethod = useAutoThesis and autoThesisSelectionValid ? (autoThesisUsesChartDailyOpen ? "Chart RTH Open" : thesisConversionMode) : "N/A"
+autoThesisNeedsChartRthOpen = not autoThesisUsesChartDailyOpen and (thesisConversionMode == "Anchored RTH Ratio" or thesisConversionMode == "RTH Open Ratio")
+autoThesisNeedsSourceClose = not autoThesisUsesChartDailyOpen and thesisConversionMode == "Current Price Ratio"
+autoThesisUnavailableReason = not useAutoThesis ? "Auto disabled" : not f_validSourcePrice(sourceDayOpen) ? "No source daily open" : not f_validSourcePrice(source1hRthAtr) ? "No source ATR" : not autoThesisSelectionValid ? "No source selection" : autoThesisNeedsChartRthOpen and not f_validSourcePrice(autoDailyOpen) ? "No chart RTH open" : autoThesisNeedsSourceClose and not f_validSourcePrice(sourceCloseForConversion) ? "No source close" : not autoThesisConvertedValid ? "Conversion invalid" : "Auto ready"
 
 float effectiveThesisLevel = na
 string effectiveThesisSource = "Unavailable"
@@ -842,40 +858,50 @@ bullPendingFollowThrough = validThesisLevel and pendingBullClearance and not na(
 bearPendingFollowThrough = validThesisLevel and pendingBearClearance and not na(pendingBearExpirationBar) and bar_index <= pendingBearExpirationBar and high < effectiveThesisLevel
 
 if barstate.isconfirmed
-    if pendingBullClearance and not na(pendingBullExpirationBar) and bar_index > pendingBullExpirationBar
-        pendingBullClearance := false
-        pendingBullExpirationBar := na
-    if pendingBearClearance and not na(pendingBearExpirationBar) and bar_index > pendingBearExpirationBar
-        pendingBearClearance := false
-        pendingBearExpirationBar := na
-
-    bool bullThesisCleared = bullDirectClearance or bullPendingFollowThrough
-    bool bearThesisCleared = bearDirectClearance or bearPendingFollowThrough
-
-    if bullThesisCleared and not bearThesisCleared
-        thesisState := 1
-        pendingBullClearance := false
-        pendingBearClearance := false
-        pendingBullExpirationBar := na
-        pendingBearExpirationBar := na
-    else if bearThesisCleared and not bullThesisCleared
-        thesisState := -1
+    if not inScalpRTHSession
         pendingBullClearance := false
         pendingBearClearance := false
         pendingBullExpirationBar := na
         pendingBearExpirationBar := na
     else
-        if strongBullThesisBar and not bullDirectClearance
-            pendingBullClearance := true
-            pendingBullExpirationBar := bar_index + 2
-        if strongBearThesisBar and not bearDirectClearance
-            pendingBearClearance := true
-            pendingBearExpirationBar := bar_index + 2
-        if not validThesisLevel
+        if pendingBullClearance and not na(pendingBullExpirationBar) and bar_index > pendingBullExpirationBar
+            pendingBullClearance := false
+            pendingBullExpirationBar := na
+        if pendingBearClearance and not na(pendingBearExpirationBar) and bar_index > pendingBearExpirationBar
+            pendingBearClearance := false
+            pendingBearExpirationBar := na
+
+        bool bullThesisCleared = bullDirectClearance or bullPendingFollowThrough
+        bool bearThesisCleared = bearDirectClearance or bearPendingFollowThrough
+
+        if bullThesisCleared and not bearThesisCleared
+            thesisState := 1
             pendingBullClearance := false
             pendingBearClearance := false
             pendingBullExpirationBar := na
             pendingBearExpirationBar := na
+        else if bearThesisCleared and not bullThesisCleared
+            thesisState := -1
+            pendingBullClearance := false
+            pendingBearClearance := false
+            pendingBullExpirationBar := na
+            pendingBearExpirationBar := na
+        else
+            if strongBullThesisBar and not bullDirectClearance
+                pendingBullClearance := true
+                pendingBearClearance := false
+                pendingBullExpirationBar := bar_index + thesisFollowThroughBars
+                pendingBearExpirationBar := na
+            if strongBearThesisBar and not bearDirectClearance
+                pendingBearClearance := true
+                pendingBullClearance := false
+                pendingBearExpirationBar := bar_index + thesisFollowThroughBars
+                pendingBullExpirationBar := na
+            if not validThesisLevel
+                pendingBullClearance := false
+                pendingBearClearance := false
+                pendingBullExpirationBar := na
+                pendingBearExpirationBar := na
 
 // ===================== Pre-computed Conditions =====================
 sufficientVolumeAndVolatility = sufficientVolume and sufficientVolatility
@@ -974,6 +1000,17 @@ bearSignalTierShort = bearAlertStrongIgnitionTier or bearAlertIgnitionTier ? "IG
 bullCompactSignalText = bullVolumeTextShort + " " + bullSignalTierShort
 bearCompactSignalText = bearVolumeTextShort + " " + bearSignalTierShort
 
+esImpulseClose = request.security(esImpulseSymbol, timeframe.period, close, lookahead=barmerge.lookahead_off, calc_bars_count=500)
+nqImpulseClose = request.security(nqImpulseSymbol, timeframe.period, close, lookahead=barmerge.lookahead_off, calc_bars_count=500)
+esImpulseAtr = request.security(esImpulseSymbol, timeframe.period, ta.atr(impulseAtrLength), lookahead=barmerge.lookahead_off, calc_bars_count=500)
+nqImpulseAtr = request.security(nqImpulseSymbol, timeframe.period, ta.atr(impulseAtrLength), lookahead=barmerge.lookahead_off, calc_bars_count=500)
+esImpulseScore = esImpulseAtr > 0 ? (esImpulseClose - esImpulseClose[impulseLookback]) / esImpulseAtr : na
+nqImpulseScore = nqImpulseAtr > 0 ? (nqImpulseClose - nqImpulseClose[impulseLookback]) / nqImpulseAtr : na
+selectedImpulseScore = tickerInput == "MES" ? esImpulseScore : nqImpulseScore
+impulseReady = not na(selectedImpulseScore)
+longFboImpulseOk = not useFboImpulseFilter or not bullAlertSetupTier or not impulseReady or selectedImpulseScore >= -fboImpulseTolerance
+shortFboImpulseOk = not useFboImpulseFilter or not bearAlertSetupTier or not impulseReady or selectedImpulseScore <= fboImpulseTolerance
+
 // ===================== Scalp Level Priority Logic =====================
 scalpSignalHigh = high
 scalpSignalLow = low
@@ -1071,6 +1108,12 @@ longExtendedSetup = longFiveBarExtension or longStrongMicrochannelExtension
 shortExtendedSetup = shortFiveBarExtension or shortStrongMicrochannelExtension
 longExtendedSetupBlocked = longExtendedSetup and ((skipFiveBarExtension and longFiveBarExtension) or (skipStrongMicrochannelExtension and longStrongMicrochannelExtension))
 shortExtendedSetupBlocked = shortExtendedSetup and ((skipFiveBarExtension and shortFiveBarExtension) or (skipStrongMicrochannelExtension and shortStrongMicrochannelExtension))
+longFiveBullBarsInRow = f_isBullBar(open, close) and f_isBullBar(open[1], close[1]) and f_isBullBar(open[2], close[2]) and f_isBullBar(open[3], close[3]) and f_isBullBar(open[4], close[4])
+shortFiveBearBarsInRow = f_isBearBar(open, close) and f_isBearBar(open[1], close[1]) and f_isBearBar(open[2], close[2]) and f_isBearBar(open[3], close[3]) and f_isBearBar(open[4], close[4])
+longActualSetupIsTwoBar = not longLevelBreakSetup and longTwoBarSetup
+shortActualSetupIsTwoBar = not shortLevelBreakSetup and shortTwoBarSetup
+longTwoBarSoftExtensionBlocked = skipTwoBarSameColorExtension and longActualSetupIsTwoBar and longFiveBullBarsInRow
+shortTwoBarSoftExtensionBlocked = skipTwoBarSameColorExtension and shortActualSetupIsTwoBar and shortFiveBearBarsInRow
 
 // Requirement toggles act as filters. If neither setup is required, preserve the
 // original behavior and allow any alert that otherwise passes the alert conditions.
@@ -1165,26 +1208,28 @@ longTargetFilterPassed = not requireValidTarget or longTargetValid
 shortTargetFilterPassed = not requireValidTarget or shortTargetValid
 
 // ===================== Alert Conditions =====================
-bullScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == 1 and alertOnBullSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bullTierAllowed and longScalpSetupQualified and not longExtendedSetupBlocked and longRiskValid and longTargetFilterPassed
-bullAlertLabelTitle = "LONG"
+bullScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == 1 and alertOnBullSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bullTierAllowed and longFboImpulseOk and longScalpSetupQualified and not longExtendedSetupBlocked and not longTwoBarSoftExtensionBlocked and longRiskValid and longTargetFilterPassed
+bullAlertLabelTitle = "LONG SCALP"
 
-bearScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == -1 and alertOnBearSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bearTierAllowed and shortScalpSetupQualified and not shortExtendedSetupBlocked and shortRiskValid and shortTargetFilterPassed
-bearAlertLabelTitle = "SHORT"
+bearScalpAlert = enableScalpAlerts and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == -1 and alertOnBearSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bearTierAllowed and shortFboImpulseOk and shortScalpSetupQualified and not shortExtendedSetupBlocked and not shortTwoBarSoftExtensionBlocked and shortRiskValid and shortTargetFilterPassed
+bearAlertLabelTitle = "SHORT SCALP"
 
 showHistoricalAlertLabels = alertLabelMode != "Off"
 showCompactAlertLabels = alertLabelMode == "Compact"
 
-f_buildMarkerChartLabel(_direction, _compactSignalText) =>
-    _direction + "\n" + _compactSignalText
+f_buildMarkerChartLabel(_direction, _compactSignalText, _setupTextFull) =>
+    showScalpSignalDetails ? _direction + "\n" + _compactSignalText + " | " + _setupTextFull : _direction
 
-f_buildCompactChartLabel(_direction, _compactSignalText, _setupTextShort, _entryPrice, _targetPrice, _targetType, _targetRR, _contracts) =>
-    _direction + " " + _compactSignalText + "\n" +
-     _setupTextShort + " | E " + f_priceText(_entryPrice) + "\n" +
+f_buildCompactChartLabel(_direction, _compactSignalText, _setupTextFull, _entryPrice, _targetPrice, _targetType, _targetRR, _contracts) =>
+    string detailLine = showScalpSignalDetails ? _compactSignalText + " | " + _setupTextFull + "\n" : ""
+    _direction + "\n" +
+     detailLine +
+     "E " + f_priceText(_entryPrice) + "\n" +
      "T " + f_priceText(_targetPrice) + " " + _targetType + "\n" +
      str.tostring(_contracts) + "ct | " + f_rrText(_targetRR)
 
 if showHistoricalAlertLabels and bullScalpAlert
-    string bullChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bullAlertLabelTitle, bullCompactSignalText, longSetupTextShort, longEntryPrice, longTargetPrice, longTargetType, longTargetRR, longContracts) : f_buildMarkerChartLabel(bullAlertLabelTitle, bullCompactSignalText)
+    string bullChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bullAlertLabelTitle, bullCompactSignalText, longSetupTextFull, longEntryPrice, longTargetPrice, longTargetType, longTargetRR, longContracts) : f_buildMarkerChartLabel(bullAlertLabelTitle, bullCompactSignalText, longSetupTextFull)
     label.new(
          bar_index,
          low,
@@ -1196,7 +1241,7 @@ if showHistoricalAlertLabels and bullScalpAlert
     )
 
 if showHistoricalAlertLabels and bearScalpAlert
-    string bearChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bearAlertLabelTitle, bearCompactSignalText, shortSetupTextShort, shortEntryPrice, shortTargetPrice, shortTargetType, shortTargetRR, shortContracts) : f_buildMarkerChartLabel(bearAlertLabelTitle, bearCompactSignalText)
+    string bearChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bearAlertLabelTitle, bearCompactSignalText, shortSetupTextFull, shortEntryPrice, shortTargetPrice, shortTargetType, shortTargetRR, shortContracts) : f_buildMarkerChartLabel(bearAlertLabelTitle, bearCompactSignalText, shortSetupTextFull)
     label.new(
          bar_index,
          high,
@@ -1209,8 +1254,9 @@ if showHistoricalAlertLabels and bearScalpAlert
 
 // ===================== Alert Message =====================
 f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _setupTextFull, _entryType, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _riskPoints, _contracts) =>
+    string signalDetailLine = showScalpSignalDetails ? "Signal: " + _compactSignalText + " | " + _setupTextFull + "\n" : ""
     "PA ENGINE " + _directionTitle + "\n" +
-     _compactSignalText + " | " + _setupTextFull + "\n" +
+     signalDetailLine +
      syminfo.ticker + " " + timeframe.period + "\n\n" +
      "Entry: " + f_priceText(_entryPrice) + "\n" +
      "Stop: " + f_priceText(_stopPrice) + "\n" +
@@ -1267,9 +1313,9 @@ if barstate.islast and showSignalLegend
     table.cell(legendTable, 1, 2, " Strong Ignition",  text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
 
 // ===================== Scalp Status Table =====================
-var table scalpStatusTable = table.new(position.bottom_right, 2, 19, bgcolor=color.new(color.black, 85), border_width=0)
+var table scalpStatusTable = table.new(position.bottom_right, 2, 25, bgcolor=color.new(color.black, 85), border_width=0)
 if barstate.islast
-    table.clear(scalpStatusTable, 0, 0, 1, 18)
+    table.clear(scalpStatusTable, 0, 0, 1, 24)
     if showThesisLabel
         statusTextColor = thesisState == 1 ? color.lime : thesisState == -1 ? color.red : color.rgb(220, 220, 220)
         alertVolumeTableText = alertVolumeMode == "High Volume Only" ? "HIGH VOLUME ONLY" : "ALL"
@@ -1321,6 +1367,24 @@ if barstate.islast
             table.cell(scalpStatusTable, 1, scalpStatusRow, "Intraday, ideally 5m", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
             scalpStatusRow += 1
         if showAutoThesisDebug
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "Conversion Method", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, autoThesisConversionMethod, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "Source Thesis Price", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis ? f_priceText(selectedAutoThesisSourcePrice) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "Source Daily Open", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis ? f_priceText(sourceDayOpen) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "Chart Daily Open", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis ? f_priceText(chartDailyOpenForThesis) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "Raw Converted", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis ? f_priceText(convertedAutoThesisRaw) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
+            table.cell(scalpStatusTable, 0, scalpStatusRow, "Final Thesis Level", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+            table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis ? f_priceText(convertedAutoThesisLevel) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
+            scalpStatusRow += 1
             table.cell(scalpStatusTable, 0, scalpStatusRow, "Auto Distance", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
             table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis ? f_pointsText(selectedAutoThesisDistance) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
             scalpStatusRow += 1
