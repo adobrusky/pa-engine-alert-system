@@ -25,7 +25,7 @@ waitFirst15Minutes       = input.bool(true, title="Wait First 15 Minutes", group
 requireOpeningRangeBreak = input.bool(true, title="Require Opening Range Break", group=groupCoreAlerts)
 requireValidTarget       = input.bool(true, title="Require Valid Target", group=groupCoreAlerts)
 minTargetRR              = input.float(1.0, title="Scalp Minimum Target R:R", minval=0.25, step=0.05, group=groupCoreAlerts, tooltip="Minimum required reward-to-risk for scalp targets. Default is 1.0R. The only exception is the existing HOD/LOD edge exception.")
-prioritizeSwingWhenSameEntry = input.bool(true, title="Prioritize Swing When Same Entry", group=groupCoreAlerts, tooltip="When a valid scalp and swing setup trigger in the same direction on the same bar, show/send the swing instead of the scalp only when their selected entry price is identical.")
+prioritizeSwingWhenSameEntry = input.bool(true, title="Prioritize Swing When Entry Earlier / Same", group=groupCoreAlerts, tooltip="When a valid scalp and swing setup trigger in the same direction on the same bar, show/send the swing when its selected entry triggers earlier than or at the scalp entry.")
 
 // 02. Setup Filters
 requireLevelBreakSetup   = input.bool(true, title="Require Level Break Setup", group=groupSetupFilters, tooltip="Require scalp alerts to have a signal bar that touches an enabled scalp entry level and closes beyond it.")
@@ -126,21 +126,13 @@ maxDisplayedDailyGaps        = input.int(20, title="Max Displayed Daily Gaps", m
 // 10. Debug / Advanced
 showAutoThesisDebug    = input.bool(false, title="Show Auto Thesis Debug", group=groupDebug)
 showDetailedLevelStatus = input.bool(false, title="Show Detailed Level Status", group=groupDebug)
-showSwingDebugOnChart = input.bool(false, title="Show Swing Debug Labels On Chart", group=groupDebug, tooltip="Shows compact rejection/debug labels on bars that are close to qualifying as swing setups.")
 
 // 11. Swing Alerts
 swingMinRR                         = input.float(1.5, title="Swing Minimum R:R", minval=0.25, step=0.05, group=groupSwingAlerts, tooltip="Minimum required reward-to-risk for swing setups. Swings should normally require at least 1.5R.")
 swingUseStopOrdersFirst            = input.bool(true, title="Swing: Prioritize Stop Orders", group=groupSwingAlerts)
 swingAllowRetracementEntries       = input.bool(true, title="Swing: Allow 50% / 61.8% Entries If Stop Entry Fails R:R", group=groupSwingAlerts)
 swingMeasuredMoveAtrDistance       = input.float(2.0, title="Swing Measured Move Distance From Level, 5m ATRs", minval=0.25, step=0.25, group=groupSwingAlerts)
-showSwingDebug                     = input.bool(false, title="Show Swing Debug", group=groupSwingAlerts)
-swingDebugSide = input.string(
-     "Long / Bull",
-     title="Swing Debug Side",
-     options=["Long / Bull", "Short / Bear", "Both"],
-     group=groupSwingAlerts,
-     tooltip="Controls which side of the swing setup diagnostics are shown in the swing debug table."
-)
+allowRthSwingsBrokenPremarket      = input.bool(true, title="Swing: Allow Prior RTH Swings Broken In Premarket", group=groupSwingAlerts, tooltip="When enabled, prior RTH swings remain eligible for swing failed-breakout logic even if they are tested or broken during the current premarket. They are still invalidated normally if broken during current RTH.")
 
 scalpPointValue = tickerInput == "MES" ? 5.0 : 2.0
 scalpTickSize   = 0.25
@@ -283,8 +275,11 @@ f_tickCount(_value) =>
 f_roundToScalpTick(_price) =>
     math.round(_price / scalpTickSize) * scalpTickSize
 
-f_sameEntry(_a, _b) =>
-    not na(_a) and not na(_b) and math.abs(_a - _b) <= scalpTickSize * 0.1
+f_longSwingEntryEarlierOrSame(_swingEntry, _scalpEntry) =>
+    not na(_swingEntry) and not na(_scalpEntry) and _swingEntry >= _scalpEntry - scalpTickSize * 0.1
+
+f_shortSwingEntryEarlierOrSame(_swingEntry, _scalpEntry) =>
+    not na(_swingEntry) and not na(_scalpEntry) and _swingEntry <= _scalpEntry + scalpTickSize * 0.1
 
 f_validSourcePrice(_price) =>
     not na(_price) and _price > 0
@@ -320,12 +315,12 @@ f_currentRthOpen() =>
         rthOpen := na
     rthOpen
 
-getHighLowOpenClose() =>
-    [high[1], low[1], open, close[1]]
+getHighLowOpen() =>
+    [high[1], low[1], open]
 
 getHigherTimeframeData(_timeframe, _ticker) =>
-    // Mirrors the PA Engine level request: previous completed H/L/C plus current HTF open.
-    request.security(_ticker, _timeframe, getHighLowOpenClose(), lookahead=barmerge.lookahead_on, calc_bars_count=2)
+    // Mirrors the PA Engine level request: previous completed H/L plus current HTF open.
+    request.security(_ticker, _timeframe, getHighLowOpen(), lookahead=barmerge.lookahead_on, calc_bars_count=2)
 
 getGaps(_lookBack) =>
     map<int, string> gapsDict = map.new<int, string>()
@@ -510,7 +505,21 @@ f_pickShortTargetCandidate(bool _enabled, float _candidatePrice, string _candida
     [nextPrice, nextType, nextRR]
 
 f_swingTargetSessionAllowed(string _session, int _dateKey, int _currentDateKey, int _currentRTHDateKey, int _previousRTHDateKey) =>
-    (_session == "PM" and _dateKey == _currentDateKey) or (_session == "RTH" and (_dateKey == _currentRTHDateKey or _dateKey == _previousRTHDateKey))
+    bool pmAllowed = _session == "PM" and _dateKey == _currentDateKey
+    bool rthCurrentAllowed = _session == "RTH" and not na(_currentRTHDateKey) and _dateKey == _currentRTHDateKey
+    bool rthPreviousAllowed = _session == "RTH" and not na(_previousRTHDateKey) and _dateKey == _previousRTHDateKey
+    pmAllowed or rthCurrentAllowed or rthPreviousAllowed
+
+f_swingBreakCanInvalidate(bool _allowRthSwingsBrokenPremarket, bool _currentInPremarket, string _swingSession, int _swingDateKey, int _mostRecentCompletedRTHDateKey) =>
+    not (_allowRthSwingsBrokenPremarket and _currentInPremarket and _swingSession == "RTH" and not na(_mostRecentCompletedRTHDateKey) and _swingDateKey == _mostRecentCompletedRTHDateKey)
+
+f_hasPivotBar(array<int> _pivotBars, int _pivotBar) =>
+    bool found = false
+    if array.size(_pivotBars) > 0
+        for pivotBarIndex = 0 to array.size(_pivotBars) - 1
+            if array.get(_pivotBars, pivotBarIndex) == _pivotBar
+                found := true
+    found
 
 // ===================== ATR Calculation (RTH only) =====================
 var float atrSum = 0.0
@@ -529,7 +538,8 @@ else
     atrValue := nz(atrValue[1])
 
 chartIsFiveMinute = timeframe.isminutes and timeframe.multiplier == 5
-swingAtr5 = chartIsFiveMinute ? atrValue : request.security(syminfo.tickerid, "5", ta.atr(atrLength), lookahead=barmerge.lookahead_off)
+swingAtrNeeded = alertSwingSetups
+swingAtr5 = chartIsFiveMinute ? atrValue : swingAtrNeeded ? request.security(syminfo.tickerid, "5", ta.atr(atrLength), lookahead=barmerge.lookahead_off) : na
 
 sufficientVolatility = barRange >= atrValue * acceptableVolatilityThreshold
 
@@ -574,14 +584,24 @@ var array<string> swingLowSessions = array.new_string(0)
 var array<bool> swingLowActive = array.new_bool(0)
 var array<float> fboSwingHighPrices = array.new_float()
 var array<int> fboSwingHighPivotBars = array.new_int()
+var array<int> fboSwingHighDateKeys = array.new_int()
+var array<string> fboSwingHighSessions = array.new_string()
 var array<bool> fboSwingHighCleared = array.new_bool()
 var array<float> fboSwingLowPrices = array.new_float()
 var array<int> fboSwingLowPivotBars = array.new_int()
+var array<int> fboSwingLowDateKeys = array.new_int()
+var array<string> fboSwingLowSessions = array.new_string()
 var array<bool> fboSwingLowCleared = array.new_bool()
+var array<float> rthSwingHistHighs = array.new_float()
+var array<float> rthSwingHistLows = array.new_float()
+var array<int> rthSwingHistBarIndexes = array.new_int()
+var array<int> rthSwingHistDateKeys = array.new_int()
+var array<float> pmSwingHistHighs = array.new_float()
+var array<float> pmSwingHistLows = array.new_float()
+var array<int> pmSwingHistBarIndexes = array.new_int()
+var array<int> pmSwingHistDateKeys = array.new_int()
 var float mostRecentMicroSwingLow = na
-var int mostRecentMicroSwingLowBar = na
 var float mostRecentMicroSwingHigh = na
-var int mostRecentMicroSwingHighBar = na
 
 if newNYSessionDate and not inScalpRTHSession and not inPremarketSession
     autoDailyOpen := na
@@ -636,22 +656,19 @@ autoDefaultThesisSourceTicker = tickerInput == "MES" ? ticker.new("AMEX", "SPY",
 sourceLevelsEnabled = useAutoThesis or alertSwingSetups or showSwingLevels
 thesisSourceSymbol = sourceLevelsEnabled ? (thesisSourceMode == "Manual Source" ? manualThesisSourceSymbol : autoDefaultThesisSourceSymbol) : "None"
 thesisSourceTicker = sourceLevelsEnabled ? (thesisSourceMode == "Manual Source" ? manualThesisSourceSymbol : autoDefaultThesisSourceTicker) : ""
-requestedThesisSourceSymbol = sourceLevelsEnabled ? thesisSourceSymbol : "None"
+sourceCloseForConversionNeeded = sourceLevelsEnabled and (thesisConversionMode == "Current Price Ratio" or (showSwingLevels and swingLevelDisplayConversionMode == "Current Price Ratio"))
 
 // The HTF requests intentionally mirror the PA Engine approach: previous completed
-// H/L/C plus the current period open are requested with lookahead_on.
+// H/L plus the current period open are requested with lookahead_on.
 float sourcePrevDayHigh = na
 float sourcePrevDayLow = na
 float sourceDayOpenHTF = na
-float sourcePrevDayClose = na
 float sourcePrevWeekHigh = na
 float sourcePrevWeekLow = na
 float sourceWeekOpen = na
-float sourcePrevWeekClose = na
 float sourcePrevMonthHigh = na
 float sourcePrevMonthLow = na
 float sourceMonthOpen = na
-float sourcePrevMonthClose = na
 float sourceDayOpenIntraday = na
 float sourceDayOpen = na
 float source1hRthAtr = na
@@ -672,25 +689,22 @@ var array<line> swingLevelLines = array.new_line()
 var array<label> swingLevelLabels = array.new_label()
 
 if sourceLevelsEnabled
-    [requestedPrevDayHigh, requestedPrevDayLow, requestedDayOpenHTF, requestedPrevDayClose] = getHigherTimeframeData("1440", thesisSourceTicker)
-    [requestedPrevWeekHigh, requestedPrevWeekLow, requestedWeekOpen, requestedPrevWeekClose] = getHigherTimeframeData("W", thesisSourceTicker)
-    [requestedPrevMonthHigh, requestedPrevMonthLow, requestedMonthOpen, requestedPrevMonthClose] = getHigherTimeframeData("M", thesisSourceTicker)
+    [requestedPrevDayHigh, requestedPrevDayLow, requestedDayOpenHTF] = getHigherTimeframeData("1440", thesisSourceTicker)
+    [requestedPrevWeekHigh, requestedPrevWeekLow, requestedWeekOpen] = getHigherTimeframeData("W", thesisSourceTicker)
+    [requestedPrevMonthHigh, requestedPrevMonthLow, requestedMonthOpen] = getHigherTimeframeData("M", thesisSourceTicker)
     sourcePrevDayHigh := requestedPrevDayHigh
     sourcePrevDayLow := requestedPrevDayLow
     sourceDayOpenHTF := requestedDayOpenHTF
-    sourcePrevDayClose := requestedPrevDayClose
     sourcePrevWeekHigh := requestedPrevWeekHigh
     sourcePrevWeekLow := requestedPrevWeekLow
     sourceWeekOpen := requestedWeekOpen
-    sourcePrevWeekClose := requestedPrevWeekClose
     sourcePrevMonthHigh := requestedPrevMonthHigh
     sourcePrevMonthLow := requestedPrevMonthLow
     sourceMonthOpen := requestedMonthOpen
-    sourcePrevMonthClose := requestedPrevMonthClose
     sourceDayOpenIntraday := request.security(thesisSourceTicker, "5", f_currentRthOpen(), lookahead=barmerge.lookahead_off, calc_bars_count=500)
     sourceDayOpen := f_validSourcePrice(sourceDayOpenHTF) ? sourceDayOpenHTF : sourceDayOpenIntraday
-    source1hRthAtr := request.security(thesisSourceTicker, "60", ta.atr(atrLength), lookahead=barmerge.lookahead_off, calc_bars_count=500)
-    sourceCloseForConversion := request.security(thesisSourceTicker, timeframe.period, close, lookahead=barmerge.lookahead_off, calc_bars_count=2)
+    source1hRthAtr := useAutoThesis ? request.security(thesisSourceTicker, "60", ta.atr(atrLength), lookahead=barmerge.lookahead_off, calc_bars_count=500) : na
+    sourceCloseForConversion := sourceCloseForConversionNeeded ? request.security(thesisSourceTicker, timeframe.period, close, lookahead=barmerge.lookahead_off, calc_bars_count=2) : na
     if includeDailyGapsInAutoThesis or alertSwingSetups or showSwingLevels
         sourceDailyGaps := request.security(thesisSourceTicker, "1440", getGaps(autoThesisGapLookback), lookahead=barmerge.lookahead_on, calc_bars_count=202)
 
@@ -800,12 +814,13 @@ array.clear(swingDisplayLevelColors)
 array.clear(swingDisplayLevelWidths)
 array.clear(swingDisplayLevelStyles)
 
-chartSwingLevelsEnabled = alertSwingSetups or showSwingLevels or showSwingDebug
+chartSwingLevelsEnabled = alertSwingSetups or showSwingLevels
 if chartSwingLevelsEnabled
-    // Chart PDH/PDL are separate from converted SPY/QQQ daily levels and must be
+    // Chart PDH/PDL/DO are separate from converted SPY/QQQ levels and must be
     // eligible for swing touch/break checks on the traded symbol itself.
     f_addSwingLevel(effectivePrevDayHigh, "PDH", 3, true, true)
     f_addSwingLevel(effectivePrevDayLow, "PDL", 3, true, true)
+    f_addSwingLevel(effectiveDailyOpen, "Current Day Open", 4, true, true)
 
 if sourceLevelsEnabled
     // Swing alert calculations use the swing level arrays below. These keep the
@@ -846,13 +861,6 @@ if sourceLevelsEnabled
                 f_addSwingDisplayLevel(f_gapEndPriceFromRecord(displayGapValue), "Gap End", gapEndLevelColor, 1, 2)
                 f_addSwingDisplayLevel(f_gapStartPriceFromRecord(displayGapValue), "Gap Start", gapStartLevelColor, 1, 1)
                 displayedGapCount += 1
-
-int swingEntryLevelCount = 0
-int swingTargetLevelCount = 0
-if array.size(swingLevelPrices) > 0
-    for swingLevelIndex = 0 to array.size(swingLevelPrices) - 1
-        swingEntryLevelCount += array.get(swingLevelAllowedForEntry, swingLevelIndex) ? 1 : 0
-        swingTargetLevelCount += array.get(swingLevelAllowedForTarget, swingLevelIndex) ? 1 : 0
 
 if barstate.isconfirmed
     int desiredSwingLineCount = showSwingLevels ? array.size(swingDisplayLevelPrices) : 0
@@ -915,33 +923,21 @@ if barstate.isconfirmed
                 label.set_size(swingDisplayNameLabel, size.tiny)
 
 float effectiveThesisLevel = na
-string effectiveThesisSource = "Unavailable"
 string effectiveThesisName = "N/A"
 string effectiveThesisSourceSymbol = "N/A"
-float effectiveThesisSourcePrice = na
-bool effectiveThesisIsAuto = false
 
 if useAutoThesis and autoThesisConvertedValid
     effectiveThesisLevel := convertedAutoThesisLevel
-    effectiveThesisSource := "Auto"
     effectiveThesisName := selectedAutoThesisName
     effectiveThesisSourceSymbol := thesisSourceSymbol
-    effectiveThesisSourcePrice := selectedAutoThesisSourcePrice
-    effectiveThesisIsAuto := true
 else if useAutoThesis and autoThesisFallbackToManual and thesisLevel > 0
     effectiveThesisLevel := thesisLevel
-    effectiveThesisSource := "Manual Fallback"
     effectiveThesisName := "Manual"
     effectiveThesisSourceSymbol := "N/A"
-    effectiveThesisSourcePrice := na
-    effectiveThesisIsAuto := false
 else if not useAutoThesis and thesisLevel > 0
     effectiveThesisLevel := thesisLevel
-    effectiveThesisSource := "Manual"
     effectiveThesisName := "Manual"
     effectiveThesisSourceSymbol := "N/A"
-    effectiveThesisSourcePrice := na
-    effectiveThesisIsAuto := false
 
 var float autoOpeningRangeHigh = na
 var float autoOpeningRangeLow = na
@@ -1015,28 +1011,66 @@ if newPremarketSession or newScalpRTHSession
             array.remove(swingLowActive, pruneLowIndex)
         pruneLowIndex -= 1
 
+    int pruneFboHighIndex = array.size(fboSwingHighPrices) - 1
+    while pruneFboHighIndex >= 0
+        string highFboSession = array.get(fboSwingHighSessions, pruneFboHighIndex)
+        int highFboDateKey = array.get(fboSwingHighDateKeys, pruneFboHighIndex)
+        bool keepHighFbo = f_swingTargetSessionAllowed(highFboSession, highFboDateKey, nySessionDateKey, activeCurrentRTHDateKey, activePreviousRTHDateKey)
+        if not keepHighFbo
+            array.remove(fboSwingHighPrices, pruneFboHighIndex)
+            array.remove(fboSwingHighPivotBars, pruneFboHighIndex)
+            array.remove(fboSwingHighDateKeys, pruneFboHighIndex)
+            array.remove(fboSwingHighSessions, pruneFboHighIndex)
+            array.remove(fboSwingHighCleared, pruneFboHighIndex)
+        pruneFboHighIndex -= 1
+
+    int pruneFboLowIndex = array.size(fboSwingLowPrices) - 1
+    while pruneFboLowIndex >= 0
+        string lowFboSession = array.get(fboSwingLowSessions, pruneFboLowIndex)
+        int lowFboDateKey = array.get(fboSwingLowDateKeys, pruneFboLowIndex)
+        bool keepLowFbo = f_swingTargetSessionAllowed(lowFboSession, lowFboDateKey, nySessionDateKey, activeCurrentRTHDateKey, activePreviousRTHDateKey)
+        if not keepLowFbo
+            array.remove(fboSwingLowPrices, pruneFboLowIndex)
+            array.remove(fboSwingLowPivotBars, pruneFboLowIndex)
+            array.remove(fboSwingLowDateKeys, pruneFboLowIndex)
+            array.remove(fboSwingLowSessions, pruneFboLowIndex)
+            array.remove(fboSwingLowCleared, pruneFboLowIndex)
+        pruneFboLowIndex -= 1
+
 if barstate.isconfirmed
     int testHighIndex = 0
     while testHighIndex < array.size(swingHighPrices)
-        if array.get(swingHighActive, testHighIndex) and bar_index > array.get(swingHighPivotBars, testHighIndex) and high >= array.get(swingHighPrices, testHighIndex)
+        string highSwingSession = array.get(swingHighSessions, testHighIndex)
+        int highSwingDateKey = array.get(swingHighDateKeys, testHighIndex)
+        bool canInvalidateHighSwing = f_swingBreakCanInvalidate(allowRthSwingsBrokenPremarket, inPremarketSession, highSwingSession, highSwingDateKey, currentRTHDateKey)
+        if canInvalidateHighSwing and array.get(swingHighActive, testHighIndex) and bar_index > array.get(swingHighPivotBars, testHighIndex) and high >= array.get(swingHighPrices, testHighIndex)
             array.set(swingHighActive, testHighIndex, false)
         testHighIndex += 1
 
     int testLowIndex = 0
     while testLowIndex < array.size(swingLowPrices)
-        if array.get(swingLowActive, testLowIndex) and bar_index > array.get(swingLowPivotBars, testLowIndex) and low <= array.get(swingLowPrices, testLowIndex)
+        string lowSwingSession = array.get(swingLowSessions, testLowIndex)
+        int lowSwingDateKey = array.get(swingLowDateKeys, testLowIndex)
+        bool canInvalidateLowSwing = f_swingBreakCanInvalidate(allowRthSwingsBrokenPremarket, inPremarketSession, lowSwingSession, lowSwingDateKey, currentRTHDateKey)
+        if canInvalidateLowSwing and array.get(swingLowActive, testLowIndex) and bar_index > array.get(swingLowPivotBars, testLowIndex) and low <= array.get(swingLowPrices, testLowIndex)
             array.set(swingLowActive, testLowIndex, false)
         testLowIndex += 1
 
     int clearFboHighIndex = 0
     while clearFboHighIndex < array.size(fboSwingHighPrices)
-        if not array.get(fboSwingHighCleared, clearFboHighIndex) and bar_index > array.get(fboSwingHighPivotBars, clearFboHighIndex) and low > array.get(fboSwingHighPrices, clearFboHighIndex)
+        string highFboSession = array.get(fboSwingHighSessions, clearFboHighIndex)
+        int highFboDateKey = array.get(fboSwingHighDateKeys, clearFboHighIndex)
+        bool canClearHighFbo = f_swingBreakCanInvalidate(allowRthSwingsBrokenPremarket, inPremarketSession, highFboSession, highFboDateKey, currentRTHDateKey)
+        if canClearHighFbo and not array.get(fboSwingHighCleared, clearFboHighIndex) and bar_index > array.get(fboSwingHighPivotBars, clearFboHighIndex) and low > array.get(fboSwingHighPrices, clearFboHighIndex)
             array.set(fboSwingHighCleared, clearFboHighIndex, true)
         clearFboHighIndex += 1
 
     int clearFboLowIndex = 0
     while clearFboLowIndex < array.size(fboSwingLowPrices)
-        if not array.get(fboSwingLowCleared, clearFboLowIndex) and bar_index > array.get(fboSwingLowPivotBars, clearFboLowIndex) and high < array.get(fboSwingLowPrices, clearFboLowIndex)
+        string lowFboSession = array.get(fboSwingLowSessions, clearFboLowIndex)
+        int lowFboDateKey = array.get(fboSwingLowDateKeys, clearFboLowIndex)
+        bool canClearLowFbo = f_swingBreakCanInvalidate(allowRthSwingsBrokenPremarket, inPremarketSession, lowFboSession, lowFboDateKey, currentRTHDateKey)
+        if canClearLowFbo and not array.get(fboSwingLowCleared, clearFboLowIndex) and bar_index > array.get(fboSwingLowPivotBars, clearFboLowIndex) and high < array.get(fboSwingLowPrices, clearFboLowIndex)
             array.set(fboSwingLowCleared, clearFboLowIndex, true)
         clearFboLowIndex += 1
 
@@ -1045,37 +1079,146 @@ if barstate.isconfirmed and bar_index >= 2
     bool confirmedMicroSwingHigh = high[1] > high[2] and high[1] >= high
     if confirmedMicroSwingLow
         mostRecentMicroSwingLow := low[1]
-        mostRecentMicroSwingLowBar := bar_index - 1
     if confirmedMicroSwingHigh
         mostRecentMicroSwingHigh := high[1]
-        mostRecentMicroSwingHighBar := bar_index - 1
 
-if barstate.isconfirmed and bar_index >= 4
-    bool confirmedSwingHigh = high[2] > high[1] and high[2] > high and high[2] > high[3] and high[2] > high[4]
-    bool confirmedSwingLow = low[2] < low[1] and low[2] < low and low[2] < low[3] and low[2] < low[4]
-    string pivotSession = inPremarketSession[2] ? "PM" : inScalpRTHSession[2] ? "RTH" : "N/A"
-    int pivotDateKey = nySessionDateKey[2]
-    bool pivotSessionAllowed = pivotSession == "PM" or pivotSession == "RTH"
+if barstate.isconfirmed
+    if allowRthSwingsBrokenPremarket
+        if newPremarketSession
+            array.clear(pmSwingHistHighs)
+            array.clear(pmSwingHistLows)
+            array.clear(pmSwingHistBarIndexes)
+            array.clear(pmSwingHistDateKeys)
 
-    if pivotSessionAllowed and confirmedSwingHigh
-        array.push(swingHighPrices, high[2])
-        array.push(swingHighPivotBars, bar_index - 2)
-        array.push(swingHighDateKeys, pivotDateKey)
-        array.push(swingHighSessions, pivotSession)
-        array.push(swingHighActive, true)
-        array.push(fboSwingHighPrices, high[2])
-        array.push(fboSwingHighPivotBars, bar_index - 2)
-        array.push(fboSwingHighCleared, false)
+        if inPremarketSession
+            array.push(pmSwingHistHighs, high)
+            array.push(pmSwingHistLows, low)
+            array.push(pmSwingHistBarIndexes, bar_index)
+            array.push(pmSwingHistDateKeys, nySessionDateKey)
+            while array.size(pmSwingHistHighs) > 200
+                array.shift(pmSwingHistHighs)
+                array.shift(pmSwingHistLows)
+                array.shift(pmSwingHistBarIndexes)
+                array.shift(pmSwingHistDateKeys)
 
-    if pivotSessionAllowed and confirmedSwingLow
-        array.push(swingLowPrices, low[2])
-        array.push(swingLowPivotBars, bar_index - 2)
-        array.push(swingLowDateKeys, pivotDateKey)
-        array.push(swingLowSessions, pivotSession)
-        array.push(swingLowActive, true)
-        array.push(fboSwingLowPrices, low[2])
-        array.push(fboSwingLowPivotBars, bar_index - 2)
-        array.push(fboSwingLowCleared, false)
+            int pmHistorySize = array.size(pmSwingHistHighs)
+            if pmHistorySize >= 5
+                int pmPivotIndex = pmHistorySize - 3
+                float pmPivotHigh = array.get(pmSwingHistHighs, pmPivotIndex)
+                float pmPivotLow = array.get(pmSwingHistLows, pmPivotIndex)
+                int pmPivotBar = array.get(pmSwingHistBarIndexes, pmPivotIndex)
+                int pmPivotDateKey = array.get(pmSwingHistDateKeys, pmPivotIndex)
+                bool confirmedPmSwingHigh = pmPivotHigh > array.get(pmSwingHistHighs, pmPivotIndex - 1) and pmPivotHigh > array.get(pmSwingHistHighs, pmPivotIndex - 2) and pmPivotHigh > array.get(pmSwingHistHighs, pmPivotIndex + 1) and pmPivotHigh > array.get(pmSwingHistHighs, pmPivotIndex + 2)
+                bool confirmedPmSwingLow = pmPivotLow < array.get(pmSwingHistLows, pmPivotIndex - 1) and pmPivotLow < array.get(pmSwingHistLows, pmPivotIndex - 2) and pmPivotLow < array.get(pmSwingHistLows, pmPivotIndex + 1) and pmPivotLow < array.get(pmSwingHistLows, pmPivotIndex + 2)
+
+                if confirmedPmSwingHigh
+                    if not f_hasPivotBar(swingHighPivotBars, pmPivotBar)
+                        array.push(swingHighPrices, pmPivotHigh)
+                        array.push(swingHighPivotBars, pmPivotBar)
+                        array.push(swingHighDateKeys, pmPivotDateKey)
+                        array.push(swingHighSessions, "PM")
+                        array.push(swingHighActive, true)
+                    if not f_hasPivotBar(fboSwingHighPivotBars, pmPivotBar)
+                        array.push(fboSwingHighPrices, pmPivotHigh)
+                        array.push(fboSwingHighPivotBars, pmPivotBar)
+                        array.push(fboSwingHighDateKeys, pmPivotDateKey)
+                        array.push(fboSwingHighSessions, "PM")
+                        array.push(fboSwingHighCleared, false)
+
+                if confirmedPmSwingLow
+                    if not f_hasPivotBar(swingLowPivotBars, pmPivotBar)
+                        array.push(swingLowPrices, pmPivotLow)
+                        array.push(swingLowPivotBars, pmPivotBar)
+                        array.push(swingLowDateKeys, pmPivotDateKey)
+                        array.push(swingLowSessions, "PM")
+                        array.push(swingLowActive, true)
+                    if not f_hasPivotBar(fboSwingLowPivotBars, pmPivotBar)
+                        array.push(fboSwingLowPrices, pmPivotLow)
+                        array.push(fboSwingLowPivotBars, pmPivotBar)
+                        array.push(fboSwingLowDateKeys, pmPivotDateKey)
+                        array.push(fboSwingLowSessions, "PM")
+                        array.push(fboSwingLowCleared, false)
+
+        if inScalpRTHSession
+            // Keep prior RTH bars so the first/second current-session RTH bars can confirm with RTH-only left bars.
+            array.push(rthSwingHistHighs, high)
+            array.push(rthSwingHistLows, low)
+            array.push(rthSwingHistBarIndexes, bar_index)
+            array.push(rthSwingHistDateKeys, nySessionDateKey)
+            while array.size(rthSwingHistHighs) > 200
+                array.shift(rthSwingHistHighs)
+                array.shift(rthSwingHistLows)
+                array.shift(rthSwingHistBarIndexes)
+                array.shift(rthSwingHistDateKeys)
+
+            int rthHistorySize = array.size(rthSwingHistHighs)
+            if rthHistorySize >= 5
+                int rthPivotIndex = rthHistorySize - 3
+                float rthPivotHigh = array.get(rthSwingHistHighs, rthPivotIndex)
+                float rthPivotLow = array.get(rthSwingHistLows, rthPivotIndex)
+                int rthPivotBar = array.get(rthSwingHistBarIndexes, rthPivotIndex)
+                int rthPivotDateKey = array.get(rthSwingHistDateKeys, rthPivotIndex)
+                bool confirmedRthSwingHigh = rthPivotHigh > array.get(rthSwingHistHighs, rthPivotIndex - 1) and rthPivotHigh > array.get(rthSwingHistHighs, rthPivotIndex - 2) and rthPivotHigh > array.get(rthSwingHistHighs, rthPivotIndex + 1) and rthPivotHigh > array.get(rthSwingHistHighs, rthPivotIndex + 2)
+                bool confirmedRthSwingLow = rthPivotLow < array.get(rthSwingHistLows, rthPivotIndex - 1) and rthPivotLow < array.get(rthSwingHistLows, rthPivotIndex - 2) and rthPivotLow < array.get(rthSwingHistLows, rthPivotIndex + 1) and rthPivotLow < array.get(rthSwingHistLows, rthPivotIndex + 2)
+
+                if confirmedRthSwingHigh
+                    if not f_hasPivotBar(swingHighPivotBars, rthPivotBar)
+                        array.push(swingHighPrices, rthPivotHigh)
+                        array.push(swingHighPivotBars, rthPivotBar)
+                        array.push(swingHighDateKeys, rthPivotDateKey)
+                        array.push(swingHighSessions, "RTH")
+                        array.push(swingHighActive, true)
+                    if not f_hasPivotBar(fboSwingHighPivotBars, rthPivotBar)
+                        array.push(fboSwingHighPrices, rthPivotHigh)
+                        array.push(fboSwingHighPivotBars, rthPivotBar)
+                        array.push(fboSwingHighDateKeys, rthPivotDateKey)
+                        array.push(fboSwingHighSessions, "RTH")
+                        array.push(fboSwingHighCleared, false)
+
+                if confirmedRthSwingLow
+                    if not f_hasPivotBar(swingLowPivotBars, rthPivotBar)
+                        array.push(swingLowPrices, rthPivotLow)
+                        array.push(swingLowPivotBars, rthPivotBar)
+                        array.push(swingLowDateKeys, rthPivotDateKey)
+                        array.push(swingLowSessions, "RTH")
+                        array.push(swingLowActive, true)
+                    if not f_hasPivotBar(fboSwingLowPivotBars, rthPivotBar)
+                        array.push(fboSwingLowPrices, rthPivotLow)
+                        array.push(fboSwingLowPivotBars, rthPivotBar)
+                        array.push(fboSwingLowDateKeys, rthPivotDateKey)
+                        array.push(fboSwingLowSessions, "RTH")
+                        array.push(fboSwingLowCleared, false)
+
+    else if bar_index >= 4
+        bool confirmedSwingHigh = high[2] > high[1] and high[2] > high and high[2] > high[3] and high[2] > high[4]
+        bool confirmedSwingLow = low[2] < low[1] and low[2] < low and low[2] < low[3] and low[2] < low[4]
+        string pivotSession = inPremarketSession[2] ? "PM" : inScalpRTHSession[2] ? "RTH" : "N/A"
+        int pivotDateKey = nySessionDateKey[2]
+        bool pivotSessionAllowed = pivotSession == "PM" or pivotSession == "RTH"
+
+        if pivotSessionAllowed and confirmedSwingHigh
+            array.push(swingHighPrices, high[2])
+            array.push(swingHighPivotBars, bar_index - 2)
+            array.push(swingHighDateKeys, pivotDateKey)
+            array.push(swingHighSessions, pivotSession)
+            array.push(swingHighActive, true)
+            array.push(fboSwingHighPrices, high[2])
+            array.push(fboSwingHighPivotBars, bar_index - 2)
+            array.push(fboSwingHighDateKeys, pivotDateKey)
+            array.push(fboSwingHighSessions, pivotSession)
+            array.push(fboSwingHighCleared, false)
+
+        if pivotSessionAllowed and confirmedSwingLow
+            array.push(swingLowPrices, low[2])
+            array.push(swingLowPivotBars, bar_index - 2)
+            array.push(swingLowDateKeys, pivotDateKey)
+            array.push(swingLowSessions, pivotSession)
+            array.push(swingLowActive, true)
+            array.push(fboSwingLowPrices, low[2])
+            array.push(fboSwingLowPivotBars, bar_index - 2)
+            array.push(fboSwingLowDateKeys, pivotDateKey)
+            array.push(fboSwingLowSessions, pivotSession)
+            array.push(fboSwingLowCleared, false)
 
 while array.size(swingHighPrices) > maxTrackedSwingTargets
     array.shift(swingHighPrices)
@@ -1094,11 +1237,15 @@ while array.size(swingLowPrices) > maxTrackedSwingTargets
 while array.size(fboSwingHighPrices) > maxTrackedSwingTargets
     array.shift(fboSwingHighPrices)
     array.shift(fboSwingHighPivotBars)
+    array.shift(fboSwingHighDateKeys)
+    array.shift(fboSwingHighSessions)
     array.shift(fboSwingHighCleared)
 
 while array.size(fboSwingLowPrices) > maxTrackedSwingTargets
     array.shift(fboSwingLowPrices)
     array.shift(fboSwingLowPivotBars)
+    array.shift(fboSwingLowDateKeys)
+    array.shift(fboSwingLowSessions)
     array.shift(fboSwingLowCleared)
 
 // ===================== Thesis State Logic =====================
@@ -1141,8 +1288,6 @@ bearLowerThirdCloseBoundary = f_roundUpToScalpTick(bearLowerThirdCloseBoundaryRa
 barRangeTicks = math.max(f_tickCount(barRange), 1)
 bodyTicks = f_tickCount(body)
 closeAboveLowTicks = f_tickCount(close - low)
-bullRangeAboveThesisTicks = f_tickCount(high - effectiveThesisLevel)
-bearRangeBelowThesisTicks = f_tickCount(effectiveThesisLevel - low)
 
 strongThesisBody = body + thesisTolerance >= barRange * 0.5 or bodyTicks * 2 >= barRangeTicks
 strongBullCloseInUpperThird = close + thesisTolerance >= bullUpperThirdCloseBoundary or closeAboveLowTicks * 3 >= barRangeTicks * 2
@@ -1256,7 +1401,6 @@ plotBearSignalNormalVol = showBearSignals and bearSignalNormalVol
 
 hasBullSignal = plotBullSignalHighVol or plotBullSignalNormalVol
 hasBearSignal = plotBearSignalHighVol or plotBearSignalNormalVol
-hasSignal = hasBullSignal or hasBearSignal
 onlyBullSignal = hasBullSignal
 onlyBearSignal = hasBearSignal
 
@@ -1312,13 +1456,10 @@ bearScalpSignalTierShort = bearScalpStrongIgnitionTier or bearScalpIgnitionTier 
 bullCompactSignalText = bullScalpVolumeTextShort + " " + bullScalpSignalTierShort
 bearCompactSignalText = bearScalpVolumeTextShort + " " + bearScalpSignalTierShort
 
-esImpulseClose = request.security(esImpulseSymbol, timeframe.period, close, lookahead=barmerge.lookahead_off, calc_bars_count=500)
-nqImpulseClose = request.security(nqImpulseSymbol, timeframe.period, close, lookahead=barmerge.lookahead_off, calc_bars_count=500)
-esImpulseAtr = request.security(esImpulseSymbol, timeframe.period, ta.atr(impulseAtrLength), lookahead=barmerge.lookahead_off, calc_bars_count=500)
-nqImpulseAtr = request.security(nqImpulseSymbol, timeframe.period, ta.atr(impulseAtrLength), lookahead=barmerge.lookahead_off, calc_bars_count=500)
-esImpulseScore = esImpulseAtr > 0 ? (esImpulseClose - esImpulseClose[impulseLookback]) / esImpulseAtr : na
-nqImpulseScore = nqImpulseAtr > 0 ? (nqImpulseClose - nqImpulseClose[impulseLookback]) / nqImpulseAtr : na
-selectedImpulseScore = tickerInput == "MES" ? esImpulseScore : nqImpulseScore
+selectedImpulseSymbol = tickerInput == "MES" ? esImpulseSymbol : nqImpulseSymbol
+selectedImpulseClose = request.security(selectedImpulseSymbol, timeframe.period, close, lookahead=barmerge.lookahead_off, calc_bars_count=500)
+selectedImpulseAtr = request.security(selectedImpulseSymbol, timeframe.period, ta.atr(impulseAtrLength), lookahead=barmerge.lookahead_off, calc_bars_count=500)
+selectedImpulseScore = selectedImpulseAtr > 0 ? (selectedImpulseClose - selectedImpulseClose[impulseLookback]) / selectedImpulseAtr : na
 impulseReady = not na(selectedImpulseScore)
 longFboImpulseOk = not useFboImpulseFilter or not bullScalpSetupTier or not impulseReady or selectedImpulseScore >= -fboImpulseTolerance
 shortFboImpulseOk = not useFboImpulseFilter or not bearScalpSetupTier or not impulseReady or selectedImpulseScore <= fboImpulseTolerance
@@ -1334,24 +1475,13 @@ float noSelectedLevelPrice = na
 string noSelectedLevelName = "N/A"
 
 // ===================== Swing Setup Qualification Logic =====================
-chartPdhSwingTouched = f_levelTouched(f_validSourcePrice(effectivePrevDayHigh), effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh)
-chartPdlSwingTouched = f_levelTouched(f_validSourcePrice(effectivePrevDayLow), effectivePrevDayLow, scalpSignalLow, scalpSignalHigh)
-longChartPdhSwingBroken = chartPdhSwingTouched and scalpSignalClose > effectivePrevDayHigh
-longChartPdlSwingBroken = chartPdlSwingTouched and scalpSignalClose > effectivePrevDayLow
-shortChartPdhSwingBroken = chartPdhSwingTouched and scalpSignalClose < effectivePrevDayHigh
-shortChartPdlSwingBroken = chartPdlSwingTouched and scalpSignalClose < effectivePrevDayLow
-
 float longSwingTouchedLevelPrice = na
 string longSwingTouchedLevelName = "N/A"
 int longSwingTouchedLevelPriority = 999
-bool longSwingLevelTouched = false
-bool longSwingLevelBroken = false
 
 float shortSwingTouchedLevelPrice = na
 string shortSwingTouchedLevelName = "N/A"
 int shortSwingTouchedLevelPriority = 999
-bool shortSwingLevelTouched = false
-bool shortSwingLevelBroken = false
 bool longSwingBrokenCandidateFound = false
 bool shortSwingBrokenCandidateFound = false
 
@@ -1361,41 +1491,27 @@ if array.size(swingLevelPrices) > 0
         string swingEntryLevelName = array.get(swingLevelNames, swingEntryLevelIndex)
         int swingEntryLevelPriority = array.get(swingLevelPriority, swingEntryLevelIndex)
         bool swingEntryLevelAllowed = array.get(swingLevelAllowedForEntry, swingEntryLevelIndex)
-        bool swingEntryLevelTouched = f_levelTouched(swingEntryLevelAllowed, swingEntryLevelPrice, scalpSignalLow, scalpSignalHigh)
-        if swingEntryLevelTouched
+        bool swingEntryLevelTouchedCurrent = f_levelTouched(swingEntryLevelAllowed, swingEntryLevelPrice, scalpSignalLow, scalpSignalHigh)
+        bool swingEntryLevelTouchedPrior = not na(low[1]) and not na(high[1]) and f_levelTouched(swingEntryLevelAllowed, swingEntryLevelPrice, low[1], high[1])
+        bool swingEntryLevelTouchedForSetup = swingEntryLevelTouchedCurrent or swingEntryLevelTouchedPrior
+        if swingEntryLevelTouchedForSetup
             bool longSwingEntryLevelBroken = scalpSignalClose > swingEntryLevelPrice
             bool shortSwingEntryLevelBroken = scalpSignalClose < swingEntryLevelPrice
-            bool betterLongSwingLevel = not longSwingLevelTouched or swingEntryLevelPriority < longSwingTouchedLevelPriority or (swingEntryLevelPriority == longSwingTouchedLevelPriority and (na(longSwingTouchedLevelPrice) or swingEntryLevelPrice > longSwingTouchedLevelPrice))
-            bool betterShortSwingLevel = not shortSwingLevelTouched or swingEntryLevelPriority < shortSwingTouchedLevelPriority or (swingEntryLevelPriority == shortSwingTouchedLevelPriority and (na(shortSwingTouchedLevelPrice) or swingEntryLevelPrice < shortSwingTouchedLevelPrice))
             bool betterLongSwingBrokenLevel = not longSwingBrokenCandidateFound or swingEntryLevelPriority < longSwingTouchedLevelPriority or (swingEntryLevelPriority == longSwingTouchedLevelPriority and (na(longSwingTouchedLevelPrice) or swingEntryLevelPrice > longSwingTouchedLevelPrice))
             bool betterShortSwingBrokenLevel = not shortSwingBrokenCandidateFound or swingEntryLevelPriority < shortSwingTouchedLevelPriority or (swingEntryLevelPriority == shortSwingTouchedLevelPriority and (na(shortSwingTouchedLevelPrice) or swingEntryLevelPrice < shortSwingTouchedLevelPrice))
-            // Prefer a broken swing level over a merely touched one so a valid
-            // PDH/PDL break is not masked by an unbroken level inside the bar.
             if longSwingEntryLevelBroken and betterLongSwingBrokenLevel
                 longSwingTouchedLevelPrice := swingEntryLevelPrice
                 longSwingTouchedLevelName := swingEntryLevelName
                 longSwingTouchedLevelPriority := swingEntryLevelPriority
-                longSwingLevelTouched := true
                 longSwingBrokenCandidateFound := true
-            else if not longSwingBrokenCandidateFound and betterLongSwingLevel
-                longSwingTouchedLevelPrice := swingEntryLevelPrice
-                longSwingTouchedLevelName := swingEntryLevelName
-                longSwingTouchedLevelPriority := swingEntryLevelPriority
-                longSwingLevelTouched := true
             if shortSwingEntryLevelBroken and betterShortSwingBrokenLevel
                 shortSwingTouchedLevelPrice := swingEntryLevelPrice
                 shortSwingTouchedLevelName := swingEntryLevelName
                 shortSwingTouchedLevelPriority := swingEntryLevelPriority
-                shortSwingLevelTouched := true
                 shortSwingBrokenCandidateFound := true
-            else if not shortSwingBrokenCandidateFound and betterShortSwingLevel
-                shortSwingTouchedLevelPrice := swingEntryLevelPrice
-                shortSwingTouchedLevelName := swingEntryLevelName
-                shortSwingTouchedLevelPriority := swingEntryLevelPriority
-                shortSwingLevelTouched := true
 
-longSwingLevelBroken := longSwingBrokenCandidateFound
-shortSwingLevelBroken := shortSwingBrokenCandidateFound
+longSwingLevelBroken = longSwingBrokenCandidateFound
+shortSwingLevelBroken = shortSwingBrokenCandidateFound
 
 bool longSwingFboQualified = false
 float longSwingFboPrice = na
@@ -1403,7 +1519,10 @@ if bullSwingSetupTier and array.size(fboSwingLowPrices) > 0
     for fboSwingLowIndex = 0 to array.size(fboSwingLowPrices) - 1
         float fboSwingLowPrice = array.get(fboSwingLowPrices, fboSwingLowIndex)
         bool fboSwingLowPrior = bar_index > array.get(fboSwingLowPivotBars, fboSwingLowIndex)
-        bool fboSwingLowQualified = not array.get(fboSwingLowCleared, fboSwingLowIndex) and fboSwingLowPrior and scalpSignalLow <= fboSwingLowPrice and scalpSignalClose > fboSwingLowPrice
+        string fboSwingLowSession = array.get(fboSwingLowSessions, fboSwingLowIndex)
+        int fboSwingLowDateKey = array.get(fboSwingLowDateKeys, fboSwingLowIndex)
+        bool fboSwingLowAllowed = f_swingTargetSessionAllowed(fboSwingLowSession, fboSwingLowDateKey, nySessionDateKey, activeCurrentRTHDateKey, activePreviousRTHDateKey)
+        bool fboSwingLowQualified = fboSwingLowAllowed and not array.get(fboSwingLowCleared, fboSwingLowIndex) and fboSwingLowPrior and scalpSignalLow <= fboSwingLowPrice and scalpSignalClose > fboSwingLowPrice
         if fboSwingLowQualified and (na(longSwingFboPrice) or fboSwingLowPrice < longSwingFboPrice)
             longSwingFboQualified := true
             longSwingFboPrice := fboSwingLowPrice
@@ -1414,21 +1533,28 @@ if bearSwingSetupTier and array.size(fboSwingHighPrices) > 0
     for fboSwingHighIndex = 0 to array.size(fboSwingHighPrices) - 1
         float fboSwingHighPrice = array.get(fboSwingHighPrices, fboSwingHighIndex)
         bool fboSwingHighPrior = bar_index > array.get(fboSwingHighPivotBars, fboSwingHighIndex)
-        bool fboSwingHighQualified = not array.get(fboSwingHighCleared, fboSwingHighIndex) and fboSwingHighPrior and scalpSignalHigh >= fboSwingHighPrice and scalpSignalClose < fboSwingHighPrice
+        string fboSwingHighSession = array.get(fboSwingHighSessions, fboSwingHighIndex)
+        int fboSwingHighDateKey = array.get(fboSwingHighDateKeys, fboSwingHighIndex)
+        bool fboSwingHighAllowed = f_swingTargetSessionAllowed(fboSwingHighSession, fboSwingHighDateKey, nySessionDateKey, activeCurrentRTHDateKey, activePreviousRTHDateKey)
+        bool fboSwingHighQualified = fboSwingHighAllowed and not array.get(fboSwingHighCleared, fboSwingHighIndex) and fboSwingHighPrior and scalpSignalHigh >= fboSwingHighPrice and scalpSignalClose < fboSwingHighPrice
         if fboSwingHighQualified and (na(shortSwingFboPrice) or fboSwingHighPrice > shortSwingFboPrice)
             shortSwingFboQualified := true
             shortSwingFboPrice := fboSwingHighPrice
 
-longSwingTierQualified = (bullSwingStrongIgnitionTier and alertStrongIgnitions) or (bullSwingIgnitionTier and alertIgnitionSignals) or (bullSwingSetupTier and alertSetupSignals and longSwingFboQualified)
-shortSwingTierQualified = (bearSwingStrongIgnitionTier and alertStrongIgnitions) or (bearSwingIgnitionTier and alertIgnitionSignals) or (bearSwingSetupTier and alertSetupSignals and shortSwingFboQualified)
+longSwingFboSetupQualified = bullSwingSetupTier and alertSetupSignals and longSwingFboQualified and longSwingLevelBroken
+longSwingIgnitionSetupQualified = longSwingLevelBroken and bullSwingIgnitionTier and alertIgnitionSignals
+longSwingStrongIgnitionSetupQualified = longSwingLevelBroken and bullSwingStrongIgnitionTier and alertStrongIgnitions
+longSwingSetupQualified = longSwingFboSetupQualified or longSwingIgnitionSetupQualified or longSwingStrongIgnitionSetupQualified
 
-longSwingSetupQualified = longSwingLevelBroken and longSwingTierQualified
-shortSwingSetupQualified = shortSwingLevelBroken and shortSwingTierQualified
+shortSwingFboSetupQualified = bearSwingSetupTier and alertSetupSignals and shortSwingFboQualified and shortSwingLevelBroken
+shortSwingIgnitionSetupQualified = shortSwingLevelBroken and bearSwingIgnitionTier and alertIgnitionSignals
+shortSwingStrongIgnitionSetupQualified = shortSwingLevelBroken and bearSwingStrongIgnitionTier and alertStrongIgnitions
+shortSwingSetupQualified = shortSwingFboSetupQualified or shortSwingIgnitionSetupQualified or shortSwingStrongIgnitionSetupQualified
 
-longSwingSetupTextShort = bullSwingStrongIgnitionTier ? "S-IGN" : bullSwingIgnitionTier ? "IGN" : bullSwingSetupTier and longSwingFboQualified ? "FBO" : "N/A"
-shortSwingSetupTextShort = bearSwingStrongIgnitionTier ? "S-IGN" : bearSwingIgnitionTier ? "IGN" : bearSwingSetupTier and shortSwingFboQualified ? "FBO" : "N/A"
-longSwingSetupTextFull = bullSwingStrongIgnitionTier ? "Strong Ignition" : bullSwingIgnitionTier ? "Ignition" : bullSwingSetupTier and longSwingFboQualified ? "Failed Breakout" : "N/A"
-shortSwingSetupTextFull = bearSwingStrongIgnitionTier ? "Strong Ignition" : bearSwingIgnitionTier ? "Ignition" : bearSwingSetupTier and shortSwingFboQualified ? "Failed Breakout" : "N/A"
+longSwingSetupTextShort = longSwingStrongIgnitionSetupQualified ? "S-IGN" : longSwingIgnitionSetupQualified ? "IGN" : longSwingFboSetupQualified ? "FBO" : "N/A"
+shortSwingSetupTextShort = shortSwingStrongIgnitionSetupQualified ? "S-IGN" : shortSwingIgnitionSetupQualified ? "IGN" : shortSwingFboSetupQualified ? "FBO" : "N/A"
+longSwingSetupTextFull = longSwingStrongIgnitionSetupQualified ? "Strong Ignition" : longSwingIgnitionSetupQualified ? "Ignition" : longSwingFboSetupQualified ? "Failed Breakout" : "N/A"
+shortSwingSetupTextFull = shortSwingStrongIgnitionSetupQualified ? "Strong Ignition" : shortSwingIgnitionSetupQualified ? "Ignition" : shortSwingFboSetupQualified ? "Failed Breakout" : "N/A"
 
 // ===================== Swing Target Selection Logic =====================
 float signalRange = high - low
@@ -1469,8 +1595,10 @@ shortSwingTargetPrice = shortSwingTargetFromMeasuredMove ? shortSwingMeasuredMov
 shortSwingTargetType = shortSwingTargetFromMeasuredMove ? "Measured Move" : shortSwingNearestLevelTargetName
 
 // ===================== Swing Entry / Stop / Risk Logic =====================
-bool longSwingMicroStopUsed = not na(mostRecentMicroSwingLow)
-bool shortSwingMicroStopUsed = not na(mostRecentMicroSwingHigh)
+longSwingMicroStopValid = not na(mostRecentMicroSwingLow) and mostRecentMicroSwingLow <= low
+shortSwingMicroStopValid = not na(mostRecentMicroSwingHigh) and mostRecentMicroSwingHigh >= high
+bool longSwingMicroStopUsed = longSwingMicroStopValid
+bool shortSwingMicroStopUsed = shortSwingMicroStopValid
 longSwingStopPrice = (longSwingMicroStopUsed ? mostRecentMicroSwingLow : low) - scalpTickSize
 shortSwingStopPrice = (shortSwingMicroStopUsed ? mostRecentMicroSwingHigh : high) + scalpTickSize
 longSwingStopSource = longSwingMicroStopUsed ? "Micro Swing" : "Signal Fallback"
@@ -1511,122 +1639,102 @@ longSwingEntry618RR = longSwingEntry618Allowed ? f_swingRRLong(longSwingEntry618
 shortSwingStopEntryRR = f_swingRRShort(shortSwingStopEntry, shortSwingStopPrice, shortSwingTargetPrice)
 shortSwingEntry50RR = shortSwingEntry50Allowed ? f_swingRRShort(shortSwingEntry50CandidatePrice, shortSwingStopPrice, shortSwingTargetPrice) : na
 shortSwingEntry618RR = shortSwingEntry618Allowed ? f_swingRRShort(shortSwingEntry618CandidatePrice, shortSwingStopPrice, shortSwingTargetPrice) : na
+longSwingStopEntryPassesMinRR = not na(longSwingStopEntryRR) and longSwingStopEntryRR >= swingMinRR
+longSwingEntry50PassesMinRR = not na(longSwingEntry50RR) and longSwingEntry50RR >= swingMinRR
+longSwingEntry618PassesMinRR = not na(longSwingEntry618RR) and longSwingEntry618RR >= swingMinRR
+shortSwingStopEntryPassesMinRR = not na(shortSwingStopEntryRR) and shortSwingStopEntryRR >= swingMinRR
+shortSwingEntry50PassesMinRR = not na(shortSwingEntry50RR) and shortSwingEntry50RR >= swingMinRR
+shortSwingEntry618PassesMinRR = not na(shortSwingEntry618RR) and shortSwingEntry618RR >= swingMinRR
 
 float longSwingEntryPrice = na
 string longSwingEntryType = "N/A"
 float longSwingRR = na
-string longSwingRejectionReason = "N/A"
 bool longSwingTargetExists = f_validSourcePrice(longSwingTargetPrice)
 bool longSwingStopValid = f_validSourcePrice(longSwingStopPrice) and longSwingStopPrice < longSwingStopEntry
 
-if not longSwingSetupQualified
-    longSwingRejectionReason := "No swing setup"
-else if not longSwingTargetExists
-    longSwingRejectionReason := "No swing target"
-else if not longSwingStopValid
-    longSwingRejectionReason := "Invalid stop"
-else
+if longSwingSetupQualified and longSwingTargetExists and longSwingStopValid
     if swingUseStopOrdersFirst
-        if not na(longSwingStopEntryRR) and longSwingStopEntryRR >= swingMinRR
+        if longSwingStopEntryPassesMinRR
             longSwingEntryPrice := longSwingStopEntry
             longSwingEntryType := "Stop"
             longSwingRR := longSwingStopEntryRR
-            longSwingRejectionReason := "Qualified"
         else if swingAllowRetracementEntries
-            if not na(longSwingEntry50RR) and longSwingEntry50RR >= swingMinRR
+            if longSwingEntry50PassesMinRR
                 longSwingEntryPrice := longSwingEntry50CandidatePrice
                 longSwingEntryType := longSwingEntry50CandidateType
                 longSwingRR := longSwingEntry50RR
-                longSwingRejectionReason := "Qualified"
-            else if not na(longSwingEntry618RR) and longSwingEntry618RR >= swingMinRR
+            else if longSwingEntry618PassesMinRR
                 longSwingEntryPrice := longSwingEntry618CandidatePrice
                 longSwingEntryType := longSwingEntry618CandidateType
                 longSwingRR := longSwingEntry618RR
-                longSwingRejectionReason := "Qualified"
-            else
-                longSwingRejectionReason := "Retracement R:R too low"
-        else
-            longSwingRejectionReason := "Stop entry R:R too low"
     else
-        if not na(longSwingEntry50RR) and longSwingEntry50RR >= swingMinRR
+        if longSwingEntry50PassesMinRR
             longSwingEntryPrice := longSwingEntry50CandidatePrice
             longSwingEntryType := longSwingEntry50CandidateType
             longSwingRR := longSwingEntry50RR
-            longSwingRejectionReason := "Qualified"
-        else if not na(longSwingEntry618RR) and longSwingEntry618RR >= swingMinRR
+        else if longSwingEntry618PassesMinRR
             longSwingEntryPrice := longSwingEntry618CandidatePrice
             longSwingEntryType := longSwingEntry618CandidateType
             longSwingRR := longSwingEntry618RR
-            longSwingRejectionReason := "Qualified"
-        else
-            longSwingRejectionReason := "Retracement R:R too low"
 
+longSwingFinalRR = f_swingRRLong(longSwingEntryPrice, longSwingStopPrice, longSwingTargetPrice)
+if not na(longSwingFinalRR)
+    longSwingRR := longSwingFinalRR
+
+longSwingDisplayedRrConsistent = na(longSwingEntryPrice) or (not na(longSwingRR) and not na(longSwingFinalRR) and math.abs(longSwingRR - longSwingFinalRR) <= 0.01)
+longSwingStopEntryActuallyPasses = not na(longSwingStopEntryRR) and longSwingStopEntryRR >= swingMinRR
+longSwingSelectedStopButFails = longSwingEntryType == "Stop" and not longSwingStopEntryActuallyPasses
 longSwingRiskPoints = not na(longSwingEntryPrice) ? longSwingEntryPrice - longSwingStopPrice : na
 longSwingRiskDollarsPerContract = longSwingRiskPoints > 0 ? longSwingRiskPoints * scalpPointValue + commissionRoundTrip : na
 longSwingRawContracts = not na(longSwingRiskDollarsPerContract) and longSwingRiskDollarsPerContract > 0 ? int(math.floor(maxRiskDollars / longSwingRiskDollarsPerContract)) : 0
 longSwingContracts = useMaxContractCap ? math.min(longSwingRawContracts, maxContracts) : longSwingRawContracts
 longSwingRiskValid = longSwingRiskPoints > 0 and not na(longSwingRiskDollarsPerContract) and longSwingRiskDollarsPerContract > 0 and longSwingContracts >= 1
-longSwingTradeValid = longSwingSetupQualified and longSwingTargetExists and longSwingStopValid and not na(longSwingEntryPrice) and not na(longSwingRR) and longSwingRR >= swingMinRR and longSwingRiskValid
-if longSwingRejectionReason == "Qualified" and not longSwingRiskValid
-    longSwingRejectionReason := "Risk/contracts invalid"
+longSwingTradeValid = longSwingSetupQualified and longSwingTargetExists and longSwingStopValid and not na(longSwingEntryPrice) and not na(longSwingRR) and longSwingRR >= swingMinRR and longSwingRiskValid and longSwingDisplayedRrConsistent and not longSwingSelectedStopButFails
 
 float shortSwingEntryPrice = na
 string shortSwingEntryType = "N/A"
 float shortSwingRR = na
-string shortSwingRejectionReason = "N/A"
 bool shortSwingTargetExists = f_validSourcePrice(shortSwingTargetPrice)
 bool shortSwingStopValid = f_validSourcePrice(shortSwingStopPrice) and shortSwingStopPrice > shortSwingStopEntry
 
-if not shortSwingSetupQualified
-    shortSwingRejectionReason := "No swing setup"
-else if not shortSwingTargetExists
-    shortSwingRejectionReason := "No swing target"
-else if not shortSwingStopValid
-    shortSwingRejectionReason := "Invalid stop"
-else
+if shortSwingSetupQualified and shortSwingTargetExists and shortSwingStopValid
     if swingUseStopOrdersFirst
-        if not na(shortSwingStopEntryRR) and shortSwingStopEntryRR >= swingMinRR
+        if shortSwingStopEntryPassesMinRR
             shortSwingEntryPrice := shortSwingStopEntry
             shortSwingEntryType := "Stop"
             shortSwingRR := shortSwingStopEntryRR
-            shortSwingRejectionReason := "Qualified"
         else if swingAllowRetracementEntries
-            if not na(shortSwingEntry50RR) and shortSwingEntry50RR >= swingMinRR
+            if shortSwingEntry50PassesMinRR
                 shortSwingEntryPrice := shortSwingEntry50CandidatePrice
                 shortSwingEntryType := shortSwingEntry50CandidateType
                 shortSwingRR := shortSwingEntry50RR
-                shortSwingRejectionReason := "Qualified"
-            else if not na(shortSwingEntry618RR) and shortSwingEntry618RR >= swingMinRR
+            else if shortSwingEntry618PassesMinRR
                 shortSwingEntryPrice := shortSwingEntry618CandidatePrice
                 shortSwingEntryType := shortSwingEntry618CandidateType
                 shortSwingRR := shortSwingEntry618RR
-                shortSwingRejectionReason := "Qualified"
-            else
-                shortSwingRejectionReason := "Retracement R:R too low"
-        else
-            shortSwingRejectionReason := "Stop entry R:R too low"
     else
-        if not na(shortSwingEntry50RR) and shortSwingEntry50RR >= swingMinRR
+        if shortSwingEntry50PassesMinRR
             shortSwingEntryPrice := shortSwingEntry50CandidatePrice
             shortSwingEntryType := shortSwingEntry50CandidateType
             shortSwingRR := shortSwingEntry50RR
-            shortSwingRejectionReason := "Qualified"
-        else if not na(shortSwingEntry618RR) and shortSwingEntry618RR >= swingMinRR
+        else if shortSwingEntry618PassesMinRR
             shortSwingEntryPrice := shortSwingEntry618CandidatePrice
             shortSwingEntryType := shortSwingEntry618CandidateType
             shortSwingRR := shortSwingEntry618RR
-            shortSwingRejectionReason := "Qualified"
-        else
-            shortSwingRejectionReason := "Retracement R:R too low"
 
+shortSwingFinalRR = f_swingRRShort(shortSwingEntryPrice, shortSwingStopPrice, shortSwingTargetPrice)
+if not na(shortSwingFinalRR)
+    shortSwingRR := shortSwingFinalRR
+
+shortSwingDisplayedRrConsistent = na(shortSwingEntryPrice) or (not na(shortSwingRR) and not na(shortSwingFinalRR) and math.abs(shortSwingRR - shortSwingFinalRR) <= 0.01)
+shortSwingStopEntryActuallyPasses = not na(shortSwingStopEntryRR) and shortSwingStopEntryRR >= swingMinRR
+shortSwingSelectedStopButFails = shortSwingEntryType == "Stop" and not shortSwingStopEntryActuallyPasses
 shortSwingRiskPoints = not na(shortSwingEntryPrice) ? shortSwingStopPrice - shortSwingEntryPrice : na
 shortSwingRiskDollarsPerContract = shortSwingRiskPoints > 0 ? shortSwingRiskPoints * scalpPointValue + commissionRoundTrip : na
 shortSwingRawContracts = not na(shortSwingRiskDollarsPerContract) and shortSwingRiskDollarsPerContract > 0 ? int(math.floor(maxRiskDollars / shortSwingRiskDollarsPerContract)) : 0
 shortSwingContracts = useMaxContractCap ? math.min(shortSwingRawContracts, maxContracts) : shortSwingRawContracts
 shortSwingRiskValid = shortSwingRiskPoints > 0 and not na(shortSwingRiskDollarsPerContract) and shortSwingRiskDollarsPerContract > 0 and shortSwingContracts >= 1
-shortSwingTradeValid = shortSwingSetupQualified and shortSwingTargetExists and shortSwingStopValid and not na(shortSwingEntryPrice) and not na(shortSwingRR) and shortSwingRR >= swingMinRR and shortSwingRiskValid
-if shortSwingRejectionReason == "Qualified" and not shortSwingRiskValid
-    shortSwingRejectionReason := "Risk/contracts invalid"
+shortSwingTradeValid = shortSwingSetupQualified and shortSwingTargetExists and shortSwingStopValid and not na(shortSwingEntryPrice) and not na(shortSwingRR) and shortSwingRR >= swingMinRR and shortSwingRiskValid and shortSwingDisplayedRrConsistent and not shortSwingSelectedStopButFails
 
 [longGroup1AfterPDHPrice, longGroup1AfterPDHName] = f_pickLongTouchedLevel(usePrevDayHighLevel, effectivePrevDayHigh, "PDH", scalpSignalLow, scalpSignalHigh, noSelectedLevelPrice, noSelectedLevelName)
 [longGroup1Price, longGroup1Name] = f_pickLongTouchedLevel(usePrevDayLowLevel, effectivePrevDayLow, "PDL", scalpSignalLow, scalpSignalHigh, longGroup1AfterPDHPrice, longGroup1AfterPDHName)
@@ -1698,8 +1806,6 @@ longTwoBarIgnitionOk = not requireTwoBarIgnition or scalpSignalClose > high[1]
 shortTwoBarIgnitionOk = not requireTwoBarIgnition or scalpSignalClose < low[1]
 longTwoBarSetup = longTwoBarSetupRaw and longTwoBarIgnitionOk
 shortTwoBarSetup = shortTwoBarSetupRaw and shortTwoBarIgnitionOk
-longSetupTextShort = longLevelBreakSetup ? "LB" : longTwoBarSetup ? "2B" : "None"
-shortSetupTextShort = shortLevelBreakSetup ? "LB" : shortTwoBarSetup ? "2B" : "None"
 longSetupTextFull = longLevelBreakSetup ? "Level Break" : longTwoBarSetup ? "Two-Bar Play" : "None"
 shortSetupTextFull = shortLevelBreakSetup ? "Level Break" : shortTwoBarSetup ? "Two-Bar Play" : "None"
 
@@ -1771,7 +1877,7 @@ float longTargetRR = longTargetAfterORLRR
 if array.size(swingHighPrices) > 0
     for swingHighIndex = 0 to array.size(swingHighPrices) - 1
         float swingHighPrice = array.get(swingHighPrices, swingHighIndex)
-        bool swingHighAllowed = array.get(swingHighActive, swingHighIndex) and f_swingTargetSessionAllowed(array.get(swingHighSessions, swingHighIndex), array.get(swingHighDateKeys, swingHighIndex), nySessionDateKey, currentRTHDateKey, previousRTHDateKey)
+        bool swingHighAllowed = array.get(swingHighActive, swingHighIndex) and f_swingTargetSessionAllowed(array.get(swingHighSessions, swingHighIndex), array.get(swingHighDateKeys, swingHighIndex), nySessionDateKey, activeCurrentRTHDateKey, activePreviousRTHDateKey)
         if swingHighAllowed and f_longTargetQualifies(swingHighPrice, "5m Swing", longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and (na(longTargetPrice) or swingHighPrice < longTargetPrice)
             longTargetPrice := swingHighPrice
             longTargetType := "5m Swing"
@@ -1799,7 +1905,7 @@ float shortTargetRR = shortTargetAfterORLRR
 if array.size(swingLowPrices) > 0
     for swingLowIndex = 0 to array.size(swingLowPrices) - 1
         float swingLowPrice = array.get(swingLowPrices, swingLowIndex)
-        bool swingLowAllowed = array.get(swingLowActive, swingLowIndex) and f_swingTargetSessionAllowed(array.get(swingLowSessions, swingLowIndex), array.get(swingLowDateKeys, swingLowIndex), nySessionDateKey, currentRTHDateKey, previousRTHDateKey)
+        bool swingLowAllowed = array.get(swingLowActive, swingLowIndex) and f_swingTargetSessionAllowed(array.get(swingLowSessions, swingLowIndex), array.get(swingLowDateKeys, swingLowIndex), nySessionDateKey, activeCurrentRTHDateKey, activePreviousRTHDateKey)
         if swingLowAllowed and f_shortTargetQualifies(swingLowPrice, "5m Swing", shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and (na(shortTargetPrice) or swingLowPrice > shortTargetPrice)
             shortTargetPrice := swingLowPrice
             shortTargetType := "5m Swing"
@@ -1817,8 +1923,8 @@ shortTargetFilterPassed = not requireValidTarget or shortTargetValid
 // ===================== Alert Conditions =====================
 bullSwingBaseGate = alertSwingSetups and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == 1 and alertOnBullSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts
 bearSwingBaseGate = alertSwingSetups and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == -1 and alertOnBearSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts
-bullSwingAlert = alertSwingSetups and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == 1 and alertOnBullSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and longSwingSetupQualified and longSwingTradeValid
-bearSwingAlert = alertSwingSetups and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == -1 and alertOnBearSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and shortSwingSetupQualified and shortSwingTradeValid
+bullSwingAlert = bullSwingBaseGate and longSwingSetupQualified and longSwingTradeValid
+bearSwingAlert = bearSwingBaseGate and shortSwingSetupQualified and shortSwingTradeValid
 
 bullScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == 1 and alertOnBullSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bullScalpTierAllowed and longFboImpulseOk and longScalpSetupQualified and not longExtendedSetupBlocked and not longTwoBarSoftExtensionBlocked and longRiskValid and longTargetFilterPassed
 bullAlertLabelTitle = "LONG SCALP"
@@ -1826,13 +1932,13 @@ bullAlertLabelTitle = "LONG SCALP"
 bearScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and validThesisLevel and thesisState == -1 and alertOnBearSignals and first15FilterAllowsAlerts and openingRangeAllowsAlerts and bearScalpTierAllowed and shortFboImpulseOk and shortScalpSetupQualified and not shortExtendedSetupBlocked and not shortTwoBarSoftExtensionBlocked and shortRiskValid and shortTargetFilterPassed
 bearAlertLabelTitle = "SHORT SCALP"
 
-longScalpSwingSameEntry = bullScalpAlert and bullSwingAlert and f_sameEntry(longEntryPrice, longSwingEntryPrice)
-shortScalpSwingSameEntry = bearScalpAlert and bearSwingAlert and f_sameEntry(shortEntryPrice, shortSwingEntryPrice)
-prioritizeBullSwingSameEntry = prioritizeSwingWhenSameEntry and alertScalpSetups and alertSwingSetups and longScalpSwingSameEntry
-prioritizeBearSwingSameEntry = prioritizeSwingWhenSameEntry and alertScalpSetups and alertSwingSetups and shortScalpSwingSameEntry
-swingSameEntryPriorityActive = prioritizeBullSwingSameEntry or prioritizeBearSwingSameEntry
-plotBullSwingAlert = prioritizeBullSwingSameEntry or (not swingSameEntryPriorityActive and not bullScalpAlert and not bearScalpAlert and bullSwingAlert)
-plotBearSwingAlert = not plotBullSwingAlert and (prioritizeBearSwingSameEntry or (not swingSameEntryPriorityActive and not bullScalpAlert and not bearScalpAlert and bearSwingAlert))
+longScalpSwingPriority = bullScalpAlert and bullSwingAlert and f_longSwingEntryEarlierOrSame(longSwingEntryPrice, longEntryPrice)
+shortScalpSwingPriority = bearScalpAlert and bearSwingAlert and f_shortSwingEntryEarlierOrSame(shortSwingEntryPrice, shortEntryPrice)
+prioritizeBullSwingEntry = prioritizeSwingWhenSameEntry and alertScalpSetups and alertSwingSetups and longScalpSwingPriority
+prioritizeBearSwingEntry = prioritizeSwingWhenSameEntry and alertScalpSetups and alertSwingSetups and shortScalpSwingPriority
+noScalpAlertActive = not bullScalpAlert and not bearScalpAlert
+plotBullSwingAlert = bullSwingAlert and (prioritizeBullSwingEntry or noScalpAlertActive)
+plotBearSwingAlert = not plotBullSwingAlert and bearSwingAlert and (prioritizeBearSwingEntry or noScalpAlertActive)
 effectiveBullScalpAlert = not plotBullSwingAlert and not plotBearSwingAlert and bullScalpAlert
 effectiveBearScalpAlert = not plotBullSwingAlert and not plotBearSwingAlert and not effectiveBullScalpAlert and bearScalpAlert
 
@@ -1847,69 +1953,29 @@ showCompactAlertLabels = alertLabelMode == "Compact"
 f_buildMarkerChartLabel(_direction, _compactSignalText, _setupTextFull) =>
     showAlertSignalDetails ? _direction + "\n" + _compactSignalText + " | " + _setupTextFull : _direction
 
-f_buildCompactChartLabel(_direction, _compactSignalText, _setupTextFull, _entryPrice, _targetPrice, _targetType, _targetRR, _contracts) =>
-    string detailLine = showAlertSignalDetails ? _compactSignalText + " | " + _setupTextFull + "\n" : ""
+f_buildCompactChartLabel(_direction, _compactSignalText, _setupTextFull, _entryType, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _contracts) =>
+    string detailLine = showAlertSignalDetails ? _compactSignalText + " | " + _setupTextFull + "\n" + _entryType + " | S " + f_priceText(_stopPrice) + "\n" : ""
     _direction + "\n" +
      detailLine +
      "E " + f_priceText(_entryPrice) + "\n" +
      "T " + f_priceText(_targetPrice) + " " + _targetType + "\n" +
      str.tostring(_contracts) + "ct | " + f_rrText(_targetRR)
 
-f_buildSwingMarkerChartLabel(_direction, _compactSignalText, _setupTextFull) =>
-    showAlertSignalDetails ? _direction + "\n" + _compactSignalText + " | " + _setupTextFull : _direction
-
-f_buildSwingCompactChartLabel(_direction, _compactSignalText, _setupTextFull, _entryPrice, _targetPrice, _targetType, _targetRR, _contracts) =>
-    string detailLine = showAlertSignalDetails ? _compactSignalText + " | " + _setupTextFull + "\n" : ""
-    _direction + "\n" +
-     detailLine +
-     "E " + f_priceText(_entryPrice) + "\n" +
-     "T " + f_priceText(_targetPrice) + " " + _targetType + "\n" +
-     str.tostring(_contracts) + "ct | " + f_rrText(_targetRR)
+f_addAlertChartLabel(_price, _text, _style, _color) =>
+    label.new(bar_index, _price, _text, style=_style, textcolor=color.white, color=_color, size=showCompactAlertLabels ? size.small : size.tiny)
 
 if showHistoricalAlertLabels and plotBullSwingAlert
-    string bullSwingChartLabelText = showCompactAlertLabels ? f_buildSwingCompactChartLabel(longSwingAlertLabelTitle, longSwingCompactSignalText, longSwingSetupTextFull, longSwingEntryPrice, longSwingTargetPrice, longSwingTargetType, longSwingRR, longSwingContracts) : f_buildSwingMarkerChartLabel(longSwingAlertLabelTitle, longSwingCompactSignalText, longSwingSetupTextFull)
-    label.new(
-         bar_index,
-         low,
-         bullSwingChartLabelText,
-         style=label.style_label_up,
-         textcolor=color.white,
-         color=color.rgb(0, 150, 170),
-         size=showCompactAlertLabels ? size.small : size.tiny
-    )
+    string bullSwingChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(longSwingAlertLabelTitle, longSwingCompactSignalText, longSwingSetupTextFull, longSwingEntryType, longSwingEntryPrice, longSwingStopPrice, longSwingTargetPrice, longSwingTargetType, longSwingRR, longSwingContracts) : f_buildMarkerChartLabel(longSwingAlertLabelTitle, longSwingCompactSignalText, longSwingSetupTextFull)
+    f_addAlertChartLabel(low, bullSwingChartLabelText, label.style_label_up, color.rgb(0, 150, 170))
 else if showHistoricalAlertLabels and plotBearSwingAlert
-    string bearSwingChartLabelText = showCompactAlertLabels ? f_buildSwingCompactChartLabel(shortSwingAlertLabelTitle, shortSwingCompactSignalText, shortSwingSetupTextFull, shortSwingEntryPrice, shortSwingTargetPrice, shortSwingTargetType, shortSwingRR, shortSwingContracts) : f_buildSwingMarkerChartLabel(shortSwingAlertLabelTitle, shortSwingCompactSignalText, shortSwingSetupTextFull)
-    label.new(
-         bar_index,
-         high,
-         bearSwingChartLabelText,
-         style=label.style_label_down,
-         textcolor=color.white,
-         color=color.rgb(190, 95, 0),
-         size=showCompactAlertLabels ? size.small : size.tiny
-    )
+    string bearSwingChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(shortSwingAlertLabelTitle, shortSwingCompactSignalText, shortSwingSetupTextFull, shortSwingEntryType, shortSwingEntryPrice, shortSwingStopPrice, shortSwingTargetPrice, shortSwingTargetType, shortSwingRR, shortSwingContracts) : f_buildMarkerChartLabel(shortSwingAlertLabelTitle, shortSwingCompactSignalText, shortSwingSetupTextFull)
+    f_addAlertChartLabel(high, bearSwingChartLabelText, label.style_label_down, color.rgb(190, 95, 0))
 else if showHistoricalAlertLabels and effectiveBullScalpAlert
-    string bullChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bullAlertLabelTitle, bullCompactSignalText, longSetupTextFull, longEntryPrice, longTargetPrice, longTargetType, longTargetRR, longContracts) : f_buildMarkerChartLabel(bullAlertLabelTitle, bullCompactSignalText, longSetupTextFull)
-    label.new(
-         bar_index,
-         low,
-         bullChartLabelText,
-         style=label.style_label_up,
-         textcolor=color.white,
-         color=color.new(color.lime, 0),
-         size=showCompactAlertLabels ? size.small : size.tiny
-    )
+    string bullChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bullAlertLabelTitle, bullCompactSignalText, longSetupTextFull, longEntryType, longEntryPrice, longStopPrice, longTargetPrice, longTargetType, longTargetRR, longContracts) : f_buildMarkerChartLabel(bullAlertLabelTitle, bullCompactSignalText, longSetupTextFull)
+    f_addAlertChartLabel(low, bullChartLabelText, label.style_label_up, color.new(color.lime, 0))
 else if showHistoricalAlertLabels and effectiveBearScalpAlert
-    string bearChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bearAlertLabelTitle, bearCompactSignalText, shortSetupTextFull, shortEntryPrice, shortTargetPrice, shortTargetType, shortTargetRR, shortContracts) : f_buildMarkerChartLabel(bearAlertLabelTitle, bearCompactSignalText, shortSetupTextFull)
-    label.new(
-         bar_index,
-         high,
-         bearChartLabelText,
-         style=label.style_label_down,
-         textcolor=color.white,
-         color=color.new(color.red, 0),
-         size=showCompactAlertLabels ? size.small : size.tiny
-    )
+    string bearChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bearAlertLabelTitle, bearCompactSignalText, shortSetupTextFull, shortEntryType, shortEntryPrice, shortStopPrice, shortTargetPrice, shortTargetType, shortTargetRR, shortContracts) : f_buildMarkerChartLabel(bearAlertLabelTitle, bearCompactSignalText, shortSetupTextFull)
+    f_addAlertChartLabel(high, bearChartLabelText, label.style_label_down, color.new(color.red, 0))
 
 // ===================== Alert Message =====================
 f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _setupTextFull, _entryType, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _riskPoints, _contracts) =>
@@ -1996,289 +2062,43 @@ if barstate.islast and showSignalLegend
     table.cell(legendTable, 1, 2, " Strong Ignition",  text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
 
 // ===================== Scalp Status Table =====================
+f_addScalpStatusRow(table _statusTable, int _row, string _label, string _value, color _valueColor) =>
+    table.cell(_statusTable, 0, _row, _label, text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+    table.cell(_statusTable, 1, _row, _value, text_color=_valueColor, text_size=size.small, text_halign=text.align_right)
+    _row + 1
+
 var table scalpStatusTable = table.new(position.bottom_right, 2, 25, bgcolor=color.new(color.black, 85), border_width=0)
 if barstate.islast
     table.clear(scalpStatusTable, 0, 0, 1, 24)
     if showThesisLabel
-        statusTextColor = thesisState == 1 ? color.lime : thesisState == -1 ? color.red : color.rgb(220, 220, 220)
+        statusNeutralColor = color.rgb(220, 220, 220)
+        statusTextColor = thesisState == 1 ? color.lime : thesisState == -1 ? color.red : statusNeutralColor
         alertSetupsTableText = alertScalpSetups and alertSwingSetups ? "Scalp + Swing" : alertScalpSetups ? "Scalp" : alertSwingSetups ? "Swing" : "Off"
         int scalpStatusRow = 0
-        table.cell(scalpStatusTable, 0, scalpStatusRow, "Thesis", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, scalpStatusRow, f_thesisText(thesisState), text_color=statusTextColor, text_size=size.small, text_halign=text.align_right)
-        scalpStatusRow += 1
-        table.cell(scalpStatusTable, 0, scalpStatusRow, "Thesis Level", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, scalpStatusRow, f_priceText(effectiveThesisLevel), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-        scalpStatusRow += 1
-        table.cell(scalpStatusTable, 0, scalpStatusRow, "Thesis Name", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, scalpStatusRow, effectiveThesisName, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-        scalpStatusRow += 1
-        table.cell(scalpStatusTable, 0, scalpStatusRow, "Source Symbol", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, scalpStatusRow, effectiveThesisSourceSymbol, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-        scalpStatusRow += 1
-        table.cell(scalpStatusTable, 0, scalpStatusRow, "Opening Range", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, scalpStatusRow, openingRangeStatus, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-        scalpStatusRow += 1
-        table.cell(scalpStatusTable, 0, scalpStatusRow, "Alert Setups", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-        table.cell(scalpStatusTable, 1, scalpStatusRow, alertSetupsTableText, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-        scalpStatusRow += 1
+        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Thesis", f_thesisText(thesisState), statusTextColor)
+        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Thesis Level", f_priceText(effectiveThesisLevel), statusNeutralColor)
+        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Thesis Name", effectiveThesisName, statusNeutralColor)
+        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Source Symbol", effectiveThesisSourceSymbol, statusNeutralColor)
+        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Opening Range", openingRangeStatus, statusNeutralColor)
+        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Alert Setups", alertSetupsTableText, statusNeutralColor)
         if showDetailedLevelStatus
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "PDH", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, f_priceText(effectivePrevDayHigh), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "PDL", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, f_priceText(effectivePrevDayLow), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "OP", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, f_priceText(effectiveDailyOpen), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "PMH", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, f_priceText(effectivePremarketHigh), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "PML", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, f_priceText(effectivePremarketLow), text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "PDH/PDL Source", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, prevDayHighLowSource, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "OP Source", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, dailyOpenSource, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "PM Source", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, premarketSource, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "Auto Note", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, "Intraday, ideally 5m", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "PDH", f_priceText(effectivePrevDayHigh), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "PDL", f_priceText(effectivePrevDayLow), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "OP", f_priceText(effectiveDailyOpen), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "PMH", f_priceText(effectivePremarketHigh), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "PML", f_priceText(effectivePremarketLow), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "PDH/PDL Source", prevDayHighLowSource, statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "OP Source", dailyOpenSource, statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "PM Source", premarketSource, statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Auto Note", "Intraday, ideally 5m", statusNeutralColor)
         if showAutoThesisDebug
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "Conversion Method", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, autoThesisConversionMethod, text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "Source Thesis Price", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis ? f_priceText(selectedAutoThesisSourcePrice) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "Source Daily Open", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis ? f_priceText(sourceDayOpen) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "Chart Daily Open", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis ? f_priceText(chartDailyOpenForThesis) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "Raw Converted", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis ? f_priceText(convertedAutoThesisRaw) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "Final Thesis Level", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis ? f_priceText(convertedAutoThesisLevel) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "Auto Distance", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis ? f_pointsText(selectedAutoThesisDistance) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "Daily Open Default", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis ? f_boolText(autoThesisUsedDailyOpenDefault) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "Auto Status", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, autoThesisUnavailableReason, text_color=autoThesisConvertedValid ? color.lime : color.red, text_size=size.small, text_halign=text.align_right)
-            scalpStatusRow += 1
-            table.cell(scalpStatusTable, 0, scalpStatusRow, "Auto Priority", text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-            table.cell(scalpStatusTable, 1, scalpStatusRow, useAutoThesis and autoThesisSelectionValid ? str.tostring(selectedAutoThesisPriority) : "N/A", text_color=color.rgb(220, 220, 220), text_size=size.small, text_halign=text.align_right)
-
-// ===================== Swing Debug =====================
-swingDebugShowLong = swingDebugSide == "Long / Bull" or swingDebugSide == "Both"
-swingDebugShowShort = swingDebugSide == "Short / Bear" or swingDebugSide == "Both"
-swingDebugNeutralColor = color.rgb(220, 220, 220)
-swingDebugFailColor = color.rgb(150, 150, 150)
-swingDebugWarnColor = color.rgb(255, 170, 0)
-
-f_debugBoolColor(bool _condition, color _passColor) =>
-    _condition ? _passColor : swingDebugFailColor
-
-f_debugIntText(int _value) =>
-    na(_value) ? "N/A" : str.tostring(_value)
-
-f_addSwingDebugHeader(table _debugTable, int _row, string _label, color _headerColor) =>
-    table.cell(_debugTable, 0, _row, _label, text_color=_headerColor, text_size=size.small, text_halign=text.align_left)
-    table.cell(_debugTable, 1, _row, "", text_color=_headerColor, text_size=size.small, text_halign=text.align_right)
-    _row + 1
-
-f_addSwingDebugRow(table _debugTable, int _row, string _label, string _value, color _valueColor) =>
-    table.cell(_debugTable, 0, _row, _label, text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-    table.cell(_debugTable, 1, _row, _value, text_color=_valueColor, text_size=size.small, text_halign=text.align_right)
-    _row + 1
-
-f_addSwingDebugBool(table _debugTable, int _row, string _label, bool _condition, color _passColor) =>
-    f_addSwingDebugRow(_debugTable, _row, _label, f_boolText(_condition), f_debugBoolColor(_condition, _passColor))
-
-var table swingDebugTable = table.new(position.bottom_left, 2, 170, bgcolor=color.new(color.black, 85), border_width=0)
-if barstate.islast
-    table.clear(swingDebugTable, 0, 0, 1, 169)
-    if showSwingDebug
-        int swingDebugRow = 0
-
-        if swingDebugShowLong
-            swingDebugRow := f_addSwingDebugHeader(swingDebugTable, swingDebugRow, "LONG / BULL SWING DEBUG", color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Alert Swing Setups", alertSwingSetups, color.lime)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Scalp Minimum R:R", f_rrText(minTargetRR), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Swing Minimum R:R", f_rrText(swingMinRR), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "In RTH", inScalpRTHSession, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bar Confirmed", barstate.isconfirmed, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Valid Thesis Level", validThesisLevel, color.lime)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Thesis State", f_thesisText(thesisState), thesisState == 1 ? color.lime : swingDebugWarnColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bull Alerts Enabled", alertOnBullSignals, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "First 15 Filter Allows", first15FilterAllowsAlerts, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Opening Range Allows", openingRangeAllowsAlerts, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bull Signal High Vol", bullSignalHighVol, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bull Signal Normal Vol", bullSignalNormalVol, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bull Swing Signal Allowed", bullSwingSignalAllowed, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bull Signal Confirmed", bullSignalConfirmed, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Is Mostly Body", isMostlyBody, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bull Swing Setup Tier", bullSwingSetupTier, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bull Swing Ignition Tier", bullSwingIgnitionTier, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bull Swing Strong Ignition Tier", bullSwingStrongIgnitionTier, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bull Swing Tier Allowed By Inputs", bullSwingTierAllowedByInputs, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Long Swing Tier Qualified", longSwingTierQualified, color.lime)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Swing Setup Text", longSwingSetupTextFull, longSwingTierQualified ? color.lime : swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Swing Entry Level Count", str.tostring(swingEntryLevelCount), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Swing Target Level Count", str.tostring(swingTargetLevelCount), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Chart PDH Touched", chartPdhSwingTouched, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Chart PDH Broken Long", longChartPdhSwingBroken, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Chart PDL Touched", chartPdlSwingTouched, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Chart PDL Broken Long", longChartPdlSwingBroken, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Long Swing Level Touched", longSwingLevelTouched, color.lime)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Touched Level Name", longSwingTouchedLevelName, swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Touched Level Price", f_priceText(longSwingTouchedLevelPrice), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Long Swing Level Broken", longSwingLevelBroken, color.lime)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Signal Low", f_priceText(low), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Signal High", f_priceText(high), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Signal Close", f_priceText(close), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Long Swing FBO Qualified", longSwingFboQualified, color.lime)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Swing FBO Price", f_priceText(longSwingFboPrice), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Long Swing Setup Qualified", longSwingSetupQualified, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Long Swing Target Exists", longSwingTargetExists, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Long Swing Stop Valid", longSwingStopValid, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Long Swing Risk Valid", longSwingRiskValid, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Long Swing Trade Valid", longSwingTradeValid, color.lime)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Swing Rejection Reason", longSwingRejectionReason, longSwingTradeValid ? color.lime : swingDebugWarnColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Most Recent Micro Swing Low", f_priceText(mostRecentMicroSwingLow), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Micro Swing Low Bar", f_debugIntText(mostRecentMicroSwingLowBar), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Swing Stop Source", longSwingStopSource, longSwingStopSource == "Micro Swing" ? color.lime : swingDebugWarnColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Swing Stop", f_priceText(longSwingStopPrice), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Stop Entry", f_priceText(longSwingStopEntry), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Stop Entry RR", f_rrText(longSwingStopEntryRR), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long 50 Entry", f_priceText(longSwingEntry50CandidatePrice), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long 50 Entry Type", longSwingEntry50CandidateType, swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Long 50 Entry Allowed", longSwingEntry50Allowed, color.lime)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long 50 Entry RR", f_rrText(longSwingEntry50RR), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long 61.8 Entry", f_priceText(longSwingEntry618CandidatePrice), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long 61.8 Entry Type", longSwingEntry618CandidateType, swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Long 61.8 Entry Allowed", longSwingEntry618Allowed, color.lime)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long 61.8 Entry RR", f_rrText(longSwingEntry618RR), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Final Entry Type", longSwingEntryType, swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Final Entry", f_priceText(longSwingEntryPrice), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Final RR", f_rrText(longSwingRR), not na(longSwingRR) and longSwingRR >= swingMinRR ? color.lime : swingDebugWarnColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Nearest Level Target Name", longSwingNearestLevelTargetName, swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Nearest Level Target Price", f_priceText(longSwingNearestLevelTargetPrice), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Measured Move Target", f_priceText(longSwingMeasuredMoveTarget), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long MM Distance From Level ATR", f_numberText(longSwingMeasuredMoveDistanceFromLevelAtr), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Long Use MM Override", longSwingUseMeasuredMoveOverride, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Long Target From Measured Move", longSwingTargetFromMeasuredMove, color.lime)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Final Target Type", longSwingTargetType, swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Long Final Target", f_priceText(longSwingTargetPrice), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bull Swing Base Gate", bullSwingBaseGate, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bull Swing Alert", bullSwingAlert, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Plot Bull Swing Alert", plotBullSwingAlert, color.lime)
-
-        if swingDebugShowShort
-            swingDebugRow := f_addSwingDebugHeader(swingDebugTable, swingDebugRow, "SHORT / BEAR SWING DEBUG", color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Alert Swing Setups", alertSwingSetups, color.lime)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Scalp Minimum R:R", f_rrText(minTargetRR), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Swing Minimum R:R", f_rrText(swingMinRR), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "In RTH", inScalpRTHSession, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bar Confirmed", barstate.isconfirmed, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Valid Thesis Level", validThesisLevel, color.lime)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Thesis State", f_thesisText(thesisState), thesisState == -1 ? color.red : swingDebugWarnColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bear Alerts Enabled", alertOnBearSignals, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "First 15 Filter Allows", first15FilterAllowsAlerts, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Opening Range Allows", openingRangeAllowsAlerts, color.lime)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bear Signal High Vol", bearSignalHighVol, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bear Signal Normal Vol", bearSignalNormalVol, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bear Swing Signal Allowed", bearSwingSignalAllowed, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bear Signal Confirmed", bearSignalConfirmed, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Is Mostly Body", isMostlyBody, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bear Swing Setup Tier", bearSwingSetupTier, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bear Swing Ignition Tier", bearSwingIgnitionTier, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bear Swing Strong Ignition Tier", bearSwingStrongIgnitionTier, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bear Swing Tier Allowed By Inputs", bearSwingTierAllowedByInputs, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Short Swing Tier Qualified", shortSwingTierQualified, color.red)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Swing Setup Text", shortSwingSetupTextFull, shortSwingTierQualified ? color.red : swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Swing Entry Level Count", str.tostring(swingEntryLevelCount), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Swing Target Level Count", str.tostring(swingTargetLevelCount), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Chart PDH Touched", chartPdhSwingTouched, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Chart PDH Broken Short", shortChartPdhSwingBroken, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Chart PDL Touched", chartPdlSwingTouched, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Chart PDL Broken Short", shortChartPdlSwingBroken, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Short Swing Level Touched", shortSwingLevelTouched, color.red)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Touched Level Name", shortSwingTouchedLevelName, swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Touched Level Price", f_priceText(shortSwingTouchedLevelPrice), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Short Swing Level Broken", shortSwingLevelBroken, color.red)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Signal Low", f_priceText(low), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Signal High", f_priceText(high), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Signal Close", f_priceText(close), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Short Swing FBO Qualified", shortSwingFboQualified, color.red)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Swing FBO Price", f_priceText(shortSwingFboPrice), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Short Swing Setup Qualified", shortSwingSetupQualified, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Short Swing Target Exists", shortSwingTargetExists, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Short Swing Stop Valid", shortSwingStopValid, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Short Swing Risk Valid", shortSwingRiskValid, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Short Swing Trade Valid", shortSwingTradeValid, color.red)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Swing Rejection Reason", shortSwingRejectionReason, shortSwingTradeValid ? color.red : swingDebugWarnColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Most Recent Micro Swing High", f_priceText(mostRecentMicroSwingHigh), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Micro Swing High Bar", f_debugIntText(mostRecentMicroSwingHighBar), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Swing Stop Source", shortSwingStopSource, shortSwingStopSource == "Micro Swing" ? color.red : swingDebugWarnColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Swing Stop", f_priceText(shortSwingStopPrice), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Stop Entry", f_priceText(shortSwingStopEntry), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Stop Entry RR", f_rrText(shortSwingStopEntryRR), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short 50 Entry", f_priceText(shortSwingEntry50CandidatePrice), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short 50 Entry Type", shortSwingEntry50CandidateType, swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Short 50 Entry Allowed", shortSwingEntry50Allowed, color.red)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short 50 Entry RR", f_rrText(shortSwingEntry50RR), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short 61.8 Entry", f_priceText(shortSwingEntry618CandidatePrice), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short 61.8 Entry Type", shortSwingEntry618CandidateType, swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Short 61.8 Entry Allowed", shortSwingEntry618Allowed, color.red)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short 61.8 Entry RR", f_rrText(shortSwingEntry618RR), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Final Entry Type", shortSwingEntryType, swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Final Entry", f_priceText(shortSwingEntryPrice), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Final RR", f_rrText(shortSwingRR), not na(shortSwingRR) and shortSwingRR >= swingMinRR ? color.red : swingDebugWarnColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Nearest Level Target Name", shortSwingNearestLevelTargetName, swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Nearest Level Target Price", f_priceText(shortSwingNearestLevelTargetPrice), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Measured Move Target", f_priceText(shortSwingMeasuredMoveTarget), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short MM Distance From Level ATR", f_numberText(shortSwingMeasuredMoveDistanceFromLevelAtr), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Short Use MM Override", shortSwingUseMeasuredMoveOverride, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Short Target From Measured Move", shortSwingTargetFromMeasuredMove, color.red)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Final Target Type", shortSwingTargetType, swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugRow(swingDebugTable, swingDebugRow, "Short Final Target", f_priceText(shortSwingTargetPrice), swingDebugNeutralColor)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bear Swing Base Gate", bearSwingBaseGate, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Bear Swing Alert", bearSwingAlert, color.red)
-            swingDebugRow := f_addSwingDebugBool(swingDebugTable, swingDebugRow, "Plot Bear Swing Alert", plotBearSwingAlert, color.red)
-
-longSwingDebugOnChartBar = showSwingDebugOnChart and swingDebugShowLong and barstate.isconfirmed and (bullSwingBaseGate or longSwingLevelTouched or longSwingSetupQualified or bullSwingSignalAllowed)
-shortSwingDebugOnChartBar = showSwingDebugOnChart and swingDebugShowShort and barstate.isconfirmed and (bearSwingBaseGate or shortSwingLevelTouched or shortSwingSetupQualified or bearSwingSignalAllowed)
-
-if longSwingDebugOnChartBar
-    label.new(
-         bar_index,
-         low,
-         "L SWING\n" + longSwingRejectionReason + "\n" + longSwingSetupTextShort + " " + f_rrText(longSwingRR),
-         style=label.style_label_up,
-         textcolor=color.white,
-         color=longSwingTradeValid ? color.new(color.lime, 0) : color.rgb(170, 120, 0),
-         size=size.tiny
-    )
-
-if shortSwingDebugOnChartBar
-    label.new(
-         bar_index,
-         high,
-         "S SWING\n" + shortSwingRejectionReason + "\n" + shortSwingSetupTextShort + " " + f_rrText(shortSwingRR),
-         style=label.style_label_down,
-         textcolor=color.white,
-         color=shortSwingTradeValid ? color.new(color.red, 0) : color.rgb(170, 120, 0),
-         size=size.tiny
-    )
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conversion Method", autoThesisConversionMethod, statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Source Thesis Price", useAutoThesis ? f_priceText(selectedAutoThesisSourcePrice) : "N/A", statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Source Daily Open", useAutoThesis ? f_priceText(sourceDayOpen) : "N/A", statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Chart Daily Open", useAutoThesis ? f_priceText(chartDailyOpenForThesis) : "N/A", statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Raw Converted", useAutoThesis ? f_priceText(convertedAutoThesisRaw) : "N/A", statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Final Thesis Level", useAutoThesis ? f_priceText(convertedAutoThesisLevel) : "N/A", statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Auto Distance", useAutoThesis ? f_pointsText(selectedAutoThesisDistance) : "N/A", statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Daily Open Default", useAutoThesis ? f_boolText(autoThesisUsedDailyOpenDefault) : "N/A", statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Auto Status", autoThesisUnavailableReason, autoThesisConvertedValid ? color.lime : color.red)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Auto Priority", useAutoThesis and autoThesisSelectionValid ? str.tostring(selectedAutoThesisPriority) : "N/A", statusNeutralColor)
