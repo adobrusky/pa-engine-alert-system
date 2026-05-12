@@ -1,5 +1,5 @@
 //@version=6
-indicator("PA Engine Alert System", shorttitle = "PA Engine Alerts", overlay=true, calc_bars_count=1000, max_bars_back = 1000, max_lines_count=500, max_labels_count=500, dynamic_requests=true)
+indicator("PA Engine Alert System", shorttitle = "PA Engine Alerts", overlay=true, calc_bars_count=1000, max_bars_back = 1000, max_lines_count=500, max_labels_count=500, max_boxes_count=200, dynamic_requests=true)
 
 // ===================== User Inputs =====================
 
@@ -29,7 +29,7 @@ prioritizeSwingWhenSameEntry = input.bool(true, title="Prioritize Swing When Ent
 
 // 02. Setup Filters
 requireLevelBreakSetup   = input.bool(true, title="Require Level Break Setup", group=groupSetupFilters, tooltip="Require scalp alerts to have a signal bar that touches an enabled scalp entry level and closes beyond it.")
-requireTwoBarSetup       = input.bool(true, title="Require Two-Bar Setup", group=groupSetupFilters, tooltip="Require scalp alerts to have no qualifying level break plus a trend-body signal bar with confirmation from one of the prior two bars.")
+requireTwoBarSetup       = input.bool(false, title="Require Two-Bar Setup", group=groupSetupFilters, tooltip="Require scalp alerts to have no qualifying level break plus a trend-body signal bar with confirmation from one of the prior two bars.")
 requireTwoBarIgnition    = input.bool(true, title="Require Ignition for Two-Bar Setups", group=groupSetupFilters)
 skipFiveBarExtension     = input.bool(true, title="Skip 5+ Bar Extension", group=groupSetupFilters)
 skipStrongMicrochannelExtension = input.bool(true, title="Skip 3+ Bar Strong Extension", group=groupSetupFilters)
@@ -45,7 +45,7 @@ alertSetupSignals        = input.bool(true, title="Allow Setup Signals", group=g
 alertIgnitionSignals     = input.bool(true, title="Allow Ignition Signals", group=groupSetupFilters)
 alertStrongIgnitions     = input.bool(true, title="Allow Strong Ignitions", group=groupSetupFilters)
 
-// 03. Thesis
+// 03. Thesis 
 useAutoThesis                 = input.bool(true, title="Use Auto Thesis", group=groupThesis)
 autoThesisFallbackToManual    = input.bool(true, title="Fallback To Manual Thesis If Auto Unavailable", group=groupThesis)
 initialThesis                 = input.string("Neutral", title="Initial Thesis", options=["Neutral", "Long", "Short"], group=groupThesis)
@@ -54,7 +54,6 @@ thesisFollowThroughBars       = input.int(5, title="Thesis Follow-Through Bars",
 autoThesisAtrMultiplier       = input.float(0.75, title="Auto Thesis ATR Multiplier", minval=0.1, step=0.05, group=groupThesis)
 thesisSourceMode              = input.string("Auto From Ticker", title="Thesis Source Mode", options=["Auto From Ticker", "Manual Source"], group=groupThesis)
 manualThesisSourceSymbol      = input.string("AMEX:SPY", title="Manual Thesis Source Symbol", group=groupThesis)
-thesisConversionMode          = input.string("Current Price Ratio", title="Thesis Conversion Mode", options=["Current Price Ratio", "Anchored RTH Ratio", "RTH Open Ratio"], group=groupThesis)
 includeDailyGapsInAutoThesis  = input.bool(true, title="Include Daily Gaps In Auto Thesis", group=groupThesis)
 showAutoThesisLevel           = input.bool(true, title="Show Auto/Effective Thesis Level", group=groupThesis)
 showThesisLabel               = input.bool(true, title="Show Thesis Status Table", group=groupThesis)
@@ -76,6 +75,7 @@ premarketLowLevel                = input.float(0.0, title="Manual/Fallback PML L
 useOpeningRangeHighAsEntryLevel  = input.bool(true, title="Use ORH As Entry Level", group=groupScalpLevels)
 useOpeningRangeLowAsEntryLevel   = input.bool(true, title="Use ORL As Entry Level", group=groupScalpLevels)
 showAutoScalpLevels              = input.bool(true, title="Show Auto/Effective Scalp Levels", group=groupScalpLevels)
+showRawFuturesPrevDayLevels      = input.bool(false, title="Show Raw Futures PDH/PDL", group=groupScalpLevels, tooltip="Shows the raw chart/futures previous day high/low used by scalp logic. Off by default to avoid duplicating converted swing PDH/PDL.")
 
 // 05. Opening Range
 showOpeningRange                 = input.bool(true, title="Show Opening Range", group=groupOpeningRange)
@@ -113,13 +113,6 @@ showSignalLegend             = input.bool(false, title="Show Signal Legend", gro
 alertLabelMode               = input.string("Compact", title="Historical Alert Labels", options=["Off", "Marker Only", "Compact"], group=groupDisplay)
 showAlertSignalDetails       = input.bool(false, title="Show Alert Signal Details", group=groupDisplay)
 showSwingLevels              = input.bool(true, title="Show Swing Levels", group=groupDisplay, tooltip="Plots the converted higher-timeframe swing levels used for swing entries and targets.")
-swingLevelDisplayConversionMode = input.string(
-     "Current Price Ratio",
-     title="Swing Level Display Conversion",
-     options=["Current Price Ratio", "Anchored RTH Ratio", "RTH Open Ratio"],
-     group=groupDisplay,
-     tooltip="Controls how source swing levels are converted to the chart symbol for display. Current Price Ratio updates the displayed level as the source/chart price ratio changes."
-)
 showSwingLevelLabels         = input.bool(false, title="Show Swing Level Labels", group=groupDisplay)
 maxDisplayedDailyGaps        = input.int(20, title="Max Displayed Daily Gaps", minval=0, maxval=100, group=groupDisplay)
 
@@ -143,8 +136,12 @@ openLevelColor = color.orange
 openingRangeHighColor = color.rgb(70, 190, 105)
 openingRangeLowColor = color.rgb(235, 95, 95)
 premarketLevelColor = color.blue
-gapEndLevelColor = color.rgb(220, 220, 220)
-gapStartLevelColor = color.rgb(180, 180, 180)
+paEngineHighLevelColor = color.rgb(8, 153, 129)
+paEngineLowLevelColor = color.rgb(242, 54, 69)
+paEngineOpenLevelColor = color.rgb(243, 152, 15)
+dailyGapLineColor = color.rgb(255, 255, 255)
+dailyGapBoxColor = color.rgb(255, 255, 255, 95)
+dailyGapBorderColor = color.rgb(255, 255, 255, 30)
 
 // ===================== Volume Calculations =====================
 volumeSMA = ta.sma(volume, volumeMetricLength)
@@ -370,6 +367,24 @@ getGaps(_lookBack) =>
     for key in keysToRemove
         gapsDict.remove(key)
     gapsDict
+
+f_gapBoundaryPriceFromRecord(string _gapRecord, bool _useHighSide) =>
+    float gapBoundaryPrice = na
+    parts = str.split(_gapRecord, "|")
+    if array.size(parts) == 2
+        rest = array.get(parts, 1)
+        gapOriginalAndPartial = str.split(rest, ":")
+        if array.size(gapOriginalAndPartial) > 0
+            gapHighAndLow = str.split(array.get(gapOriginalAndPartial, 0), ",")
+            if array.size(gapHighAndLow) == 2
+                gapBoundaryPrice := str.tonumber(array.get(gapHighAndLow, _useHighSide ? 0 : 1))
+    gapBoundaryPrice
+
+f_gapHighPriceFromRecord(string _gapRecord) =>
+    f_gapBoundaryPriceFromRecord(_gapRecord, true)
+
+f_gapLowPriceFromRecord(string _gapRecord) =>
+    f_gapBoundaryPriceFromRecord(_gapRecord, false)
 
 f_gapEndPriceFromRecord(string _gapRecord) =>
     float gapEndPrice = na
@@ -656,7 +671,7 @@ autoDefaultThesisSourceTicker = tickerInput == "MES" ? ticker.new("AMEX", "SPY",
 sourceLevelsEnabled = useAutoThesis or alertSwingSetups or showSwingLevels
 thesisSourceSymbol = sourceLevelsEnabled ? (thesisSourceMode == "Manual Source" ? manualThesisSourceSymbol : autoDefaultThesisSourceSymbol) : "None"
 thesisSourceTicker = sourceLevelsEnabled ? (thesisSourceMode == "Manual Source" ? manualThesisSourceSymbol : autoDefaultThesisSourceTicker) : ""
-sourceCloseForConversionNeeded = sourceLevelsEnabled and (thesisConversionMode == "Current Price Ratio" or (showSwingLevels and swingLevelDisplayConversionMode == "Current Price Ratio"))
+sourceCloseForConversionNeeded = sourceLevelsEnabled
 
 // The HTF requests intentionally mirror the PA Engine approach: previous completed
 // H/L plus the current period open are requested with lookahead_on.
@@ -674,6 +689,13 @@ float sourceDayOpen = na
 float source1hRthAtr = na
 float sourceCloseForConversion = na
 map<int, string> sourceDailyGaps = na
+var float lastRthChartCloseForDisplayConversion = na
+var float lastRthSourceCloseForDisplayConversion = na
+var array<int> cachedSourceDailyGapTimes = array.new_int()
+var array<float> cachedSourceDailyGapStarts = array.new_float()
+var array<float> cachedSourceDailyGapEnds = array.new_float()
+var array<float> cachedSourceDailyGapHighs = array.new_float()
+var array<float> cachedSourceDailyGapLows = array.new_float()
 
 var array<float> swingLevelPrices = array.new_float()
 var array<string> swingLevelNames = array.new_string()
@@ -685,8 +707,11 @@ var array<string> swingDisplayLevelLabels = array.new_string()
 var array<color> swingDisplayLevelColors = array.new_color()
 var array<int> swingDisplayLevelWidths = array.new_int()
 var array<int> swingDisplayLevelStyles = array.new_int()
+var array<float> swingDisplayGapBoxTops = array.new_float()
+var array<float> swingDisplayGapBoxBottoms = array.new_float()
 var array<line> swingLevelLines = array.new_line()
 var array<label> swingLevelLabels = array.new_label()
+var array<box> swingDailyGapBoxes = array.new_box()
 
 if sourceLevelsEnabled
     [requestedPrevDayHigh, requestedPrevDayLow, requestedDayOpenHTF] = getHigherTimeframeData("1440", thesisSourceTicker)
@@ -704,15 +729,61 @@ if sourceLevelsEnabled
     sourceDayOpenIntraday := request.security(thesisSourceTicker, "5", f_currentRthOpen(), lookahead=barmerge.lookahead_off, calc_bars_count=500)
     sourceDayOpen := f_validSourcePrice(sourceDayOpenHTF) ? sourceDayOpenHTF : sourceDayOpenIntraday
     source1hRthAtr := useAutoThesis ? request.security(thesisSourceTicker, "60", ta.atr(atrLength), lookahead=barmerge.lookahead_off, calc_bars_count=500) : na
-    sourceCloseForConversion := sourceCloseForConversionNeeded ? request.security(thesisSourceTicker, timeframe.period, close, lookahead=barmerge.lookahead_off, calc_bars_count=2) : na
+    sourceCloseForConversion := sourceCloseForConversionNeeded ? request.security(thesisSourceTicker, timeframe.period, close, lookahead=barmerge.lookahead_off, calc_bars_count=500) : na
     if includeDailyGapsInAutoThesis or alertSwingSetups or showSwingLevels
         sourceDailyGaps := request.security(thesisSourceTicker, "1440", getGaps(autoThesisGapLookback), lookahead=barmerge.lookahead_on, calc_bars_count=202)
 
+if barstate.isconfirmed and inScalpRTHSession and f_validSourcePrice(close) and f_validSourcePrice(sourceCloseForConversion)
+    lastRthChartCloseForDisplayConversion := close
+    lastRthSourceCloseForDisplayConversion := sourceCloseForConversion
+
+// Current Price Ratio is the only active source-to-chart conversion. Once an
+// RTH ratio exists, premarket and after-hours bars reuse it instead of drifting.
+fallbackChartConversionClose = barstate.isconfirmed ? close : close[1]
+fallbackSourceConversionClose = barstate.isconfirmed ? sourceCloseForConversion : sourceCloseForConversion[1]
+chartConversionBase = f_validSourcePrice(lastRthChartCloseForDisplayConversion) ? lastRthChartCloseForDisplayConversion : f_validSourcePrice(fallbackChartConversionClose) and f_validSourcePrice(fallbackSourceConversionClose) ? fallbackChartConversionClose : na
+sourceConversionBase = f_validSourcePrice(lastRthSourceCloseForDisplayConversion) ? lastRthSourceCloseForDisplayConversion : f_validSourcePrice(fallbackSourceConversionClose) ? fallbackSourceConversionClose : na
+currentConversionRatio = f_validSourcePrice(chartConversionBase) and f_validSourcePrice(sourceConversionBase) ? chartConversionBase / sourceConversionBase : na
+swingCurrentPriceRatioReady = f_validSourcePrice(currentConversionRatio)
+
+requestedSourceDailyGapCount = 0
+if not na(sourceDailyGaps)
+    for [requestedGapKey, requestedGapValue] in sourceDailyGaps
+        requestedSourceDailyGapCount += 1
+if requestedSourceDailyGapCount > 0
+    array.clear(cachedSourceDailyGapTimes)
+    array.clear(cachedSourceDailyGapStarts)
+    array.clear(cachedSourceDailyGapEnds)
+    array.clear(cachedSourceDailyGapHighs)
+    array.clear(cachedSourceDailyGapLows)
+    for [cacheGapKey, cacheGapValue] in sourceDailyGaps
+        float cacheGapStart = f_gapStartPriceFromRecord(cacheGapValue)
+        float cacheGapEnd = f_gapEndPriceFromRecord(cacheGapValue)
+        float cacheGapHigh = f_gapHighPriceFromRecord(cacheGapValue)
+        float cacheGapLow = f_gapLowPriceFromRecord(cacheGapValue)
+        if f_validSourcePrice(cacheGapStart) and f_validSourcePrice(cacheGapEnd) and f_validSourcePrice(cacheGapHigh) and f_validSourcePrice(cacheGapLow)
+            array.push(cachedSourceDailyGapTimes, cacheGapKey)
+            array.push(cachedSourceDailyGapStarts, cacheGapStart)
+            array.push(cachedSourceDailyGapEnds, cacheGapEnd)
+            array.push(cachedSourceDailyGapHighs, cacheGapHigh)
+            array.push(cachedSourceDailyGapLows, cacheGapLow)
+
+sourceDailyGapCount = array.size(cachedSourceDailyGapStarts)
+float firstValidSourceGapStart = na
+float firstValidSourceGapEnd = na
+if sourceDailyGapCount > 0
+    for countGapIndex = 0 to sourceDailyGapCount - 1
+        float countGapStart = array.get(cachedSourceDailyGapStarts, countGapIndex)
+        float countGapEnd = array.get(cachedSourceDailyGapEnds, countGapIndex)
+        if na(firstValidSourceGapStart) and f_validSourcePrice(countGapStart) and f_validSourcePrice(countGapEnd)
+            firstValidSourceGapStart := countGapStart
+            firstValidSourceGapEnd := countGapEnd
+
 float sourceGapEndPrice = na
 float sourceGapEndDistance = na
-if useAutoThesis and includeDailyGapsInAutoThesis and f_validSourcePrice(sourceDayOpen) and not na(sourceDailyGaps)
-    for [sourceGapKey, sourceGapValue] in sourceDailyGaps
-        float gapEndCandidate = f_gapEndPriceFromRecord(sourceGapValue)
+if useAutoThesis and includeDailyGapsInAutoThesis and f_validSourcePrice(sourceDayOpen) and sourceDailyGapCount > 0
+    for sourceGapIndex = 0 to sourceDailyGapCount - 1
+        float gapEndCandidate = array.get(cachedSourceDailyGapEnds, sourceGapIndex)
         if f_validSourcePrice(gapEndCandidate)
             float gapEndDistance = math.abs(gapEndCandidate - sourceDayOpen)
             if na(sourceGapEndDistance) or gapEndDistance < sourceGapEndDistance
@@ -746,34 +817,29 @@ autoThesisSelectionValid = f_validSourcePrice(selectedAutoThesisSourcePrice) and
 autoThesisUsedDailyOpenDefault = autoThesisSelectionValid and not autoHigherPriorityThesisFound
 
 chartDailyOpenForThesis = f_validSourcePrice(autoDailyOpen) ? autoDailyOpen : f_validSourcePrice(effectiveDailyOpen) ? effectiveDailyOpen : na
-chartConversionBase = thesisConversionMode == "Current Price Ratio" ? close : autoDailyOpen
-sourceConversionBase = thesisConversionMode == "Current Price Ratio" ? sourceCloseForConversion : sourceDayOpen
-rthOpenRatioConverted = autoThesisSelectionValid and f_validSourcePrice(autoDailyOpen) and f_validSourcePrice(sourceDayOpen) ? selectedAutoThesisSourcePrice * (autoDailyOpen / sourceDayOpen) : na
-currentPriceRatioConverted = autoThesisSelectionValid and f_validSourcePrice(close) and f_validSourcePrice(sourceCloseForConversion) ? selectedAutoThesisSourcePrice * (close / sourceCloseForConversion) : na
-anchoredRthRatioConverted = autoThesisSelectionValid and f_validSourcePrice(autoDailyOpen) and f_validSourcePrice(sourceDayOpen) ? autoDailyOpen + (selectedAutoThesisSourcePrice - sourceDayOpen) * (autoDailyOpen / sourceDayOpen) : na
-convertedAutoThesisByMode = thesisConversionMode == "Anchored RTH Ratio" ? anchoredRthRatioConverted : thesisConversionMode == "RTH Open Ratio" ? rthOpenRatioConverted : currentPriceRatioConverted
-autoThesisUsesChartDailyOpen = selectedAutoThesisName == "Daily Open" and f_validSourcePrice(chartDailyOpenForThesis)
-convertedAutoThesisRaw = useAutoThesis and autoThesisSelectionValid ? (autoThesisUsesChartDailyOpen ? chartDailyOpenForThesis : convertedAutoThesisByMode) : na
+currentPriceRatioConverted = autoThesisSelectionValid and f_validSourcePrice(currentConversionRatio) ? selectedAutoThesisSourcePrice * currentConversionRatio : na
+autoThesisUsesChartDailyOpen = selectedAutoThesisName == "Daily Open"
+convertedAutoThesisRaw = useAutoThesis and autoThesisSelectionValid ? (autoThesisUsesChartDailyOpen ? chartDailyOpenForThesis : currentPriceRatioConverted) : na
 convertedAutoThesisLevel = f_validSourcePrice(convertedAutoThesisRaw) ? f_roundToScalpTick(convertedAutoThesisRaw) : na
 autoThesisConvertedValid = f_validSourcePrice(convertedAutoThesisLevel)
-autoThesisConversionMethod = useAutoThesis and autoThesisSelectionValid ? (autoThesisUsesChartDailyOpen ? "Chart RTH Open" : thesisConversionMode) : "N/A"
-autoThesisNeedsChartRthOpen = not autoThesisUsesChartDailyOpen and (thesisConversionMode == "Anchored RTH Ratio" or thesisConversionMode == "RTH Open Ratio")
-autoThesisNeedsSourceClose = not autoThesisUsesChartDailyOpen and thesisConversionMode == "Current Price Ratio"
-autoThesisUnavailableReason = not useAutoThesis ? "Auto disabled" : not f_validSourcePrice(sourceDayOpen) ? "No source daily open" : not f_validSourcePrice(source1hRthAtr) ? "No source ATR" : not autoThesisSelectionValid ? "No source selection" : autoThesisNeedsChartRthOpen and not f_validSourcePrice(autoDailyOpen) ? "No chart RTH open" : autoThesisNeedsSourceClose and not f_validSourcePrice(sourceCloseForConversion) ? "No source close" : not autoThesisConvertedValid ? "Conversion invalid" : "Auto ready"
+autoThesisConversionMethod = useAutoThesis and autoThesisSelectionValid ? (autoThesisUsesChartDailyOpen ? "Chart RTH Open" : "Current Price Ratio") : "N/A"
+autoThesisNeedsConversionRatio = not autoThesisUsesChartDailyOpen
+autoThesisUnavailableReason = not useAutoThesis ? "Auto disabled" : not f_validSourcePrice(sourceDayOpen) ? "No source daily open" : not f_validSourcePrice(source1hRthAtr) ? "No source ATR" : not autoThesisSelectionValid ? "No source selection" : autoThesisUsesChartDailyOpen and not f_validSourcePrice(chartDailyOpenForThesis) ? "No chart RTH open" : autoThesisNeedsConversionRatio and not swingCurrentPriceRatioReady ? "Conversion ratio missing" : not autoThesisConvertedValid ? "Conversion invalid" : "Auto ready"
 
 f_convertSourceLevelToChart(_sourcePrice) =>
-    f_validSourcePrice(_sourcePrice) and f_validSourcePrice(chartConversionBase) and f_validSourcePrice(sourceConversionBase) ? f_roundToScalpTick(_sourcePrice * (chartConversionBase / sourceConversionBase)) : na
+    f_validSourcePrice(_sourcePrice) and f_validSourcePrice(currentConversionRatio) ? f_roundToScalpTick(_sourcePrice * currentConversionRatio) : na
 
 f_convertSourceLevelToChartForDisplay(_sourcePrice) =>
-    float convertedDisplayPrice = na
-    if f_validSourcePrice(_sourcePrice)
-        if swingLevelDisplayConversionMode == "Current Price Ratio"
-            convertedDisplayPrice := f_validSourcePrice(close) and f_validSourcePrice(sourceCloseForConversion) ? _sourcePrice * (close / sourceCloseForConversion) : na
-        else if swingLevelDisplayConversionMode == "Anchored RTH Ratio"
-            convertedDisplayPrice := f_validSourcePrice(autoDailyOpen) and f_validSourcePrice(sourceDayOpen) ? autoDailyOpen + (_sourcePrice - sourceDayOpen) * (autoDailyOpen / sourceDayOpen) : na
-        else
-            convertedDisplayPrice := f_validSourcePrice(autoDailyOpen) and f_validSourcePrice(sourceDayOpen) ? _sourcePrice * (autoDailyOpen / sourceDayOpen) : na
+    float convertedDisplayPrice = f_validSourcePrice(_sourcePrice) and f_validSourcePrice(currentConversionRatio) ? _sourcePrice * currentConversionRatio : na
     f_validSourcePrice(convertedDisplayPrice) ? f_roundToScalpTick(convertedDisplayPrice) : na
+
+f_addSwingDisplayConvertedLevel(_displayPrice, _label, _lineColor, _lineWidth, _lineStyle) =>
+    if f_validSourcePrice(_displayPrice)
+        array.push(swingDisplayLevelPrices, _displayPrice)
+        array.push(swingDisplayLevelLabels, _label)
+        array.push(swingDisplayLevelColors, _lineColor)
+        array.push(swingDisplayLevelWidths, _lineWidth)
+        array.push(swingDisplayLevelStyles, _lineStyle)
 
 f_addSwingLevel(_price, _name, _priority, _entryAllowed, _targetAllowed) =>
     if f_validSourcePrice(_price)
@@ -785,12 +851,17 @@ f_addSwingLevel(_price, _name, _priority, _entryAllowed, _targetAllowed) =>
 
 f_addSwingDisplayLevel(_sourcePrice, _label, _lineColor, _lineWidth, _lineStyle) =>
     float displayPrice = f_convertSourceLevelToChartForDisplay(_sourcePrice)
-    if f_validSourcePrice(displayPrice)
-        array.push(swingDisplayLevelPrices, displayPrice)
-        array.push(swingDisplayLevelLabels, _label)
-        array.push(swingDisplayLevelColors, _lineColor)
-        array.push(swingDisplayLevelWidths, _lineWidth)
-        array.push(swingDisplayLevelStyles, _lineStyle)
+    f_addSwingDisplayConvertedLevel(displayPrice, _label, _lineColor, _lineWidth, _lineStyle)
+
+f_addSwingDisplayConvertedGapBox(_displayHigh, _displayLow) =>
+    if f_validSourcePrice(_displayHigh) and f_validSourcePrice(_displayLow)
+        array.push(swingDisplayGapBoxTops, math.max(_displayHigh, _displayLow))
+        array.push(swingDisplayGapBoxBottoms, math.min(_displayHigh, _displayLow))
+
+f_addSwingDisplayGapBox(_sourceHigh, _sourceLow) =>
+    float displayHigh = f_convertSourceLevelToChartForDisplay(_sourceHigh)
+    float displayLow = f_convertSourceLevelToChartForDisplay(_sourceLow)
+    f_addSwingDisplayConvertedGapBox(displayHigh, displayLow)
 
 f_lineStyleFromCode(_styleCode) =>
     _styleCode == 1 ? line.style_dashed : _styleCode == 2 ? line.style_dotted : line.style_solid
@@ -803,6 +874,11 @@ f_trimSwingLevelDrawings(_lineCount, _labelCount) =>
         label staleLabel = array.pop(swingLevelLabels)
         label.delete(staleLabel)
 
+f_trimSwingGapBoxes(_boxCount) =>
+    while array.size(swingDailyGapBoxes) > _boxCount
+        box staleBox = array.pop(swingDailyGapBoxes)
+        box.delete(staleBox)
+
 array.clear(swingLevelPrices)
 array.clear(swingLevelNames)
 array.clear(swingLevelPriority)
@@ -813,18 +889,18 @@ array.clear(swingDisplayLevelLabels)
 array.clear(swingDisplayLevelColors)
 array.clear(swingDisplayLevelWidths)
 array.clear(swingDisplayLevelStyles)
+array.clear(swingDisplayGapBoxTops)
+array.clear(swingDisplayGapBoxBottoms)
 
-chartSwingLevelsEnabled = alertSwingSetups or showSwingLevels
-if chartSwingLevelsEnabled
-    // Chart PDH/PDL/DO are separate from converted SPY/QQQ levels and must be
-    // eligible for swing touch/break checks on the traded symbol itself.
-    f_addSwingLevel(effectivePrevDayHigh, "PDH", 3, true, true)
-    f_addSwingLevel(effectivePrevDayLow, "PDL", 3, true, true)
-    f_addSwingLevel(effectiveDailyOpen, "Current Day Open", 4, true, true)
+int displayedDailyGapCount = 0
+float firstValidConvertedGapStart = na
+float firstValidConvertedGapEnd = na
+string dailyGapUnavailableReason = "N/A"
 
 if sourceLevelsEnabled
     // Swing alert calculations use the swing level arrays below. These keep the
-    // selected thesis conversion so existing entry/target behavior stays intact.
+    // current price ratio so swing logic stays on converted SPY/QQQ levels.
+    // The current day open is the exception: it stays anchored to the chart RTH open.
     f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevMonthHigh), "Previous Month High", 0, false, true)
     f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevMonthLow), "Previous Month Low", 0, false, true)
     f_addSwingLevel(f_convertSourceLevelToChart(sourceMonthOpen), "Current Month Open", 0, false, true)
@@ -833,41 +909,99 @@ if sourceLevelsEnabled
     f_addSwingLevel(f_convertSourceLevelToChart(sourceWeekOpen), "Current Week Open", 2, true, true)
     f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevDayHigh), "Previous Day High", 3, true, true)
     f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevDayLow), "Previous Day Low", 3, true, true)
-    f_addSwingLevel(f_convertSourceLevelToChart(sourceDayOpen), "Current Day Open", 4, true, true)
-    if not na(sourceDailyGaps)
-        for [sourceGapKey, sourceGapValue] in sourceDailyGaps
-            float convertedGapEnd = f_convertSourceLevelToChart(f_gapEndPriceFromRecord(sourceGapValue))
-            float convertedGapStart = f_convertSourceLevelToChart(f_gapStartPriceFromRecord(sourceGapValue))
+    f_addSwingLevel(chartDailyOpenForThesis, "Current Day Open", 4, true, true)
+    if sourceDailyGapCount > 0
+        for sourceGapIndex = 0 to sourceDailyGapCount - 1
+            float convertedGapEnd = f_convertSourceLevelToChart(array.get(cachedSourceDailyGapEnds, sourceGapIndex))
+            float convertedGapStart = f_convertSourceLevelToChart(array.get(cachedSourceDailyGapStarts, sourceGapIndex))
             f_addSwingLevel(convertedGapEnd, "Daily Gap End", 5, true, true)
             f_addSwingLevel(convertedGapStart, "Daily Gap Start", 0, false, true)
     if showSwingLevels
-        // Displayed swing lines are live reference levels. In Current Price Ratio
-        // mode their current y-position updates after confirmed closes; they are
+        // Displayed swing lines are live reference levels. Their current price
+        // ratio updates only after confirmed New York RTH closes; they are
         // not intended to behave like historical series plots.
-        f_addSwingDisplayLevel(sourcePrevMonthHigh, "PMH", majorHighLevelColor, 2, 1)
-        f_addSwingDisplayLevel(sourcePrevMonthLow, "PML", majorLowLevelColor, 2, 1)
-        f_addSwingDisplayLevel(sourceMonthOpen, "MO", openLevelColor, 2, 1)
-        f_addSwingDisplayLevel(sourcePrevWeekHigh, "PWH", majorHighLevelColor, 2, 0)
-        f_addSwingDisplayLevel(sourcePrevWeekLow, "PWL", majorLowLevelColor, 2, 0)
-        f_addSwingDisplayLevel(sourceWeekOpen, "WO", openLevelColor, 2, 0)
-        f_addSwingDisplayLevel(sourcePrevDayHigh, "PDH", majorHighLevelColor, 1, 0)
-        f_addSwingDisplayLevel(sourcePrevDayLow, "PDL", majorLowLevelColor, 1, 0)
-        f_addSwingDisplayLevel(sourceDayOpen, "DO", openLevelColor, 1, 0)
+        f_addSwingDisplayLevel(sourcePrevMonthHigh, "PMH", paEngineHighLevelColor, 4, 1)
+        f_addSwingDisplayLevel(sourcePrevMonthLow, "PML", paEngineLowLevelColor, 4, 1)
+        f_addSwingDisplayLevel(sourceMonthOpen, "MO", paEngineOpenLevelColor, 5, 1)
+        f_addSwingDisplayLevel(sourcePrevWeekHigh, "PWH", paEngineHighLevelColor, 3, 0)
+        f_addSwingDisplayLevel(sourcePrevWeekLow, "PWL", paEngineLowLevelColor, 3, 0)
+        f_addSwingDisplayLevel(sourceWeekOpen, "WO", paEngineOpenLevelColor, 3, 0)
+        f_addSwingDisplayLevel(sourcePrevDayHigh, "PDH", paEngineHighLevelColor, 1, 0)
+        f_addSwingDisplayLevel(sourcePrevDayLow, "PDL", paEngineLowLevelColor, 1, 0)
+        f_addSwingDisplayConvertedLevel(chartDailyOpenForThesis, "DO", paEngineOpenLevelColor, 1, 0)
         int displayedGapCount = 0
-        if maxDisplayedDailyGaps > 0 and not na(sourceDailyGaps)
-            for [displayGapKey, displayGapValue] in sourceDailyGaps
+        if maxDisplayedDailyGaps > 0 and sourceDailyGapCount > 0
+            for displayGapIndex = 0 to sourceDailyGapCount - 1
                 if displayedGapCount >= maxDisplayedDailyGaps
                     break
-                f_addSwingDisplayLevel(f_gapEndPriceFromRecord(displayGapValue), "Gap End", gapEndLevelColor, 1, 2)
-                f_addSwingDisplayLevel(f_gapStartPriceFromRecord(displayGapValue), "Gap Start", gapStartLevelColor, 1, 1)
-                displayedGapCount += 1
+                float sourceGapStartForDisplay = array.get(cachedSourceDailyGapStarts, displayGapIndex)
+                float sourceGapEndForDisplay = array.get(cachedSourceDailyGapEnds, displayGapIndex)
+                float sourceGapHighForDisplay = array.get(cachedSourceDailyGapHighs, displayGapIndex)
+                float sourceGapLowForDisplay = array.get(cachedSourceDailyGapLows, displayGapIndex)
+                float convertedGapStartForDisplay = f_convertSourceLevelToChartForDisplay(sourceGapStartForDisplay)
+                float convertedGapEndForDisplay = f_convertSourceLevelToChartForDisplay(sourceGapEndForDisplay)
+                float convertedGapHighForDisplay = f_convertSourceLevelToChartForDisplay(sourceGapHighForDisplay)
+                float convertedGapLowForDisplay = f_convertSourceLevelToChartForDisplay(sourceGapLowForDisplay)
+                bool dailyGapDisplayValid = f_validSourcePrice(convertedGapStartForDisplay) and f_validSourcePrice(convertedGapEndForDisplay) and f_validSourcePrice(convertedGapHighForDisplay) and f_validSourcePrice(convertedGapLowForDisplay)
+                if dailyGapDisplayValid
+                    f_addSwingDisplayConvertedLevel(convertedGapStartForDisplay, "Gap Start", dailyGapLineColor, 2, 1)
+                    f_addSwingDisplayConvertedLevel(convertedGapEndForDisplay, "Gap End", dailyGapLineColor, 2, 0)
+                    f_addSwingDisplayConvertedGapBox(convertedGapHighForDisplay, convertedGapLowForDisplay)
+                    if na(firstValidConvertedGapStart)
+                        firstValidConvertedGapStart := convertedGapStartForDisplay
+                        firstValidConvertedGapEnd := convertedGapEndForDisplay
+                    displayedGapCount += 1
+                    displayedDailyGapCount := displayedGapCount
+
+if maxDisplayedDailyGaps <= 0
+    dailyGapUnavailableReason := "maxDisplayedDailyGaps = 0"
+else if not showSwingLevels
+    dailyGapUnavailableReason := "showSwingLevels disabled"
+else if sourceDailyGapCount == 0
+    dailyGapUnavailableReason := "source map empty"
+else if not swingCurrentPriceRatioReady
+    dailyGapUnavailableReason := "conversion ratio missing"
+else if displayedDailyGapCount == 0
+    dailyGapUnavailableReason := "converted boundary invalid"
+else
+    dailyGapUnavailableReason := "ready"
 
 if barstate.isconfirmed
     int desiredSwingLineCount = showSwingLevels ? array.size(swingDisplayLevelPrices) : 0
     int desiredSwingLabelCount = showSwingLevels and showSwingLevelLabels ? desiredSwingLineCount : 0
+    int desiredSwingGapBoxCount = showSwingLevels ? array.size(swingDisplayGapBoxTops) : 0
+    int swingLineStartBar = not na(currentRTHStartBar) ? math.max(currentRTHStartBar, bar_index - 9999) : bar_index
     f_trimSwingLevelDrawings(desiredSwingLineCount, desiredSwingLabelCount)
+    f_trimSwingGapBoxes(desiredSwingGapBoxCount)
+    if desiredSwingGapBoxCount > 0
+        for swingGapBoxIndex = 0 to desiredSwingGapBoxCount - 1
+            float gapBoxTop = array.get(swingDisplayGapBoxTops, swingGapBoxIndex)
+            float gapBoxBottom = array.get(swingDisplayGapBoxBottoms, swingGapBoxIndex)
+            box swingDailyGapBox = na
+            if array.size(swingDailyGapBoxes) <= swingGapBoxIndex
+                swingDailyGapBox := box.new(
+                     swingLineStartBar,
+                     gapBoxTop,
+                     bar_index + 1,
+                     gapBoxBottom,
+                     xloc=xloc.bar_index,
+                     extend=extend.right,
+                     border_color=dailyGapBorderColor,
+                     border_width=0,
+                     bgcolor=dailyGapBoxColor
+                )
+                array.push(swingDailyGapBoxes, swingDailyGapBox)
+            else
+                swingDailyGapBox := array.get(swingDailyGapBoxes, swingGapBoxIndex)
+            box.set_left(swingDailyGapBox, swingLineStartBar)
+            box.set_top(swingDailyGapBox, gapBoxTop)
+            box.set_right(swingDailyGapBox, bar_index + 1)
+            box.set_bottom(swingDailyGapBox, gapBoxBottom)
+            box.set_extend(swingDailyGapBox, extend.right)
+            box.set_bgcolor(swingDailyGapBox, dailyGapBoxColor)
+            box.set_border_color(swingDailyGapBox, dailyGapBorderColor)
+            box.set_border_width(swingDailyGapBox, 0)
     if desiredSwingLineCount > 0
-        int swingLineStartBar = not na(currentRTHStartBar) ? math.max(currentRTHStartBar, bar_index - 9999) : bar_index
         for swingDisplayIndex = 0 to desiredSwingLineCount - 1
             float swingDisplayPrice = array.get(swingDisplayLevelPrices, swingDisplayIndex)
             color swingDisplayColor = array.get(swingDisplayLevelColors, swingDisplayIndex)
@@ -1461,6 +1595,7 @@ selectedImpulseClose = request.security(selectedImpulseSymbol, timeframe.period,
 selectedImpulseAtr = request.security(selectedImpulseSymbol, timeframe.period, ta.atr(impulseAtrLength), lookahead=barmerge.lookahead_off, calc_bars_count=500)
 selectedImpulseScore = selectedImpulseAtr > 0 ? (selectedImpulseClose - selectedImpulseClose[impulseLookback]) / selectedImpulseAtr : na
 impulseReady = not na(selectedImpulseScore)
+// The impulse filter is scalp-only and only gates FBO/setup-tier scalp alerts.
 longFboImpulseOk = not useFboImpulseFilter or not bullScalpSetupTier or not impulseReady or selectedImpulseScore >= -fboImpulseTolerance
 shortFboImpulseOk = not useFboImpulseFilter or not bearScalpSetupTier or not impulseReady or selectedImpulseScore <= fboImpulseTolerance
 
@@ -1493,22 +1628,24 @@ if array.size(swingLevelPrices) > 0
         bool swingEntryLevelAllowed = array.get(swingLevelAllowedForEntry, swingEntryLevelIndex)
         bool swingEntryLevelTouchedCurrent = f_levelTouched(swingEntryLevelAllowed, swingEntryLevelPrice, scalpSignalLow, scalpSignalHigh)
         bool swingEntryLevelTouchedPrior = not na(low[1]) and not na(high[1]) and f_levelTouched(swingEntryLevelAllowed, swingEntryLevelPrice, low[1], high[1])
-        bool swingEntryLevelTouchedForSetup = swingEntryLevelTouchedCurrent or swingEntryLevelTouchedPrior
-        if swingEntryLevelTouchedForSetup
-            bool longSwingEntryLevelBroken = scalpSignalClose > swingEntryLevelPrice
-            bool shortSwingEntryLevelBroken = scalpSignalClose < swingEntryLevelPrice
-            bool betterLongSwingBrokenLevel = not longSwingBrokenCandidateFound or swingEntryLevelPriority < longSwingTouchedLevelPriority or (swingEntryLevelPriority == longSwingTouchedLevelPriority and (na(longSwingTouchedLevelPrice) or swingEntryLevelPrice > longSwingTouchedLevelPrice))
-            bool betterShortSwingBrokenLevel = not shortSwingBrokenCandidateFound or swingEntryLevelPriority < shortSwingTouchedLevelPriority or (swingEntryLevelPriority == shortSwingTouchedLevelPriority and (na(shortSwingTouchedLevelPrice) or swingEntryLevelPrice < shortSwingTouchedLevelPrice))
-            if longSwingEntryLevelBroken and betterLongSwingBrokenLevel
-                longSwingTouchedLevelPrice := swingEntryLevelPrice
-                longSwingTouchedLevelName := swingEntryLevelName
-                longSwingTouchedLevelPriority := swingEntryLevelPriority
-                longSwingBrokenCandidateFound := true
-            if shortSwingEntryLevelBroken and betterShortSwingBrokenLevel
-                shortSwingTouchedLevelPrice := swingEntryLevelPrice
-                shortSwingTouchedLevelName := swingEntryLevelName
-                shortSwingTouchedLevelPriority := swingEntryLevelPriority
-                shortSwingBrokenCandidateFound := true
+        bool priorBarBear = close[1] < open[1]
+        bool priorBarBull = close[1] > open[1]
+        bool longSwingEntryLevelTouchedForSetup = swingEntryLevelTouchedCurrent or (swingEntryLevelTouchedPrior and priorBarBear)
+        bool shortSwingEntryLevelTouchedForSetup = swingEntryLevelTouchedCurrent or (swingEntryLevelTouchedPrior and priorBarBull)
+        bool longSwingEntryLevelBroken = longSwingEntryLevelTouchedForSetup and scalpSignalClose > swingEntryLevelPrice
+        bool shortSwingEntryLevelBroken = shortSwingEntryLevelTouchedForSetup and scalpSignalClose < swingEntryLevelPrice
+        bool betterLongSwingBrokenLevel = not longSwingBrokenCandidateFound or swingEntryLevelPriority < longSwingTouchedLevelPriority or (swingEntryLevelPriority == longSwingTouchedLevelPriority and (na(longSwingTouchedLevelPrice) or swingEntryLevelPrice > longSwingTouchedLevelPrice))
+        bool betterShortSwingBrokenLevel = not shortSwingBrokenCandidateFound or swingEntryLevelPriority < shortSwingTouchedLevelPriority or (swingEntryLevelPriority == shortSwingTouchedLevelPriority and (na(shortSwingTouchedLevelPrice) or swingEntryLevelPrice < shortSwingTouchedLevelPrice))
+        if longSwingEntryLevelBroken and betterLongSwingBrokenLevel
+            longSwingTouchedLevelPrice := swingEntryLevelPrice
+            longSwingTouchedLevelName := swingEntryLevelName
+            longSwingTouchedLevelPriority := swingEntryLevelPriority
+            longSwingBrokenCandidateFound := true
+        if shortSwingEntryLevelBroken and betterShortSwingBrokenLevel
+            shortSwingTouchedLevelPrice := swingEntryLevelPrice
+            shortSwingTouchedLevelName := swingEntryLevelName
+            shortSwingTouchedLevelPriority := swingEntryLevelPriority
+            shortSwingBrokenCandidateFound := true
 
 longSwingLevelBroken = longSwingBrokenCandidateFound
 shortSwingLevelBroken = shortSwingBrokenCandidateFound
@@ -2028,8 +2165,8 @@ thesisPlot = showAutoThesisLevel and inScalpRTHSession and not na(effectiveThesi
 plot(thesisPlot, "Effective Thesis Level", color=color.new(color.yellow, 0), linewidth=2, style=plot.style_linebr)
 plot(showOpeningRange ? openingRangeDisplayHigh : na, "15m Opening Range High", color=openingRangeHighColor, linewidth=1, style=plot.style_linebr)
 plot(showOpeningRange ? openingRangeDisplayLow : na, "15m Opening Range Low", color=openingRangeLowColor, linewidth=1, style=plot.style_linebr)
-pdhPlot = showAutoScalpLevels and inScalpRTHSession and effectivePrevDayHigh > 0 ? effectivePrevDayHigh : na
-pdlPlot = showAutoScalpLevels and inScalpRTHSession and effectivePrevDayLow > 0 ? effectivePrevDayLow : na
+pdhPlot = showAutoScalpLevels and showRawFuturesPrevDayLevels and inScalpRTHSession and effectivePrevDayHigh > 0 ? effectivePrevDayHigh : na
+pdlPlot = showAutoScalpLevels and showRawFuturesPrevDayLevels and inScalpRTHSession and effectivePrevDayLow > 0 ? effectivePrevDayLow : na
 
 plot(pdhPlot, "Auto/Effective PDH", color=majorHighLevelColor, linewidth=1, style=plot.style_linebr)
 plot(pdlPlot, "Auto/Effective PDL", color=majorLowLevelColor, linewidth=1, style=plot.style_linebr)
@@ -2067,9 +2204,9 @@ f_addScalpStatusRow(table _statusTable, int _row, string _label, string _value, 
     table.cell(_statusTable, 1, _row, _value, text_color=_valueColor, text_size=size.small, text_halign=text.align_right)
     _row + 1
 
-var table scalpStatusTable = table.new(position.bottom_right, 2, 25, bgcolor=color.new(color.black, 85), border_width=0)
+var table scalpStatusTable = table.new(position.bottom_right, 2, 45, bgcolor=color.new(color.black, 85), border_width=0)
 if barstate.islast
-    table.clear(scalpStatusTable, 0, 0, 1, 24)
+    table.clear(scalpStatusTable, 0, 0, 1, 44)
     if showThesisLabel
         statusNeutralColor = color.rgb(220, 220, 220)
         statusTextColor = thesisState == 1 ? color.lime : thesisState == -1 ? color.red : statusNeutralColor
@@ -2102,3 +2239,15 @@ if barstate.islast
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Daily Open Default", useAutoThesis ? f_boolText(autoThesisUsedDailyOpenDefault) : "N/A", statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Auto Status", autoThesisUnavailableReason, autoThesisConvertedValid ? color.lime : color.red)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Auto Priority", useAutoThesis and autoThesisSelectionValid ? str.tostring(selectedAutoThesisPriority) : "N/A", statusNeutralColor)
+        if showDetailedLevelStatus or showAutoThesisDebug
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Source Gaps", str.tostring(sourceDailyGapCount), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Displayed Gaps", str.tostring(displayedDailyGapCount), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "First Gap Start", f_priceText(firstValidSourceGapStart), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "First Gap End", f_priceText(firstValidSourceGapEnd), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conv Gap Start", f_priceText(firstValidConvertedGapStart), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conv Gap End", f_priceText(firstValidConvertedGapEnd), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conv Chart Close", f_priceText(chartConversionBase), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conv Source Close", f_priceText(sourceConversionBase), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conv Ratio", f_numberText(currentConversionRatio), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Chart RTH Open", f_priceText(chartDailyOpenForThesis), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Gap Status", dailyGapUnavailableReason, dailyGapUnavailableReason == "ready" ? color.lime : statusNeutralColor)
