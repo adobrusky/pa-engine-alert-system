@@ -1542,8 +1542,8 @@ bearScalpStrongIgnitionTier = bearScalpSignalAllowed and bearSignalConfirmed and
 bullScalpTierAllowed = (alertSetupSignals and bullScalpSetupTier) or (alertIgnitionSignals and bullScalpIgnitionTier) or (alertStrongIgnitions and bullScalpStrongIgnitionTier)
 bearScalpTierAllowed = (alertSetupSignals and bearScalpSetupTier) or (alertIgnitionSignals and bearScalpIgnitionTier) or (alertStrongIgnitions and bearScalpStrongIgnitionTier)
 
-bullScalpSignalTierShort = bullScalpStrongIgnitionTier ? "S-IGN" : bullScalpIgnitionTier ? "IGN" : bullScalpSetupTier ? "FBO" : "N/A"
-bearScalpSignalTierShort = bearScalpStrongIgnitionTier ? "S-IGN" : bearScalpIgnitionTier ? "IGN" : bearScalpSetupTier ? "FBO" : "N/A"
+bullScalpSignalTierShort = (bullScalpStrongIgnitionTier or bullScalpIgnitionTier) ? "IGN" : bullScalpSetupTier ? "FBO" : "N/A"
+bearScalpSignalTierShort = (bearScalpStrongIgnitionTier or bearScalpIgnitionTier) ? "IGN" : bearScalpSetupTier ? "FBO" : "N/A"
 bullCompactSignalText = bullScalpSignalTierShort
 bearCompactSignalText = bearScalpSignalTierShort
 
@@ -1944,39 +1944,41 @@ showHistoricalAlertLabels = alertLabelMode != "Off"
 showCompactAlertLabels = alertLabelMode == "Compact"
 
 f_buildMarkerChartLabel(_direction, _compactSignalText, _selectedLevelName) =>
-    showAlertSignalDetails ? _direction + "\n" + _compactSignalText + " | " + _selectedLevelName : _direction
+    showAlertSignalDetails ? _direction + "\n" + _compactSignalText + " | " + f_abbrevLevelName(_selectedLevelName) : _direction
 
-f_buildCompactChartLabel(_direction, _compactSignalText, _selectedLevelName, _entryPrice, _targetPrice, _targetType, _targetRR, _contracts) =>
+f_buildCompactChartLabel(_direction, _compactSignalText, _selectedLevelName, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _contracts) =>
     _direction + "\n" +
-     _compactSignalText + " | " + _selectedLevelName + "\n" +
+     _compactSignalText + " | " + f_abbrevLevelName(_selectedLevelName) + "\n" +
      "E " + f_priceText(_entryPrice) + "\n" +
-     "T " + f_priceText(_targetPrice) + " " + _targetType + "\n" +
+     "S " + f_priceText(_stopPrice) + "\n" +
+     "T " + f_priceText(_targetPrice) + " " + f_abbrevLevelName(_targetType) + "\n" +
      str.tostring(_contracts) + "ct | " + f_rrText(_targetRR)
 
 f_addAlertChartLabel(_price, _text, _style, _color) =>
     label.new(bar_index, _price, _text, style=_style, textcolor=color.white, color=_color, size=showCompactAlertLabels ? size.small : size.tiny)
 
 if showHistoricalAlertLabels and effectiveBullScalpAlert
-    string bullChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bullAlertLabelTitle, bullCompactSignalText, longSelectedLevelText, longEntryPrice, longTargetPrice, longTargetTypeText, longTargetRR, longContracts) : f_buildMarkerChartLabel(bullAlertLabelTitle, bullCompactSignalText, longSelectedLevelText)
+    string bullChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bullAlertLabelTitle, bullCompactSignalText, longSelectedLevelText, longEntryPrice, longStopPrice, longTargetPrice, longTargetTypeText, longTargetRR, longContracts) : f_buildMarkerChartLabel(bullAlertLabelTitle, bullCompactSignalText, longSelectedLevelText)
     f_addAlertChartLabel(low, bullChartLabelText, label.style_label_up, color.new(color.lime, 0))
 else if showHistoricalAlertLabels and effectiveBearScalpAlert
-    string bearChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bearAlertLabelTitle, bearCompactSignalText, shortSelectedLevelText, shortEntryPrice, shortTargetPrice, shortTargetTypeText, shortTargetRR, shortContracts) : f_buildMarkerChartLabel(bearAlertLabelTitle, bearCompactSignalText, shortSelectedLevelText)
+    string bearChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bearAlertLabelTitle, bearCompactSignalText, shortSelectedLevelText, shortEntryPrice, shortStopPrice, shortTargetPrice, shortTargetTypeText, shortTargetRR, shortContracts) : f_buildMarkerChartLabel(bearAlertLabelTitle, bearCompactSignalText, shortSelectedLevelText)
     f_addAlertChartLabel(high, bearChartLabelText, label.style_label_down, color.new(color.red, 0))
 
 // ===================== Alert Message =====================
-f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _selectedLevelName, _entryType, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _contracts) =>
+f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _selectedLevelName, _orBiasText, _entryType, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _contracts) =>
     "PA ENGINE " + _directionTitle + "\n" +
-     _compactSignalText + " | " + _selectedLevelName + "\n" +
+     _compactSignalText + " | " + f_abbrevLevelName(_selectedLevelName) + "\n" +
+     "OR Bias: " + _orBiasText + "\n" +
      syminfo.ticker + " " + timeframe.period + "\n\n" +
-     "E " + f_priceText(_entryPrice) + " " + _entryType + "\n" +
+     "E " + f_priceText(_entryPrice) + " " + f_abbrevLevelName(_entryType) + "\n" +
      "S " + f_priceText(_stopPrice) + "\n" +
-     "T " + f_priceText(_targetPrice) + " " + _targetType + "\n" +
+     "T " + f_priceText(_targetPrice) + " " + f_abbrevLevelName(_targetType) + "\n" +
      str.tostring(_contracts) + "ct | " + f_rrText(_targetRR)
 
 if effectiveBullScalpAlert
-    alert(f_buildScalpAlertMessage(bullAlertLabelTitle, bullCompactSignalText, longSelectedLevelText, longEntryTypeText, longEntryPrice, longStopPrice, longTargetPrice, longTargetTypeText, longTargetRR, longContracts), alert.freq_once_per_bar_close)
+    alert(f_buildScalpAlertMessage(bullAlertLabelTitle, bullCompactSignalText, longSelectedLevelText, orBiasText, longEntryTypeText, longEntryPrice, longStopPrice, longTargetPrice, longTargetTypeText, longTargetRR, longContracts), alert.freq_once_per_bar_close)
 else if effectiveBearScalpAlert
-    alert(f_buildScalpAlertMessage(bearAlertLabelTitle, bearCompactSignalText, shortSelectedLevelText, shortEntryTypeText, shortEntryPrice, shortStopPrice, shortTargetPrice, shortTargetTypeText, shortTargetRR, shortContracts), alert.freq_once_per_bar_close)
+    alert(f_buildScalpAlertMessage(bearAlertLabelTitle, bearCompactSignalText, shortSelectedLevelText, orBiasText, shortEntryTypeText, shortEntryPrice, shortStopPrice, shortTargetPrice, shortTargetTypeText, shortTargetRR, shortContracts), alert.freq_once_per_bar_close)
 
 plot(showOpeningRange ? openingRangeDisplayHigh : na, "15m Opening Range High", color=openingRangeHighColor, linewidth=1, style=plot.style_linebr)
 plot(showOpeningRange ? openingRangeDisplayLow : na, "15m Opening Range Low", color=openingRangeLowColor, linewidth=1, style=plot.style_linebr)
@@ -2029,24 +2031,24 @@ if barstate.islast
         int scalpStatusRow = 0
         scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Opening Range", openingRangeStatus, statusNeutralColor)
         scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "OR Bias", orBiasText, orBiasStatusColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORH", f_priceText(openingRangeDisplayHigh), statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORL", f_priceText(openingRangeDisplayLow), statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long OR Allowed", f_boolText(longOpeningRangeAllowed), longOpeningRangeAllowed ? color.lime : statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short OR Allowed", f_boolText(shortOpeningRangeAllowed), shortOpeningRangeAllowed ? color.red : statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORL Reclaim", f_boolText(longOrlReclaim), longOrlReclaim ? color.lime : statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORH Reclaim", f_boolText(shortOrhReclaim), shortOrhReclaim ? color.red : statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Selected Long Level", longSelectedLevelName + " " + f_priceText(longSelectedLevelPrice), statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Selected Short Level", shortSelectedLevelName + " " + f_priceText(shortSelectedLevelPrice), statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long Setup Source", longStatusSetupSourceText, longScalpSetupQualified ? color.lime : statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short Setup Source", shortStatusSetupSourceText, shortScalpSetupQualified ? color.red : statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long Target", f_priceText(longTargetPrice) + " " + longTargetTypeText, longTargetValid ? color.lime : statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short Target", f_priceText(shortTargetPrice) + " " + shortTargetTypeText, shortTargetValid ? color.red : statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long R:R", f_rrText(longTargetRR), longTargetValid ? color.lime : statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short R:R", f_rrText(shortTargetRR), shortTargetValid ? color.red : statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Alert Setups", alertSetupsTableText, statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Expanded Levels", f_boolText(useExpandedScalpLevels), useExpandedScalpLevels ? color.lime : statusNeutralColor)
         scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Converted Source", convertedLevelSourceSymbol, statusNeutralColor)
         if showDetailedLevelStatus
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORH", f_priceText(openingRangeDisplayHigh), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORL", f_priceText(openingRangeDisplayLow), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long OR Allowed", f_boolText(longOpeningRangeAllowed), longOpeningRangeAllowed ? color.lime : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short OR Allowed", f_boolText(shortOpeningRangeAllowed), shortOpeningRangeAllowed ? color.red : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORL Reclaim", f_boolText(longOrlReclaim), longOrlReclaim ? color.lime : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORH Reclaim", f_boolText(shortOrhReclaim), shortOrhReclaim ? color.red : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Selected Long Level", longSelectedLevelText + " " + f_priceText(longSelectedLevelPrice), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Selected Short Level", shortSelectedLevelText + " " + f_priceText(shortSelectedLevelPrice), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long Setup Source", longStatusSetupSourceText, longScalpSetupQualified ? color.lime : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short Setup Source", shortStatusSetupSourceText, shortScalpSetupQualified ? color.red : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long Target", f_priceText(longTargetPrice) + " " + longTargetTypeText, longTargetValid ? color.lime : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short Target", f_priceText(shortTargetPrice) + " " + shortTargetTypeText, shortTargetValid ? color.red : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long R:R", f_rrText(longTargetRR), longTargetValid ? color.lime : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short R:R", f_rrText(shortTargetRR), shortTargetValid ? color.red : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Alert Setups", alertSetupsTableText, statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Expanded Levels", f_boolText(useExpandedScalpLevels), useExpandedScalpLevels ? color.lime : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "PDH", f_priceText(effectivePrevDayHigh), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "PDL", f_priceText(effectivePrevDayLow), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "OP", f_priceText(effectiveDailyOpen), statusNeutralColor)
@@ -2056,14 +2058,19 @@ if barstate.islast
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "OP Source", dailyOpenSource, statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "PM Source", premarketSource, statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Auto Note", "Intraday, ideally 5m", statusNeutralColor)
+        if showDetailedLevelStatus or showConvertedLevelDebug or showGapRequestDiagnostics
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Chart Symbol", syminfo.tickerid, statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Ticker Input", tickerInput, statusNeutralColor)
         if showConvertedLevelDebug
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Source Daily Open", f_priceText(sourceDayOpen), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Chart RTH Open", f_priceText(chartDailyOpenForConvertedLevels), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Converted Status", convertedLevelStatus, convertedLevelStatus == "ready" ? color.lime : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Converted Levels", str.tostring(array.size(swingLevelPrices)), statusNeutralColor)
-        if showDetailedLevelStatus or showConvertedLevelDebug or showGapRequestDiagnostics
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Chart Symbol", syminfo.tickerid, statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Ticker Input", tickerInput, statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conv Chart Close", f_priceText(chartConversionBase), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conv Source Close", f_priceText(sourceConversionBase), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conv Ratio", f_numberText(currentConversionRatio), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conversion Ready", f_boolText(swingCurrentPriceRatioReady), swingCurrentPriceRatioReady ? color.lime : color.red)
+        if showGapRequestDiagnostics
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Gap Request Source", activeDailyGapSourceDebugText, statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Expected Source", expectedDailyGapSourceSymbol, statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Gap Request Mode", activeDailyGapRequestMode, statusNeutralColor)
@@ -2091,20 +2098,14 @@ if barstate.islast
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "First Conv End", f_priceText(firstValidConvertedGapEnd), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "First Conv High", f_priceText(firstValidConvertedGapHigh), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "First Conv Low", f_priceText(firstValidConvertedGapLow), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conv Chart Close", f_priceText(chartConversionBase), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conv Source Close", f_priceText(sourceConversionBase), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conv Ratio", f_numberText(currentConversionRatio), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conversion Ready", f_boolText(swingCurrentPriceRatioReady), swingCurrentPriceRatioReady ? color.lime : color.red)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Chart RTH Open", f_priceText(chartDailyOpenForConvertedLevels), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Gap Status", dailyGapUnavailableReason, (dailyGapUnavailableReason == "ready" or dailyGapUnavailableReason == "ready; display capped") ? color.lime : statusNeutralColor)
-            if showGapRequestDiagnostics
-                scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Active Request Count", str.tostring(requestedSourceDailyGapCount), statusNeutralColor)
-                scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Gated Count", str.tostring(gatedDiagnosticGapCount), statusNeutralColor)
-                scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Ungated Count", str.tostring(ungatedDiagnosticGapCount), statusNeutralColor)
-                scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Ungated 600 Count", str.tostring(ungated600DiagnosticGapCount), statusNeutralColor)
-                scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Explicit RTH Count", str.tostring(explicitRthDiagnosticGapCount), statusNeutralColor)
-                scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Plain Symbol Count", str.tostring(plainSymbolDiagnosticGapCount), statusNeutralColor)
-                scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "1440 Count", str.tostring(explicit1440DiagnosticGapCount), statusNeutralColor)
-                scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "D Count", str.tostring(explicitDDiagnosticGapCount), statusNeutralColor)
-                scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Active First Raw", currentFirstRawDailyGapRecord, statusNeutralColor)
-                scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Best Variant First Raw", bestDiagnosticFirstRawRecord, statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Active Request Count", str.tostring(requestedSourceDailyGapCount), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Gated Count", str.tostring(gatedDiagnosticGapCount), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Ungated Count", str.tostring(ungatedDiagnosticGapCount), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Ungated 600 Count", str.tostring(ungated600DiagnosticGapCount), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Explicit RTH Count", str.tostring(explicitRthDiagnosticGapCount), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Plain Symbol Count", str.tostring(plainSymbolDiagnosticGapCount), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "1440 Count", str.tostring(explicit1440DiagnosticGapCount), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "D Count", str.tostring(explicitDDiagnosticGapCount), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Active First Raw", currentFirstRawDailyGapRecord, statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Best Variant First Raw", bestDiagnosticFirstRawRecord, statusNeutralColor)
