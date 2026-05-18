@@ -243,7 +243,6 @@ f_abbrevLevelName(string _levelName) =>
      normalized == "Previous Week High" ? "PWH" :
      normalized == "Previous Week Low" ? "PWL" :
      normalized == "Current Week Open" ? "WO" :
-     normalized == "Previous Week Open" ? "PWO" :
      normalized == "Previous Day High" or normalized == "PDH" ? "PDH" :
      normalized == "Previous Day Low" or normalized == "PDL" ? "PDL" :
      normalized == "Current Day Open" or normalized == "Daily Open" or normalized == "OP" ? "DO" :
@@ -263,6 +262,21 @@ f_roundToScalpTick(_price) =>
 
 f_validSourcePrice(_price) =>
     not na(_price) and _price > 0
+
+
+f_levelClosedBeyondLong(_level, _signalClose) =>
+    _signalClose > _level
+
+f_levelClosedBeyondShort(_level, _signalClose) =>
+    _signalClose < _level
+
+f_longTouchedLevelFailedCloseBeyond(_enabled, _level, _signalLow, _signalHigh, _signalClose) =>
+    bool touched = f_levelTouched(_enabled, _level, _signalLow, _signalHigh)
+    touched and not f_levelClosedBeyondLong(_level, _signalClose)
+
+f_shortTouchedLevelFailedCloseBeyond(_enabled, _level, _signalLow, _signalHigh, _signalClose) =>
+    bool touched = f_levelTouched(_enabled, _level, _signalLow, _signalHigh)
+    touched and not f_levelClosedBeyondShort(_level, _signalClose)
 
 f_currentRthOpen() =>
     var float rthOpen = na
@@ -714,7 +728,6 @@ float sourcePrevDayLow = na
 float sourceDayOpenHTF = na
 float sourcePrevWeekHigh = na
 float sourcePrevWeekLow = na
-float sourcePrevWeekOpen = na
 float sourceWeekOpen = na
 float sourcePrevMonthHigh = na
 float sourcePrevMonthLow = na
@@ -762,14 +775,12 @@ var array<box> swingDailyGapBoxes = array.new_box()
 if sourceLevelsEnabled
     [requestedPrevDayHigh, requestedPrevDayLow, requestedDayOpenHTF] = getHigherTimeframeData("1440", convertedLevelSourceTicker)
     [requestedPrevWeekHigh, requestedPrevWeekLow, requestedWeekOpen] = getHigherTimeframeData("W", convertedLevelSourceTicker)
-    requestedPrevWeekOpen = request.security(convertedLevelSourceTicker, "W", open[1], lookahead=barmerge.lookahead_on, calc_bars_count=2)
     [requestedPrevMonthHigh, requestedPrevMonthLow, requestedMonthOpen] = getHigherTimeframeData("M", convertedLevelSourceTicker)
     sourcePrevDayHigh := requestedPrevDayHigh
     sourcePrevDayLow := requestedPrevDayLow
     sourceDayOpenHTF := requestedDayOpenHTF
     sourcePrevWeekHigh := requestedPrevWeekHigh
     sourcePrevWeekLow := requestedPrevWeekLow
-    sourcePrevWeekOpen := requestedPrevWeekOpen
     sourceWeekOpen := requestedWeekOpen
     sourcePrevMonthHigh := requestedPrevMonthHigh
     sourcePrevMonthLow := requestedPrevMonthLow
@@ -977,7 +988,6 @@ if sourceLevelsEnabled
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevWeekHigh), "Previous Week High", 1, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevWeekLow), "Previous Week Low", 1, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourceWeekOpen), "Current Week Open", 2, true, true)
-        f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevWeekOpen), "Previous Week Open", 3, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevDayHigh), "Previous Day High", 4, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevDayLow), "Previous Day Low", 4, true, true)
         f_addSwingLevel(chartDailyOpenForConvertedLevels, "Current Day Open", 6, true, true)
@@ -1003,7 +1013,6 @@ if sourceLevelsEnabled
         f_addSwingDisplayLevel(sourcePrevWeekHigh, "PWH", paEngineHighLevelColor, 3, 0)
         f_addSwingDisplayLevel(sourcePrevWeekLow, "PWL", paEngineLowLevelColor, 3, 0)
         f_addSwingDisplayLevel(sourceWeekOpen, "WO", paEngineOpenLevelColor, 3, 0)
-        f_addSwingDisplayLevel(sourcePrevWeekOpen, "PWO", paEngineOpenLevelColor, 3, 1)
         f_addSwingDisplayLevel(sourcePrevDayHigh, "PDH", paEngineHighLevelColor, 1, 0)
         f_addSwingDisplayLevel(sourcePrevDayLow, "PDL", paEngineLowLevelColor, 1, 0)
         f_addSwingDisplayConvertedLevel(chartDailyOpenForConvertedLevels, "DO", paEngineOpenLevelColor, 1, 0)
@@ -1672,6 +1681,34 @@ shortAnyEntryLevelTouched = not na(shortMostKeyTouchedLevelPrice)
 longMostKeyTouchedLevelBroken = longAnyEntryLevelTouched and scalpSignalClose > longMostKeyTouchedLevelPrice
 shortMostKeyTouchedLevelBroken = shortAnyEntryLevelTouched and scalpSignalClose < shortMostKeyTouchedLevelPrice
 
+bool longAnyTouchedLevelFailedCloseBeyond = false
+bool shortAnyTouchedLevelFailedCloseBeyond = false
+if useExpandedScalpLevels and array.size(swingLevelPrices) > 0
+    for touchedLevelIndex = 0 to array.size(swingLevelPrices) - 1
+        float touchedLevelPrice = array.get(swingLevelPrices, touchedLevelIndex)
+        bool touchedLevelEnabledForEntry = array.get(swingLevelAllowedForEntry, touchedLevelIndex)
+        longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(touchedLevelEnabledForEntry, touchedLevelPrice, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+        shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(touchedLevelEnabledForEntry, touchedLevelPrice, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(usePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(usePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(useDailyOpenLevel, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(usePremarketHighLevel, effectivePremarketHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(usePremarketLowLevel, effectivePremarketLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(usePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(usePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(useDailyOpenLevel, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(usePremarketHighLevel, effectivePremarketHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(usePremarketLowLevel, effectivePremarketLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+
+longAllTouchedLevelsClosedBeyond = not longAnyTouchedLevelFailedCloseBeyond
+shortAllTouchedLevelsClosedBeyond = not shortAnyTouchedLevelFailedCloseBeyond
+
 longSelectedLevelPrice = longMostKeyTouchedLevelBroken ? longMostKeyTouchedLevelPrice : na
 longSelectedLevelName = longMostKeyTouchedLevelBroken ? longMostKeyTouchedLevelName : "N/A"
 longSelectedLevelTouchedCurrent = longMostKeyTouchedLevelBroken and longMostKeyTouchedLevelCurrent
@@ -1692,8 +1729,8 @@ shortLevelEntryRetracementOk = not shortLevelEntryRequired or (not na(shortLevel
 // ===================== Scalp Setup Qualification Logic =====================
 // Level setups reuse the enabled scalp entry level checks above. A selected
 // level only exists after the signal or prior bar qualifies and the signal closes beyond it.
-longLevelBreakSetup = longMostKeyTouchedLevelBroken and longLevelEntryRetracementOk
-shortLevelBreakSetup = shortMostKeyTouchedLevelBroken and shortLevelEntryRetracementOk
+longLevelBreakSetup = longMostKeyTouchedLevelBroken and longAllTouchedLevelsClosedBeyond and longLevelEntryRetracementOk
+shortLevelBreakSetup = shortMostKeyTouchedLevelBroken and shortAllTouchedLevelsClosedBeyond and shortLevelEntryRetracementOk
 
 longPullbackBreak = not na(low[1]) and low < low[1]
 shortPullbackBreak = not na(high[1]) and high > high[1]
@@ -1957,12 +1994,23 @@ f_buildCompactChartLabel(_direction, _compactSignalText, _selectedLevelName, _en
 f_addAlertChartLabel(_price, _text, _style, _color) =>
     label.new(bar_index, _price, _text, style=_style, textcolor=color.white, color=_color, size=showCompactAlertLabels ? size.small : size.tiny)
 
-if showHistoricalAlertLabels and effectiveBullScalpAlert
-    string bullChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bullAlertLabelTitle, bullCompactSignalText, longSelectedLevelText, longEntryPrice, longStopPrice, longTargetPrice, longTargetTypeText, longTargetRR, longContracts) : f_buildMarkerChartLabel(bullAlertLabelTitle, bullCompactSignalText, longSelectedLevelText)
-    f_addAlertChartLabel(low, bullChartLabelText, label.style_label_up, color.new(color.lime, 0))
-else if showHistoricalAlertLabels and effectiveBearScalpAlert
-    string bearChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bearAlertLabelTitle, bearCompactSignalText, shortSelectedLevelText, shortEntryPrice, shortStopPrice, shortTargetPrice, shortTargetTypeText, shortTargetRR, shortContracts) : f_buildMarkerChartLabel(bearAlertLabelTitle, bearCompactSignalText, shortSelectedLevelText)
-    f_addAlertChartLabel(high, bearChartLabelText, label.style_label_down, color.new(color.red, 0))
+alertDirectionTitle = effectiveBullScalpAlert ? bullAlertLabelTitle : effectiveBearScalpAlert ? bearAlertLabelTitle : ""
+alertCompactSignalText = effectiveBullScalpAlert ? bullCompactSignalText : effectiveBearScalpAlert ? bearCompactSignalText : ""
+alertSelectedLevelName = effectiveBullScalpAlert ? longSelectedLevelText : effectiveBearScalpAlert ? shortSelectedLevelText : "N/A"
+alertEntryType = effectiveBullScalpAlert ? longEntryTypeText : effectiveBearScalpAlert ? shortEntryTypeText : "N/A"
+alertEntryPrice = effectiveBullScalpAlert ? longEntryPrice : effectiveBearScalpAlert ? shortEntryPrice : na
+alertStopPrice = effectiveBullScalpAlert ? longStopPrice : effectiveBearScalpAlert ? shortStopPrice : na
+alertTargetPrice = effectiveBullScalpAlert ? longTargetPrice : effectiveBearScalpAlert ? shortTargetPrice : na
+alertTargetType = effectiveBullScalpAlert ? longTargetTypeText : effectiveBearScalpAlert ? shortTargetTypeText : "N/A"
+alertTargetRR = effectiveBullScalpAlert ? longTargetRR : effectiveBearScalpAlert ? shortTargetRR : na
+alertContracts = effectiveBullScalpAlert ? longContracts : effectiveBearScalpAlert ? shortContracts : na
+alertLabelPrice = effectiveBullScalpAlert ? low : effectiveBearScalpAlert ? high : na
+alertLabelStyle = effectiveBullScalpAlert ? label.style_label_up : label.style_label_down
+alertLabelColor = effectiveBullScalpAlert ? color.new(color.lime, 0) : color.new(color.red, 0)
+
+if showHistoricalAlertLabels and (effectiveBullScalpAlert or effectiveBearScalpAlert)
+    string chartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName, alertEntryPrice, alertStopPrice, alertTargetPrice, alertTargetType, alertTargetRR, alertContracts) : f_buildMarkerChartLabel(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName)
+    f_addAlertChartLabel(alertLabelPrice, chartLabelText, alertLabelStyle, alertLabelColor)
 
 // ===================== Alert Message =====================
 f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _selectedLevelName, _orBiasText, _entryType, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _contracts) =>
@@ -1975,10 +2023,8 @@ f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _selectedLevelName
      "T " + f_priceText(_targetPrice) + " " + f_abbrevLevelName(_targetType) + "\n" +
      str.tostring(_contracts) + "ct | " + f_rrText(_targetRR)
 
-if effectiveBullScalpAlert
-    alert(f_buildScalpAlertMessage(bullAlertLabelTitle, bullCompactSignalText, longSelectedLevelText, orBiasText, longEntryTypeText, longEntryPrice, longStopPrice, longTargetPrice, longTargetTypeText, longTargetRR, longContracts), alert.freq_once_per_bar_close)
-else if effectiveBearScalpAlert
-    alert(f_buildScalpAlertMessage(bearAlertLabelTitle, bearCompactSignalText, shortSelectedLevelText, orBiasText, shortEntryTypeText, shortEntryPrice, shortStopPrice, shortTargetPrice, shortTargetTypeText, shortTargetRR, shortContracts), alert.freq_once_per_bar_close)
+if effectiveBullScalpAlert or effectiveBearScalpAlert
+    alert(f_buildScalpAlertMessage(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName, orBiasText, alertEntryType, alertEntryPrice, alertStopPrice, alertTargetPrice, alertTargetType, alertTargetRR, alertContracts), alert.freq_once_per_bar_close)
 
 plot(showOpeningRange ? openingRangeDisplayHigh : na, "15m Opening Range High", color=openingRangeHighColor, linewidth=1, style=plot.style_linebr)
 plot(showOpeningRange ? openingRangeDisplayLow : na, "15m Opening Range Low", color=openingRangeLowColor, linewidth=1, style=plot.style_linebr)
