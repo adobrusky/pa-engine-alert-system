@@ -232,6 +232,12 @@ f_rrText(_rr) =>
 f_boolText(_condition) =>
     _condition ? "true" : "false"
 
+f_dateKeyText(_dateKey) =>
+    na(_dateKey) ? "N/A" : str.tostring(_dateKey)
+
+f_timeText(_time) =>
+    na(_time) ? "N/A" : str.format_time(_time, "yyyy-MM-dd HH:mm", "America/New_York")
+
 f_orBiasText(_orBias) =>
     _orBias == 1 ? "LONG" : _orBias == -1 ? "SHORT" : "NEUTRAL"
 
@@ -243,7 +249,6 @@ f_abbrevLevelName(string _levelName) =>
      normalized == "Previous Week High" ? "PWH" :
      normalized == "Previous Week Low" ? "PWL" :
      normalized == "Current Week Open" ? "WO" :
-     normalized == "Previous Week Open" ? "PWO" :
      normalized == "Previous Day High" or normalized == "PDH" ? "PDH" :
      normalized == "Previous Day Low" or normalized == "PDL" ? "PDL" :
      normalized == "Current Day Open" or normalized == "Daily Open" or normalized == "OP" ? "DO" :
@@ -258,11 +263,32 @@ f_abbrevLevelName(string _levelName) =>
      normalized == "LOD" ? "LOD" :
      normalized
 
+f_levelTouched(bool _enabled, float _levelPrice, float _signalLow, float _signalHigh) =>
+    _enabled and _levelPrice > 0 and _levelPrice >= _signalLow and _levelPrice <= _signalHigh
+
+f_levelTouchedByPriorBar(bool _enabled, float _levelPrice, float _priorLow, float _priorHigh, bool _priorOppositeColor) =>
+    _priorOppositeColor and not na(_priorLow) and not na(_priorHigh) and f_levelTouched(_enabled, _levelPrice, _priorLow, _priorHigh)
+
 f_roundToScalpTick(_price) =>
     math.round(_price / scalpTickSize) * scalpTickSize
 
 f_validSourcePrice(_price) =>
     not na(_price) and _price > 0
+
+
+f_levelClosedBeyondLong(_level, _signalClose) =>
+    _signalClose > _level
+
+f_levelClosedBeyondShort(_level, _signalClose) =>
+    _signalClose < _level
+
+f_longTouchedLevelFailedCloseBeyond(_enabled, _level, _signalLow, _signalHigh, _signalClose) =>
+    bool touched = f_levelTouched(_enabled, _level, _signalLow, _signalHigh)
+    touched and not f_levelClosedBeyondLong(_level, _signalClose)
+
+f_shortTouchedLevelFailedCloseBeyond(_enabled, _level, _signalLow, _signalHigh, _signalClose) =>
+    bool touched = f_levelTouched(_enabled, _level, _signalLow, _signalHigh)
+    touched and not f_levelClosedBeyondShort(_level, _signalClose)
 
 f_currentRthOpen() =>
     var float rthOpen = na
@@ -288,12 +314,15 @@ getGaps(_lookBack) =>
     map<int, string> gapsDict = map.new<int, string>()
     i = _lookBack
     float atrSumForGaps = 0.0
-    while i >= 0
+    // Build the map as it would exist at the current RTH open. Completed daily
+    // bars may update/remove old gaps, but the current day only contributes its
+    // open-vs-prior-close gap so historical high/low data cannot leak forward.
+    while i >= 1
         dailyOpen = open[i]
         dailyLow = low[i]
         dailyHigh = high[i]
         prevClose = close[i + 1]
-        if i < atrLength
+        if i <= atrLength
             atrSumForGaps := atrSumForGaps + math.max(dailyHigh - dailyLow, math.max(math.abs(dailyHigh - prevClose), math.abs(dailyLow - prevClose)))
         if dailyOpen != prevClose
             gapHigh = str.tostring(math.max(dailyOpen, prevClose))
@@ -321,6 +350,16 @@ getGaps(_lookBack) =>
         for key in keysToRemove
             gapsDict.remove(key)
         i := i - 1
+
+    currentDailyOpen = open
+    currentPrevClose = close[1]
+    if not na(currentDailyOpen) and not na(currentPrevClose) and currentDailyOpen != currentPrevClose
+        currentGapHigh = str.tostring(math.max(currentDailyOpen, currentPrevClose))
+        currentGapLow = str.tostring(math.min(currentDailyOpen, currentPrevClose))
+        currentIsGapUp = currentDailyOpen > currentPrevClose
+        currentDir = currentIsGapUp ? "U" : "D"
+        gapsDict.put(time, currentDir + "|" + currentGapHigh + "," + currentGapLow + ":" + currentGapHigh + "," + currentGapLow)
+
     keysToRemove = array.new_int(0)
     atrForGaps = atrSumForGaps / atrLength
     for [key, value] in gapsDict
@@ -422,12 +461,6 @@ f_isBullBar(_open, _close) =>
 
 f_isBearBar(_open, _close) =>
     not na(_open) and not na(_close) and _close < _open
-
-f_levelTouched(bool _enabled, float _levelPrice, float _signalLow, float _signalHigh) =>
-    _enabled and _levelPrice > 0 and _levelPrice >= _signalLow and _levelPrice <= _signalHigh
-
-f_levelTouchedByPriorBar(bool _enabled, float _levelPrice, float _priorLow, float _priorHigh, bool _priorOppositeColor) =>
-    _priorOppositeColor and not na(_priorLow) and not na(_priorHigh) and f_levelTouched(_enabled, _levelPrice, _priorLow, _priorHigh)
 
 f_pickLongQualifiedLevel(bool _enabled, float _levelPrice, string _levelName, int _levelPriority, float _signalLow, float _signalHigh, float _signalClose, float _priorLow, float _priorHigh, bool _priorBear, float _bestPrice, string _bestName, int _bestPriority, bool _bestCurrentTouched, bool _found) =>
     float nextPrice = _bestPrice
@@ -696,25 +729,17 @@ activeDailyGapSourceTicker = convertedLevelsSourceMode == "Manual Source" ? manu
 activeDailyGapSourceSymbol = convertedLevelsSourceMode == "Manual Source" ? manualConvertedLevelsSourceSymbol : explicitDailyGapPlainSymbol
 activeDailyGapSourceType = convertedLevelsSourceMode == "Manual Source" ? "Manual source" : "Explicit RTH ticker"
 activeDailyGapSourceDebugText = activeDailyGapSourceType == "Explicit RTH ticker" ? activeDailyGapSourceSymbol + " RTH" : activeDailyGapSourceSymbol
-activeDailyGapRequestMode = "Ungated"
+activeDailyGapRequestMode = "RTH session cache"
 activeDailyGapTimeframe = "1440"
 activeDailyGapCalcBarsCount = 600
-dailyGapMarketSession = inScalpRTHSession ? "M" : inPremarketSession ? "P" : "A"
-var bool executedDailyGapLogic = false
-var string prevDailyGapMarketSession = "A"
-if barstate.islast
-    if (prevDailyGapMarketSession == "P" and dailyGapMarketSession == "M") or (prevDailyGapMarketSession == "M" and dailyGapMarketSession == "A")
-        executedDailyGapLogic := false
-dailyGapRequestShouldRefresh = dailyGapRequestEnabled and not executedDailyGapLogic and barstate.islast
 
-// The HTF requests intentionally mirror the PA Engine approach: previous completed
-// H/L plus the current period open are requested with lookahead_on.
+// The HTF source values are frozen once per RTH session. Their converted chart
+// prices still use currentConversionRatio below, so live ratio drift is preserved.
 float sourcePrevDayHigh = na
 float sourcePrevDayLow = na
 float sourceDayOpenHTF = na
 float sourcePrevWeekHigh = na
 float sourcePrevWeekLow = na
-float sourcePrevWeekOpen = na
 float sourceWeekOpen = na
 float sourcePrevMonthHigh = na
 float sourcePrevMonthLow = na
@@ -723,20 +748,30 @@ float sourceDayOpenIntraday = na
 float sourceDayOpen = na
 float sourceCloseForConversion = na
 map<int, string> sourceDailyGaps = na
-map<int, string> gatedDiagnosticDailyGaps = na
-map<int, string> ungatedDiagnosticDailyGaps = na
-map<int, string> ungated600DiagnosticDailyGaps = na
-map<int, string> explicitRthDiagnosticDailyGaps = na
-map<int, string> plainSymbolDiagnosticDailyGaps = na
-map<int, string> explicit1440DiagnosticDailyGaps = na
-map<int, string> explicitDDiagnosticDailyGaps = na
 var float lastRthChartCloseForDisplayConversion = na
 var float lastRthSourceCloseForDisplayConversion = na
+var float cachedSourcePrevDayHigh = na
+var float cachedSourcePrevDayLow = na
+var float cachedSourceDayOpenHTF = na
+var float cachedSourcePrevWeekHigh = na
+var float cachedSourcePrevWeekLow = na
+var float cachedSourceWeekOpen = na
+var float cachedSourcePrevMonthHigh = na
+var float cachedSourcePrevMonthLow = na
+var float cachedSourceMonthOpen = na
+var float cachedSourceDayOpenIntraday = na
+var float cachedSourceDayOpen = na
+var int convertedSourceCacheSessionDateKey = na
+var int convertedSourceCacheLastRefreshTime = na
+var bool convertedSourceCacheInitializedMidSession = false
 var array<int> cachedSourceDailyGapTimes = array.new_int()
 var array<float> cachedSourceDailyGapStarts = array.new_float()
 var array<float> cachedSourceDailyGapEnds = array.new_float()
 var array<float> cachedSourceDailyGapHighs = array.new_float()
 var array<float> cachedSourceDailyGapLows = array.new_float()
+var int cachedSourceDailyGapSessionDateKey = na
+var int cachedSourceDailyGapLastRefreshTime = na
+var bool cachedSourceDailyGapInitializedMidSession = false
 var int lastFreshRequestedSourceDailyGapCount = 0
 var int sourceDailyGapParseFailCount = 0
 var int sourceDailyGapInvalidPriceCount = 0
@@ -748,6 +783,7 @@ var array<string> swingLevelNames = array.new_string()
 var array<int> swingLevelPriority = array.new_int()
 var array<bool> swingLevelAllowedForEntry = array.new_bool()
 var array<bool> swingLevelAllowedForTarget = array.new_bool()
+var array<bool> swingLevelCloseBeyondRequired = array.new_bool()
 var array<float> swingDisplayLevelPrices = array.new_float()
 var array<string> swingDisplayLevelLabels = array.new_string()
 var array<color> swingDisplayLevelColors = array.new_color()
@@ -759,38 +795,77 @@ var array<line> swingLevelLines = array.new_line()
 var array<label> swingLevelLabels = array.new_label()
 var array<box> swingDailyGapBoxes = array.new_box()
 
+currentNYHour = hour(time, "America/New_York")
+currentNYMinute = minute(time, "America/New_York")
+barStartsAtRthOpen = inScalpRTHSession and currentNYHour == 9 and currentNYMinute == 30
+sourceSessionCacheShouldRefresh = sourceLevelsEnabled and inScalpRTHSession and (newScalpRTHSession or na(convertedSourceCacheSessionDateKey) or convertedSourceCacheSessionDateKey != nySessionDateKey)
+dailyGapSessionCacheShouldRefresh = dailyGapRequestEnabled and inScalpRTHSession and (newScalpRTHSession or na(cachedSourceDailyGapSessionDateKey) or cachedSourceDailyGapSessionDateKey != nySessionDateKey)
+
 if sourceLevelsEnabled
-    [requestedPrevDayHigh, requestedPrevDayLow, requestedDayOpenHTF] = getHigherTimeframeData("1440", convertedLevelSourceTicker)
-    [requestedPrevWeekHigh, requestedPrevWeekLow, requestedWeekOpen] = getHigherTimeframeData("W", convertedLevelSourceTicker)
-    requestedPrevWeekOpen = request.security(convertedLevelSourceTicker, "W", open[1], lookahead=barmerge.lookahead_on, calc_bars_count=2)
-    [requestedPrevMonthHigh, requestedPrevMonthLow, requestedMonthOpen] = getHigherTimeframeData("M", convertedLevelSourceTicker)
-    sourcePrevDayHigh := requestedPrevDayHigh
-    sourcePrevDayLow := requestedPrevDayLow
-    sourceDayOpenHTF := requestedDayOpenHTF
-    sourcePrevWeekHigh := requestedPrevWeekHigh
-    sourcePrevWeekLow := requestedPrevWeekLow
-    sourcePrevWeekOpen := requestedPrevWeekOpen
-    sourceWeekOpen := requestedWeekOpen
-    sourcePrevMonthHigh := requestedPrevMonthHigh
-    sourcePrevMonthLow := requestedPrevMonthLow
-    sourceMonthOpen := requestedMonthOpen
-    sourceDayOpenIntraday := request.security(convertedLevelSourceTicker, "5", f_currentRthOpen(), lookahead=barmerge.lookahead_off, calc_bars_count=500)
-    sourceDayOpen := f_validSourcePrice(sourceDayOpenHTF) ? sourceDayOpenHTF : sourceDayOpenIntraday
     sourceCloseForConversion := sourceCloseForConversionNeeded ? request.security(convertedLevelSourceTicker, timeframe.period, close, lookahead=barmerge.lookahead_off, calc_bars_count=500) : na
-    if dailyGapRequestEnabled
-        // Request SPY/QQQ RTH daily gaps from the selected source, cache the
-        // original source boundaries below, then convert them to the futures chart.
-        // The active request is intentionally ungated so live alert logic and
-        // closed-market chart reloads always have the full source gap map.
+    if sourceSessionCacheShouldRefresh
+        [requestedPrevDayHigh, requestedPrevDayLow, requestedDayOpenHTF] = getHigherTimeframeData("1440", convertedLevelSourceTicker)
+        [requestedPrevWeekHigh, requestedPrevWeekLow, requestedWeekOpen] = getHigherTimeframeData("W", convertedLevelSourceTicker)
+        [requestedPrevMonthHigh, requestedPrevMonthLow, requestedMonthOpen] = getHigherTimeframeData("M", convertedLevelSourceTicker)
+        requestedDayOpenIntraday = request.security(convertedLevelSourceTicker, "5", f_currentRthOpen(), lookahead=barmerge.lookahead_off, calc_bars_count=500)
+        cachedSourcePrevDayHigh := requestedPrevDayHigh
+        cachedSourcePrevDayLow := requestedPrevDayLow
+        cachedSourceDayOpenHTF := requestedDayOpenHTF
+        cachedSourcePrevWeekHigh := requestedPrevWeekHigh
+        cachedSourcePrevWeekLow := requestedPrevWeekLow
+        cachedSourceWeekOpen := requestedWeekOpen
+        cachedSourcePrevMonthHigh := requestedPrevMonthHigh
+        cachedSourcePrevMonthLow := requestedPrevMonthLow
+        cachedSourceMonthOpen := requestedMonthOpen
+        cachedSourceDayOpenIntraday := requestedDayOpenIntraday
+        cachedSourceDayOpen := f_validSourcePrice(cachedSourceDayOpenHTF) ? cachedSourceDayOpenHTF : cachedSourceDayOpenIntraday
+        convertedSourceCacheSessionDateKey := nySessionDateKey
+        convertedSourceCacheLastRefreshTime := time
+        convertedSourceCacheInitializedMidSession := not barStartsAtRthOpen
+    sourcePrevDayHigh := cachedSourcePrevDayHigh
+    sourcePrevDayLow := cachedSourcePrevDayLow
+    sourceDayOpenHTF := cachedSourceDayOpenHTF
+    sourcePrevWeekHigh := cachedSourcePrevWeekHigh
+    sourcePrevWeekLow := cachedSourcePrevWeekLow
+    sourceWeekOpen := cachedSourceWeekOpen
+    sourcePrevMonthHigh := cachedSourcePrevMonthHigh
+    sourcePrevMonthLow := cachedSourcePrevMonthLow
+    sourceMonthOpen := cachedSourceMonthOpen
+    sourceDayOpenIntraday := cachedSourceDayOpenIntraday
+    sourceDayOpen := cachedSourceDayOpen
+    if dailyGapSessionCacheShouldRefresh
+        // Request SPY/QQQ RTH daily gaps once for this chart RTH session. getGaps()
+        // returns the source gap map known at that session's open.
         sourceDailyGaps := request.security(activeDailyGapSourceTicker, activeDailyGapTimeframe, getGaps(dailyGapLookback), lookahead=barmerge.lookahead_on, calc_bars_count=activeDailyGapCalcBarsCount)
-        if showGapRequestDiagnostics
-            gatedDiagnosticDailyGaps := request.security(convertedLevelSourceTicker, "1440", not executedDailyGapLogic and barstate.islast ? getGaps(dailyGapLookback) : map.new<int, string>(), lookahead=barmerge.lookahead_on, calc_bars_count=dailyGapLookback)
-            ungatedDiagnosticDailyGaps := request.security(convertedLevelSourceTicker, "1440", getGaps(dailyGapLookback), lookahead=barmerge.lookahead_on, calc_bars_count=dailyGapLookback)
-            ungated600DiagnosticDailyGaps := request.security(convertedLevelSourceTicker, "1440", getGaps(dailyGapLookback), lookahead=barmerge.lookahead_on, calc_bars_count=600)
-            explicitRthDiagnosticDailyGaps := request.security(explicitDailyGapSourceTicker, "1440", getGaps(dailyGapLookback), lookahead=barmerge.lookahead_on, calc_bars_count=600)
-            plainSymbolDiagnosticDailyGaps := request.security(explicitDailyGapPlainSymbol, "1440", getGaps(dailyGapLookback), lookahead=barmerge.lookahead_on, calc_bars_count=600)
-            explicit1440DiagnosticDailyGaps := request.security(explicitDailyGapSourceTicker, "1440", getGaps(dailyGapLookback), lookahead=barmerge.lookahead_on, calc_bars_count=600)
-            explicitDDiagnosticDailyGaps := request.security(explicitDailyGapSourceTicker, "D", getGaps(dailyGapLookback), lookahead=barmerge.lookahead_on, calc_bars_count=600)
+        [refreshedSourceDailyGapCount, refreshedFirstRawDailyGapRecord] = f_gapMapDiagnostics(sourceDailyGaps)
+        array.clear(cachedSourceDailyGapTimes)
+        array.clear(cachedSourceDailyGapStarts)
+        array.clear(cachedSourceDailyGapEnds)
+        array.clear(cachedSourceDailyGapHighs)
+        array.clear(cachedSourceDailyGapLows)
+        cachedSourceDailyGapSessionDateKey := nySessionDateKey
+        cachedSourceDailyGapLastRefreshTime := time
+        cachedSourceDailyGapInitializedMidSession := not barStartsAtRthOpen
+        lastFreshRequestedSourceDailyGapCount := refreshedSourceDailyGapCount
+        sourceDailyGapParseFailCount := 0
+        sourceDailyGapInvalidPriceCount := 0
+        sourceDailyGapCachedSuccessCount := 0
+        firstRawDailyGapRecord := refreshedSourceDailyGapCount > 0 ? refreshedFirstRawDailyGapRecord : "N/A"
+        if not na(sourceDailyGaps)
+            for [cacheGapKey, cacheGapValue] in sourceDailyGaps
+                [cacheGapParsed, cacheGapStart, cacheGapEnd, cacheGapHigh, cacheGapLow] = f_parseGapRecord(cacheGapValue)
+                bool cacheGapSourcePricesValid = f_validSourcePrice(cacheGapStart) and f_validSourcePrice(cacheGapEnd) and f_validSourcePrice(cacheGapHigh) and f_validSourcePrice(cacheGapLow)
+                if not cacheGapParsed
+                    sourceDailyGapParseFailCount += 1
+                else if not cacheGapSourcePricesValid
+                    sourceDailyGapInvalidPriceCount += 1
+                else
+                    array.push(cachedSourceDailyGapTimes, cacheGapKey)
+                    array.push(cachedSourceDailyGapStarts, cacheGapStart)
+                    array.push(cachedSourceDailyGapEnds, cacheGapEnd)
+                    array.push(cachedSourceDailyGapHighs, cacheGapHigh)
+                    array.push(cachedSourceDailyGapLows, cacheGapLow)
+                    sourceDailyGapCachedSuccessCount += 1
 
 if barstate.isconfirmed and inScalpRTHSession and f_validSourcePrice(close) and f_validSourcePrice(sourceCloseForConversion)
     lastRthChartCloseForDisplayConversion := close
@@ -804,50 +879,11 @@ chartConversionBase = f_validSourcePrice(lastRthChartCloseForDisplayConversion) 
 sourceConversionBase = f_validSourcePrice(lastRthSourceCloseForDisplayConversion) ? lastRthSourceCloseForDisplayConversion : f_validSourcePrice(fallbackSourceConversionClose) ? fallbackSourceConversionClose : na
 currentConversionRatio = f_validSourcePrice(chartConversionBase) and f_validSourcePrice(sourceConversionBase) ? chartConversionBase / sourceConversionBase : na
 swingCurrentPriceRatioReady = f_validSourcePrice(currentConversionRatio)
-
-[requestedSourceDailyGapCount, currentFirstRawDailyGapRecord] = f_gapMapDiagnostics(sourceDailyGaps)
-[gatedDiagnosticGapCount, gatedDiagnosticFirstRawRecord] = f_gapMapDiagnostics(gatedDiagnosticDailyGaps)
-[ungatedDiagnosticGapCount, ungatedDiagnosticFirstRawRecord] = f_gapMapDiagnostics(ungatedDiagnosticDailyGaps)
-[ungated600DiagnosticGapCount, ungated600DiagnosticFirstRawRecord] = f_gapMapDiagnostics(ungated600DiagnosticDailyGaps)
-[explicitRthDiagnosticGapCount, explicitRthDiagnosticFirstRawRecord] = f_gapMapDiagnostics(explicitRthDiagnosticDailyGaps)
-[plainSymbolDiagnosticGapCount, plainSymbolDiagnosticFirstRawRecord] = f_gapMapDiagnostics(plainSymbolDiagnosticDailyGaps)
-[explicit1440DiagnosticGapCount, explicit1440DiagnosticFirstRawRecord] = f_gapMapDiagnostics(explicit1440DiagnosticDailyGaps)
-[explicitDDiagnosticGapCount, explicitDDiagnosticFirstRawRecord] = f_gapMapDiagnostics(explicitDDiagnosticDailyGaps)
-bestDiagnosticGapCount = math.max(math.max(math.max(gatedDiagnosticGapCount, ungatedDiagnosticGapCount), math.max(ungated600DiagnosticGapCount, explicitRthDiagnosticGapCount)), math.max(plainSymbolDiagnosticGapCount, math.max(explicit1440DiagnosticGapCount, explicitDDiagnosticGapCount)))
-bestDiagnosticFirstRawRecord = explicitRthDiagnosticGapCount == bestDiagnosticGapCount ? explicitRthDiagnosticFirstRawRecord : ungated600DiagnosticGapCount == bestDiagnosticGapCount ? ungated600DiagnosticFirstRawRecord : ungatedDiagnosticGapCount == bestDiagnosticGapCount ? ungatedDiagnosticFirstRawRecord : plainSymbolDiagnosticGapCount == bestDiagnosticGapCount ? plainSymbolDiagnosticFirstRawRecord : explicitDDiagnosticGapCount == bestDiagnosticGapCount ? explicitDDiagnosticFirstRawRecord : explicit1440DiagnosticGapCount == bestDiagnosticGapCount ? explicit1440DiagnosticFirstRawRecord : gatedDiagnosticFirstRawRecord
-
-// Cache the active ungated source request. Gated diagnostic requests may return
-// intentional empty maps on non-refresh bars, but they never drive this cache.
-if dailyGapRequestEnabled and not na(sourceDailyGaps)
-    array.clear(cachedSourceDailyGapTimes)
-    array.clear(cachedSourceDailyGapStarts)
-    array.clear(cachedSourceDailyGapEnds)
-    array.clear(cachedSourceDailyGapHighs)
-    array.clear(cachedSourceDailyGapLows)
-    lastFreshRequestedSourceDailyGapCount := requestedSourceDailyGapCount
-    sourceDailyGapParseFailCount := 0
-    sourceDailyGapInvalidPriceCount := 0
-    sourceDailyGapCachedSuccessCount := 0
-    firstRawDailyGapRecord := requestedSourceDailyGapCount > 0 ? currentFirstRawDailyGapRecord : "N/A"
-    for [cacheGapKey, cacheGapValue] in sourceDailyGaps
-        [cacheGapParsed, cacheGapStart, cacheGapEnd, cacheGapHigh, cacheGapLow] = f_parseGapRecord(cacheGapValue)
-        bool cacheGapSourcePricesValid = f_validSourcePrice(cacheGapStart) and f_validSourcePrice(cacheGapEnd) and f_validSourcePrice(cacheGapHigh) and f_validSourcePrice(cacheGapLow)
-        if not cacheGapParsed
-            sourceDailyGapParseFailCount += 1
-        else if not cacheGapSourcePricesValid
-            sourceDailyGapInvalidPriceCount += 1
-        else
-            array.push(cachedSourceDailyGapTimes, cacheGapKey)
-            array.push(cachedSourceDailyGapStarts, cacheGapStart)
-            array.push(cachedSourceDailyGapEnds, cacheGapEnd)
-            array.push(cachedSourceDailyGapHighs, cacheGapHigh)
-            array.push(cachedSourceDailyGapLows, cacheGapLow)
-            sourceDailyGapCachedSuccessCount += 1
-
-if dailyGapRequestShouldRefresh
-    executedDailyGapLogic := true
-if barstate.islast
-    prevDailyGapMarketSession := dailyGapMarketSession
+sourceSessionCacheReady = sourceLevelsEnabled and not na(convertedSourceCacheSessionDateKey)
+sourceSessionCacheCurrent = sourceLevelsEnabled and convertedSourceCacheSessionDateKey == nySessionDateKey
+dailyGapUsingCurrentSessionCache = dailyGapRequestEnabled and inScalpRTHSession and cachedSourceDailyGapSessionDateKey == nySessionDateKey
+requestedSourceDailyGapCount = lastFreshRequestedSourceDailyGapCount
+currentFirstRawDailyGapRecord = firstRawDailyGapRecord
 
 if not dailyGapRequestEnabled
     array.clear(cachedSourceDailyGapTimes)
@@ -855,8 +891,17 @@ if not dailyGapRequestEnabled
     array.clear(cachedSourceDailyGapEnds)
     array.clear(cachedSourceDailyGapHighs)
     array.clear(cachedSourceDailyGapLows)
+    cachedSourceDailyGapSessionDateKey := na
+    cachedSourceDailyGapLastRefreshTime := na
+    cachedSourceDailyGapInitializedMidSession := false
+    lastFreshRequestedSourceDailyGapCount := 0
+    sourceDailyGapParseFailCount := 0
+    sourceDailyGapInvalidPriceCount := 0
+    sourceDailyGapCachedSuccessCount := 0
+    firstRawDailyGapRecord := "N/A"
 
-sourceDailyGapCount = array.size(cachedSourceDailyGapStarts)
+cachedSourceDailyGapCount = array.size(cachedSourceDailyGapStarts)
+sourceDailyGapCount = dailyGapUsingCurrentSessionCache ? cachedSourceDailyGapCount : 0
 float firstValidSourceGapStart = na
 float firstValidSourceGapEnd = na
 float firstValidSourceGapHigh = na
@@ -874,7 +919,7 @@ if sourceDailyGapCount > 0
             firstValidSourceGapLow := countGapLow
 
 chartDailyOpenForConvertedLevels = f_validSourcePrice(autoDailyOpen) ? autoDailyOpen : f_validSourcePrice(effectiveDailyOpen) ? effectiveDailyOpen : na
-convertedLevelStatus = not sourceLevelsEnabled ? "disabled" : not f_validSourcePrice(sourceDayOpen) ? "no source daily open" : not swingCurrentPriceRatioReady ? "conversion ratio missing" : "ready"
+convertedLevelStatus = not sourceLevelsEnabled ? "disabled" : inScalpRTHSession and not sourceSessionCacheCurrent ? "source cache missing" : not sourceSessionCacheReady ? "waiting for RTH cache" : not f_validSourcePrice(sourceDayOpen) ? "no source daily open" : not swingCurrentPriceRatioReady ? "conversion ratio missing" : "ready"
 
 f_convertSourceLevelToChart(_sourcePrice) =>
     f_validSourcePrice(_sourcePrice) and f_validSourcePrice(currentConversionRatio) ? f_roundToScalpTick(_sourcePrice * currentConversionRatio) : na
@@ -891,13 +936,17 @@ f_addSwingDisplayConvertedLevel(_displayPrice, _label, _lineColor, _lineWidth, _
         array.push(swingDisplayLevelWidths, _lineWidth)
         array.push(swingDisplayLevelStyles, _lineStyle)
 
-f_addSwingLevel(_price, _name, _priority, _entryAllowed, _targetAllowed) =>
+f_addSwingLevelWithCloseBeyond(_price, _name, _priority, _entryAllowed, _targetAllowed, _closeBeyondRequired) =>
     if f_validSourcePrice(_price)
         array.push(swingLevelPrices, _price)
         array.push(swingLevelNames, _name)
         array.push(swingLevelPriority, _priority)
         array.push(swingLevelAllowedForEntry, _entryAllowed)
         array.push(swingLevelAllowedForTarget, _targetAllowed)
+        array.push(swingLevelCloseBeyondRequired, _closeBeyondRequired)
+
+f_addSwingLevel(_price, _name, _priority, _entryAllowed, _targetAllowed) =>
+    f_addSwingLevelWithCloseBeyond(_price, _name, _priority, _entryAllowed, _targetAllowed, _entryAllowed)
 
 f_addSwingDisplayLevel(_sourcePrice, _label, _lineColor, _lineWidth, _lineStyle) =>
     float displayPrice = f_convertSourceLevelToChartForDisplay(_sourcePrice)
@@ -934,6 +983,7 @@ array.clear(swingLevelNames)
 array.clear(swingLevelPriority)
 array.clear(swingLevelAllowedForEntry)
 array.clear(swingLevelAllowedForTarget)
+array.clear(swingLevelCloseBeyondRequired)
 array.clear(swingDisplayLevelPrices)
 array.clear(swingDisplayLevelLabels)
 array.clear(swingDisplayLevelColors)
@@ -969,7 +1019,6 @@ if sourceDailyGapCount > 0
 if sourceLevelsEnabled
     // Expanded scalp calculations use the converted level arrays below. These keep
     // the current price ratio so scalp logic stays on converted SPY/QQQ levels.
-    // The current day open is the exception: it stays anchored to the chart RTH open.
     if useExpandedScalpLevels
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevMonthHigh), "Previous Month High", 0, false, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevMonthLow), "Previous Month Low", 0, false, true)
@@ -977,10 +1026,9 @@ if sourceLevelsEnabled
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevWeekHigh), "Previous Week High", 1, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevWeekLow), "Previous Week Low", 1, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourceWeekOpen), "Current Week Open", 2, true, true)
-        f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevWeekOpen), "Previous Week Open", 3, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevDayHigh), "Previous Day High", 4, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevDayLow), "Previous Day Low", 4, true, true)
-        f_addSwingLevel(chartDailyOpenForConvertedLevels, "Current Day Open", 6, true, true)
+        f_addSwingLevel(f_convertSourceLevelToChart(sourceDayOpen), "Current Day Open", 6, true, true)
         if sourceDailyGapCount > 0
             // Convert cached source gap boundaries to chart prices, then add the
             // daily gap end as entry/target eligible and the start as target only.
@@ -988,10 +1036,10 @@ if sourceLevelsEnabled
                 float convertedGapEnd = f_convertSourceLevelToChart(array.get(cachedSourceDailyGapEnds, sourceGapIndex))
                 float convertedGapStart = f_convertSourceLevelToChart(array.get(cachedSourceDailyGapStarts, sourceGapIndex))
                 if f_validSourcePrice(convertedGapEnd)
-                    f_addSwingLevel(convertedGapEnd, "Daily Gap End", 5, true, true)
+                    f_addSwingLevelWithCloseBeyond(convertedGapEnd, "Daily Gap End", 5, true, true, true)
                     swingDailyGapLevelsAdded += 1
                 if f_validSourcePrice(convertedGapStart)
-                    f_addSwingLevel(convertedGapStart, "Daily Gap Start", 0, false, true)
+                    f_addSwingLevelWithCloseBeyond(convertedGapStart, "Daily Gap Start", 0, false, true, true)
                     swingDailyGapLevelsAdded += 1
     if showSwingLevels
         // Displayed converted lines are live reference levels. Their current price
@@ -1003,10 +1051,9 @@ if sourceLevelsEnabled
         f_addSwingDisplayLevel(sourcePrevWeekHigh, "PWH", paEngineHighLevelColor, 3, 0)
         f_addSwingDisplayLevel(sourcePrevWeekLow, "PWL", paEngineLowLevelColor, 3, 0)
         f_addSwingDisplayLevel(sourceWeekOpen, "WO", paEngineOpenLevelColor, 3, 0)
-        f_addSwingDisplayLevel(sourcePrevWeekOpen, "PWO", paEngineOpenLevelColor, 3, 1)
         f_addSwingDisplayLevel(sourcePrevDayHigh, "PDH", paEngineHighLevelColor, 1, 0)
         f_addSwingDisplayLevel(sourcePrevDayLow, "PDL", paEngineLowLevelColor, 1, 0)
-        f_addSwingDisplayConvertedLevel(chartDailyOpenForConvertedLevels, "DO", paEngineOpenLevelColor, 1, 0)
+        f_addSwingDisplayLevel(sourceDayOpen, "DO", paEngineOpenLevelColor, 1, 0)
         int displayedGapCount = 0
         if maxDisplayedDailyGaps > 0 and sourceDailyGapCount > 0
             // Draw converted gap lines and boxes from original SPY/QQQ gap
@@ -1036,13 +1083,15 @@ if sourceLevelsEnabled
 
 if not dailyGapRequestEnabled
     dailyGapUnavailableReason := "daily gaps disabled"
-else if na(sourceDailyGaps)
-    dailyGapUnavailableReason := "request returned na"
+else if inScalpRTHSession and not dailyGapUsingCurrentSessionCache
+    dailyGapUnavailableReason := "session cache missing"
+else if not inScalpRTHSession
+    dailyGapUnavailableReason := "waiting for RTH cache"
 else if sourceDailyGapCount == 0
     if requestedSourceDailyGapCount == 0
-        dailyGapUnavailableReason := "active request returned 0"
+        dailyGapUnavailableReason := "session request returned 0"
     else if lastFreshRequestedSourceDailyGapCount == 0
-        dailyGapUnavailableReason := "last active request returned 0"
+        dailyGapUnavailableReason := "last session request returned 0"
     else if sourceDailyGapParseFailCount > 0
         dailyGapUnavailableReason := "raw record parse failed"
     else if sourceDailyGapInvalidPriceCount > 0
@@ -1672,6 +1721,34 @@ shortAnyEntryLevelTouched = not na(shortMostKeyTouchedLevelPrice)
 longMostKeyTouchedLevelBroken = longAnyEntryLevelTouched and scalpSignalClose > longMostKeyTouchedLevelPrice
 shortMostKeyTouchedLevelBroken = shortAnyEntryLevelTouched and scalpSignalClose < shortMostKeyTouchedLevelPrice
 
+bool longAnyTouchedLevelFailedCloseBeyond = false
+bool shortAnyTouchedLevelFailedCloseBeyond = false
+if useExpandedScalpLevels and array.size(swingLevelPrices) > 0
+    for touchedLevelIndex = 0 to array.size(swingLevelPrices) - 1
+        float touchedLevelPrice = array.get(swingLevelPrices, touchedLevelIndex)
+        bool touchedLevelRequiresCloseBeyond = array.get(swingLevelCloseBeyondRequired, touchedLevelIndex)
+        longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(touchedLevelRequiresCloseBeyond, touchedLevelPrice, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+        shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(touchedLevelRequiresCloseBeyond, touchedLevelPrice, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(usePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(usePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(useDailyOpenLevel, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(usePremarketHighLevel, effectivePremarketHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(usePremarketLowLevel, effectivePremarketLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(usePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(usePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(useDailyOpenLevel, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(usePremarketHighLevel, effectivePremarketHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(usePremarketLowLevel, effectivePremarketLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+
+longAllTouchedLevelsClosedBeyond = not longAnyTouchedLevelFailedCloseBeyond
+shortAllTouchedLevelsClosedBeyond = not shortAnyTouchedLevelFailedCloseBeyond
+
 longSelectedLevelPrice = longMostKeyTouchedLevelBroken ? longMostKeyTouchedLevelPrice : na
 longSelectedLevelName = longMostKeyTouchedLevelBroken ? longMostKeyTouchedLevelName : "N/A"
 longSelectedLevelTouchedCurrent = longMostKeyTouchedLevelBroken and longMostKeyTouchedLevelCurrent
@@ -1692,8 +1769,8 @@ shortLevelEntryRetracementOk = not shortLevelEntryRequired or (not na(shortLevel
 // ===================== Scalp Setup Qualification Logic =====================
 // Level setups reuse the enabled scalp entry level checks above. A selected
 // level only exists after the signal or prior bar qualifies and the signal closes beyond it.
-longLevelBreakSetup = longMostKeyTouchedLevelBroken and longLevelEntryRetracementOk
-shortLevelBreakSetup = shortMostKeyTouchedLevelBroken and shortLevelEntryRetracementOk
+longLevelBreakSetup = longMostKeyTouchedLevelBroken and longAllTouchedLevelsClosedBeyond and longLevelEntryRetracementOk
+shortLevelBreakSetup = shortMostKeyTouchedLevelBroken and shortAllTouchedLevelsClosedBeyond and shortLevelEntryRetracementOk
 
 longPullbackBreak = not na(low[1]) and low < low[1]
 shortPullbackBreak = not na(high[1]) and high > high[1]
@@ -1957,12 +2034,23 @@ f_buildCompactChartLabel(_direction, _compactSignalText, _selectedLevelName, _en
 f_addAlertChartLabel(_price, _text, _style, _color) =>
     label.new(bar_index, _price, _text, style=_style, textcolor=color.white, color=_color, size=showCompactAlertLabels ? size.small : size.tiny)
 
-if showHistoricalAlertLabels and effectiveBullScalpAlert
-    string bullChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bullAlertLabelTitle, bullCompactSignalText, longSelectedLevelText, longEntryPrice, longStopPrice, longTargetPrice, longTargetTypeText, longTargetRR, longContracts) : f_buildMarkerChartLabel(bullAlertLabelTitle, bullCompactSignalText, longSelectedLevelText)
-    f_addAlertChartLabel(low, bullChartLabelText, label.style_label_up, color.new(color.lime, 0))
-else if showHistoricalAlertLabels and effectiveBearScalpAlert
-    string bearChartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(bearAlertLabelTitle, bearCompactSignalText, shortSelectedLevelText, shortEntryPrice, shortStopPrice, shortTargetPrice, shortTargetTypeText, shortTargetRR, shortContracts) : f_buildMarkerChartLabel(bearAlertLabelTitle, bearCompactSignalText, shortSelectedLevelText)
-    f_addAlertChartLabel(high, bearChartLabelText, label.style_label_down, color.new(color.red, 0))
+alertDirectionTitle = effectiveBullScalpAlert ? bullAlertLabelTitle : effectiveBearScalpAlert ? bearAlertLabelTitle : ""
+alertCompactSignalText = effectiveBullScalpAlert ? bullCompactSignalText : effectiveBearScalpAlert ? bearCompactSignalText : ""
+alertSelectedLevelName = effectiveBullScalpAlert ? longSelectedLevelText : effectiveBearScalpAlert ? shortSelectedLevelText : "N/A"
+alertEntryType = effectiveBullScalpAlert ? longEntryTypeText : effectiveBearScalpAlert ? shortEntryTypeText : "N/A"
+alertEntryPrice = effectiveBullScalpAlert ? longEntryPrice : effectiveBearScalpAlert ? shortEntryPrice : na
+alertStopPrice = effectiveBullScalpAlert ? longStopPrice : effectiveBearScalpAlert ? shortStopPrice : na
+alertTargetPrice = effectiveBullScalpAlert ? longTargetPrice : effectiveBearScalpAlert ? shortTargetPrice : na
+alertTargetType = effectiveBullScalpAlert ? longTargetTypeText : effectiveBearScalpAlert ? shortTargetTypeText : "N/A"
+alertTargetRR = effectiveBullScalpAlert ? longTargetRR : effectiveBearScalpAlert ? shortTargetRR : na
+alertContracts = effectiveBullScalpAlert ? longContracts : effectiveBearScalpAlert ? shortContracts : na
+alertLabelPrice = effectiveBullScalpAlert ? low : effectiveBearScalpAlert ? high : na
+alertLabelStyle = effectiveBullScalpAlert ? label.style_label_up : label.style_label_down
+alertLabelColor = effectiveBullScalpAlert ? color.new(color.lime, 0) : color.new(color.red, 0)
+
+if showHistoricalAlertLabels and (effectiveBullScalpAlert or effectiveBearScalpAlert)
+    string chartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName, alertEntryPrice, alertStopPrice, alertTargetPrice, alertTargetType, alertTargetRR, alertContracts) : f_buildMarkerChartLabel(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName)
+    f_addAlertChartLabel(alertLabelPrice, chartLabelText, alertLabelStyle, alertLabelColor)
 
 // ===================== Alert Message =====================
 f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _selectedLevelName, _orBiasText, _entryType, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _contracts) =>
@@ -1975,10 +2063,8 @@ f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _selectedLevelName
      "T " + f_priceText(_targetPrice) + " " + f_abbrevLevelName(_targetType) + "\n" +
      str.tostring(_contracts) + "ct | " + f_rrText(_targetRR)
 
-if effectiveBullScalpAlert
-    alert(f_buildScalpAlertMessage(bullAlertLabelTitle, bullCompactSignalText, longSelectedLevelText, orBiasText, longEntryTypeText, longEntryPrice, longStopPrice, longTargetPrice, longTargetTypeText, longTargetRR, longContracts), alert.freq_once_per_bar_close)
-else if effectiveBearScalpAlert
-    alert(f_buildScalpAlertMessage(bearAlertLabelTitle, bearCompactSignalText, shortSelectedLevelText, orBiasText, shortEntryTypeText, shortEntryPrice, shortStopPrice, shortTargetPrice, shortTargetTypeText, shortTargetRR, shortContracts), alert.freq_once_per_bar_close)
+if effectiveBullScalpAlert or effectiveBearScalpAlert
+    alert(f_buildScalpAlertMessage(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName, orBiasText, alertEntryType, alertEntryPrice, alertStopPrice, alertTargetPrice, alertTargetType, alertTargetRR, alertContracts), alert.freq_once_per_bar_close)
 
 plot(showOpeningRange ? openingRangeDisplayHigh : na, "15m Opening Range High", color=openingRangeHighColor, linewidth=1, style=plot.style_linebr)
 plot(showOpeningRange ? openingRangeDisplayLow : na, "15m Opening Range Low", color=openingRangeLowColor, linewidth=1, style=plot.style_linebr)
@@ -2070,6 +2156,10 @@ if barstate.islast
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conv Source Close", f_priceText(sourceConversionBase), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conv Ratio", f_numberText(currentConversionRatio), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Conversion Ready", f_boolText(swingCurrentPriceRatioReady), swingCurrentPriceRatioReady ? color.lime : color.red)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Source Cache Current", f_boolText(sourceSessionCacheCurrent), sourceSessionCacheCurrent ? color.lime : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Source Cache Date", f_dateKeyText(convertedSourceCacheSessionDateKey), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Source Cache Refresh", f_timeText(convertedSourceCacheLastRefreshTime), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Source Mid-Session Init", f_boolText(convertedSourceCacheInitializedMidSession), convertedSourceCacheInitializedMidSession ? color.orange : statusNeutralColor)
         if showGapRequestDiagnostics
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Gap Request Source", activeDailyGapSourceDebugText, statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Expected Source", expectedDailyGapSourceSymbol, statusNeutralColor)
@@ -2078,11 +2168,15 @@ if barstate.islast
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Active Timeframe", activeDailyGapTimeframe, statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Active Calc Bars", str.tostring(activeDailyGapCalcBarsCount), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Daily Gap Lookback", str.tostring(dailyGapLookback), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Gap calc_bars_count", str.tostring(activeDailyGapCalcBarsCount), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Raw Requested Gaps", str.tostring(requestedSourceDailyGapCount), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Last Active Raw Gaps", str.tostring(lastFreshRequestedSourceDailyGapCount), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Source Gaps", str.tostring(sourceDailyGapCount), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Cached Parsed Gaps", str.tostring(sourceDailyGapCount), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Current Date Key", f_dateKeyText(nySessionDateKey), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Gap Cache Current", f_boolText(dailyGapUsingCurrentSessionCache), dailyGapUsingCurrentSessionCache ? color.lime : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Gap Cache Date", f_dateKeyText(cachedSourceDailyGapSessionDateKey), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Gap Cache Refresh", f_timeText(cachedSourceDailyGapLastRefreshTime), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Gap Mid-Session Init", f_boolText(cachedSourceDailyGapInitializedMidSession), cachedSourceDailyGapInitializedMidSession ? color.orange : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Raw Requested Gaps", str.tostring(lastFreshRequestedSourceDailyGapCount), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Cached Parsed Gaps", str.tostring(cachedSourceDailyGapCount), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Active Session Gaps", str.tostring(sourceDailyGapCount), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Converted Gaps", str.tostring(dailyGapConvertedSuccessCount), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Displayed Gaps", str.tostring(displayedDailyGapCount), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Converted Gap Levels", str.tostring(swingDailyGapLevelsAdded), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Parse Fail Count", str.tostring(sourceDailyGapParseFailCount), statusNeutralColor)
@@ -2099,13 +2193,4 @@ if barstate.islast
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "First Conv High", f_priceText(firstValidConvertedGapHigh), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "First Conv Low", f_priceText(firstValidConvertedGapLow), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Gap Status", dailyGapUnavailableReason, (dailyGapUnavailableReason == "ready" or dailyGapUnavailableReason == "ready; display capped") ? color.lime : statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Active Request Count", str.tostring(requestedSourceDailyGapCount), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Gated Count", str.tostring(gatedDiagnosticGapCount), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Ungated Count", str.tostring(ungatedDiagnosticGapCount), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Ungated 600 Count", str.tostring(ungated600DiagnosticGapCount), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Explicit RTH Count", str.tostring(explicitRthDiagnosticGapCount), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Plain Symbol Count", str.tostring(plainSymbolDiagnosticGapCount), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "1440 Count", str.tostring(explicit1440DiagnosticGapCount), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "D Count", str.tostring(explicitDDiagnosticGapCount), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Active First Raw", currentFirstRawDailyGapRecord, statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Best Variant First Raw", bestDiagnosticFirstRawRecord, statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Session First Raw", currentFirstRawDailyGapRecord, statusNeutralColor)
