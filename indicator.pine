@@ -22,6 +22,7 @@ requireValidTarget       = input.bool(true, title="Require Valid Target", group=
 minTargetRR              = input.float(1.0, title="Scalp Minimum Target R:R", minval=0.25, step=0.05, group=groupCoreAlerts, tooltip="Minimum required reward-to-risk for scalp targets. Default is 1.0R. The only exception is the existing HOD/LOD edge exception.")
 
 // 02. Setup Filters
+requireFboSwingSweep = input.bool(false, title="Require FBO Swing Sweep", group=groupSetupFilters, tooltip="When enabled, failed breakout scalp setups must sweep a prior tracked 5m swing. When disabled, failed breakout setups only need the normal level-break, signal, pressure, risk, and target filters.")
 skipFiveBarExtension     = input.bool(true, title="Skip 5+ Bar Extension", group=groupSetupFilters)
 skipStrongMicrochannelExtension = input.bool(true, title="Skip 3+ Bar Strong Extension", group=groupSetupFilters)
 minLevelEntryRetracement = input.float(0.20, title="Minimum Level Entry Retracement", minval=0.0, maxval=0.5, step=0.05, group=groupSetupFilters)
@@ -237,9 +238,6 @@ f_dateKeyText(_dateKey) =>
 
 f_timeText(_time) =>
     na(_time) ? "N/A" : str.format_time(_time, "yyyy-MM-dd HH:mm", "America/New_York")
-
-f_orBiasText(_orBias) =>
-    _orBias == 1 ? "LONG" : _orBias == -1 ? "SHORT" : "NEUTRAL"
 
 f_abbrevLevelName(string _levelName) =>
     string normalized = str.replace_all(_levelName, "Level ", "")
@@ -1020,9 +1018,9 @@ if sourceLevelsEnabled
     // Expanded scalp calculations use the converted level arrays below. These keep
     // the current price ratio so scalp logic stays on converted SPY/QQQ levels.
     if useExpandedScalpLevels
-        f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevMonthHigh), "Previous Month High", 0, false, true)
-        f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevMonthLow), "Previous Month Low", 0, false, true)
-        f_addSwingLevel(f_convertSourceLevelToChart(sourceMonthOpen), "Current Month Open", 0, false, true)
+        f_addSwingLevelWithCloseBeyond(f_convertSourceLevelToChart(sourcePrevMonthHigh), "Previous Month High", 0, false, true, true)
+        f_addSwingLevelWithCloseBeyond(f_convertSourceLevelToChart(sourcePrevMonthLow), "Previous Month Low", 0, false, true, true)
+        f_addSwingLevelWithCloseBeyond(f_convertSourceLevelToChart(sourceMonthOpen), "Current Month Open", 0, false, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevWeekHigh), "Previous Week High", 1, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevWeekLow), "Previous Week Low", 1, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourceWeekOpen), "Current Week Open", 2, true, true)
@@ -1206,13 +1204,11 @@ if barstate.isconfirmed or barstate.islast
 var float autoOpeningRangeHigh = na
 var float autoOpeningRangeLow = na
 var bool openingRangeComplete = false
-var int orBias = 0
 
 if newScalpRTHSession
     autoOpeningRangeHigh := na
     autoOpeningRangeLow := na
     openingRangeComplete := false
-    orBias := 0
 
 if inOpeningRangeWindow
     autoOpeningRangeHigh := na(autoOpeningRangeHigh) ? high : math.max(autoOpeningRangeHigh, high)
@@ -1229,21 +1225,11 @@ openingRangeLevelsReady = openingRangeReady and (openingRangeComplete or (useMan
 openingRangeDisplayHigh = openingRangeLevelsReady ? openingRangeHigh : na
 openingRangeDisplayLow = openingRangeLevelsReady ? openingRangeLow : na
 
-if barstate.isconfirmed and openingRangeWindowElapsed and openingRangeLevelsReady
-    if close > openingRangeHigh
-        orBias := 1
-    else if close < openingRangeLow
-        orBias := -1
-
 longOrlReclaim = openingRangeLevelsReady and low <= openingRangeLow and close > openingRangeLow
 shortOrhReclaim = openingRangeLevelsReady and high >= openingRangeHigh and close < openingRangeHigh
 longOrhBreakout = openingRangeLevelsReady and close > openingRangeHigh
 shortOrlBreakdown = openingRangeLevelsReady and close < openingRangeLow
-longOpeningRangeAllowed = openingRangeLevelsReady and (longOrlReclaim or orBias == 1 or (orBias == 0 and longOrhBreakout))
-shortOpeningRangeAllowed = openingRangeLevelsReady and (shortOrhReclaim or orBias == -1 or (orBias == 0 and shortOrlBreakdown))
-
-orBiasText = f_orBiasText(orBias)
-openingRangeStatus = not openingRangeLevelsReady ? "Waiting" : orBias == 1 ? "Long Bias" : orBias == -1 ? "Short Bias" : "Neutral"
+openingRangeStatus = not openingRangeLevelsReady ? "Waiting" : "Complete"
 
 // ===================== Untested 5m Swing Target Tracking =====================
 int activeCurrentRTHDateKey = inScalpRTHSession ? currentRTHDateKey : na
@@ -1540,11 +1526,29 @@ bullPressurePass = (bullPressureA and not na(volume)) or (bullFallbackB and isBo
 bearPressurePass = (bearPressureA and not na(volume)) or (bearFallbackB and isBodyThreshold)
 isHighVolume = not na(volume) and volume > volume[1]
 
+bullSameColorHighVolumeContinuation =
+     isHighVolume and
+     isMostlyBody and
+     f_isBullBar(open, close) and
+     f_isBullBar(open[1], close[1])
+
+bearSameColorHighVolumeContinuation =
+     isHighVolume and
+     isMostlyBody and
+     f_isBearBar(open, close) and
+     f_isBearBar(open[1], close[1])
+
+bullDirectionalPressureOk =
+     bullPressurePass or bullSameColorHighVolumeContinuation
+
+bearDirectionalPressureOk =
+     bearPressurePass or bearSameColorHighVolumeContinuation
+
 bullSignalBase = sufficientVolumeAndVolatility and bullBarQuality
 bearSignalBase = sufficientVolumeAndVolatility and bearBarQuality
 
-bullSignalHighVol = bullSignalBase and isHighVolume
-bearSignalHighVol = bearSignalBase and isHighVolume
+bullSignalHighVol = bullSignalBase and isHighVolume and bullDirectionalPressureOk
+bearSignalHighVol = bearSignalBase and isHighVolume and bearDirectionalPressureOk
 bullSignalNormalVol = bullSignalBase and bullPressurePass and not isHighVolume and not onlyHighVolumeSignals
 bearSignalNormalVol = bearSignalBase and bearPressurePass and not isHighVolume and not onlyHighVolumeSignals
 
@@ -1695,6 +1699,27 @@ if bearScalpSetupTier and array.size(fboSwingHighPrices) > 0
 [shortGroup4AfterORHPrice, shortGroup4AfterORHName, shortGroup4AfterORHPriority, shortGroup4AfterORHCurrent, shortGroup4AfterORHFound] = f_pickShortQualifiedLevel(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, "ORH", 8, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [shortGroup4Price, shortGroup4Name, shortGroup4Priority, shortGroup4Current, shortGroup4Found] = f_pickShortQualifiedLevel(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, "ORL", 8, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, shortGroup4AfterORHPrice, shortGroup4AfterORHName, shortGroup4AfterORHPriority, shortGroup4AfterORHCurrent, shortGroup4AfterORHFound)
 
+// ORH is valid by itself for longs, and ORL is valid by itself for shorts.
+// Fading the opposite OR level is allowed only with another qualified entry level.
+bool longOpeningRangeHighTouchedForSignal = f_levelTouched(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh) or f_levelTouchedByPriorBar(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, low[1], high[1], priorBarBear)
+bool longOpeningRangeLowTouchedForSignal = f_levelTouched(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, scalpSignalLow, scalpSignalHigh) or f_levelTouchedByPriorBar(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, low[1], high[1], priorBarBear)
+bool shortOpeningRangeHighTouchedForSignal = f_levelTouched(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh) or f_levelTouchedByPriorBar(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, low[1], high[1], priorBarBull)
+bool shortOpeningRangeLowTouchedForSignal = f_levelTouched(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, scalpSignalLow, scalpSignalHigh) or f_levelTouchedByPriorBar(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, low[1], high[1], priorBarBull)
+bool longOpeningRangeHighQualified = longOpeningRangeHighTouchedForSignal and scalpSignalClose > openingRangeHigh
+bool longOpeningRangeLowQualified = longOpeningRangeLowTouchedForSignal and scalpSignalClose > openingRangeLow
+bool shortOpeningRangeHighQualified = shortOpeningRangeHighTouchedForSignal and scalpSignalClose < openingRangeHigh
+bool shortOpeningRangeLowQualified = shortOpeningRangeLowTouchedForSignal and scalpSignalClose < openingRangeLow
+bool longNonOpeningRangeEntryLevelQualified = longExpandedScalpLevelFound or longGroup1Found or longGroup2Found or longGroup3Found
+bool shortNonOpeningRangeEntryLevelQualified = shortExpandedScalpLevelFound or shortGroup1Found or shortGroup2Found or shortGroup3Found
+bool longOpeningRangeHighOnly = longOpeningRangeHighQualified and not longOpeningRangeLowQualified and not longNonOpeningRangeEntryLevelQualified
+bool longOpeningRangeLowOnly = longOpeningRangeLowQualified and not longOpeningRangeHighQualified and not longNonOpeningRangeEntryLevelQualified
+bool longOpeningRangeLowPlusAnotherLevel = longOpeningRangeLowQualified and (longOpeningRangeHighQualified or longNonOpeningRangeEntryLevelQualified)
+bool shortOpeningRangeLowOnly = shortOpeningRangeLowQualified and not shortOpeningRangeHighQualified and not shortNonOpeningRangeEntryLevelQualified
+bool shortOpeningRangeHighOnly = shortOpeningRangeHighQualified and not shortOpeningRangeLowQualified and not shortNonOpeningRangeEntryLevelQualified
+bool shortOpeningRangeHighPlusAnotherLevel = shortOpeningRangeHighQualified and (shortOpeningRangeLowQualified or shortNonOpeningRangeEntryLevelQualified)
+longOpeningRangeFilterPassed = not longOpeningRangeLowOnly
+shortOpeningRangeFilterPassed = not shortOpeningRangeHighOnly
+
 [longBestAfterExpandedPrice, longBestAfterExpandedName, longBestAfterExpandedPriority, longBestAfterExpandedCurrent, longBestAfterExpandedFound] = f_pickLongEntryCandidate(longExpandedScalpLevelPrice, longExpandedScalpLevelName, longExpandedScalpLevelPriority, longExpandedScalpLevelTouchedCurrent, longExpandedScalpLevelFound, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [longBestAfterGroup1Price, longBestAfterGroup1Name, longBestAfterGroup1Priority, longBestAfterGroup1Current, longBestAfterGroup1Found] = f_pickLongEntryCandidate(longGroup1Price, longGroup1Name, longGroup1Priority, longGroup1Current, longGroup1Found, longBestAfterExpandedPrice, longBestAfterExpandedName, longBestAfterExpandedPriority, longBestAfterExpandedCurrent, longBestAfterExpandedFound)
 [longBestAfterGroup2Price, longBestAfterGroup2Name, longBestAfterGroup2Priority, longBestAfterGroup2Current, longBestAfterGroup2Found] = f_pickLongEntryCandidate(longGroup2Price, longGroup2Name, longGroup2Priority, longGroup2Current, longGroup2Found, longBestAfterGroup1Price, longBestAfterGroup1Name, longBestAfterGroup1Priority, longBestAfterGroup1Current, longBestAfterGroup1Found)
@@ -1794,12 +1819,14 @@ shortExtendedSetup = shortFiveBarExtension or shortStrongMicrochannelExtension
 longExtendedSetupBlocked = longExtendedSetup and ((skipFiveBarExtension and longFiveBarExtension) or (skipStrongMicrochannelExtension and longStrongMicrochannelExtension))
 shortExtendedSetupBlocked = shortExtendedSetup and ((skipFiveBarExtension and shortFiveBarExtension) or (skipStrongMicrochannelExtension and shortStrongMicrochannelExtension))
 
-longFboLevelSetupQualified = longLevelBreakSetup and bullScalpSetupTier and alertSetupSignals and longScalpFboSweepQualified
+longFboSwingSweepFilterPassed = not requireFboSwingSweep or longScalpFboSweepQualified
+shortFboSwingSweepFilterPassed = not requireFboSwingSweep or shortScalpFboSweepQualified
+longFboLevelSetupQualified = longLevelBreakSetup and bullScalpSetupTier and alertSetupSignals and longFboSwingSweepFilterPassed
 longIgnitionLevelSetupQualified = longLevelBreakSetup and bullScalpIgnitionTier and alertIgnitionSignals
 longStrongIgnitionLevelSetupQualified = longLevelBreakSetup and bullScalpStrongIgnitionTier and alertStrongIgnitions
 longScalpSetupQualified = longFboLevelSetupQualified or longIgnitionLevelSetupQualified or longStrongIgnitionLevelSetupQualified
 
-shortFboLevelSetupQualified = shortLevelBreakSetup and bearScalpSetupTier and alertSetupSignals and shortScalpFboSweepQualified
+shortFboLevelSetupQualified = shortLevelBreakSetup and bearScalpSetupTier and alertSetupSignals and shortFboSwingSweepFilterPassed
 shortIgnitionLevelSetupQualified = shortLevelBreakSetup and bearScalpIgnitionTier and alertIgnitionSignals
 shortStrongIgnitionLevelSetupQualified = shortLevelBreakSetup and bearScalpStrongIgnitionTier and alertStrongIgnitions
 shortScalpSetupQualified = shortFboLevelSetupQualified or shortIgnitionLevelSetupQualified or shortStrongIgnitionLevelSetupQualified
@@ -1807,13 +1834,11 @@ shortScalpSetupQualified = shortFboLevelSetupQualified or shortIgnitionLevelSetu
 longSetupTextFull = longFboLevelSetupQualified ? "Failed Breakout" : longStrongIgnitionLevelSetupQualified ? "Strong Ignition" : longIgnitionLevelSetupQualified ? "Ignition" : longLevelBreakSetup ? "Level Break" : "None"
 shortSetupTextFull = shortFboLevelSetupQualified ? "Failed Breakout" : shortStrongIgnitionLevelSetupQualified ? "Strong Ignition" : shortIgnitionLevelSetupQualified ? "Ignition" : shortLevelBreakSetup ? "Level Break" : "None"
 
-orBiasContextText = orBias == 1 ? "OR Bias Long" : orBias == -1 ? "OR Bias Short" : "OR Bias Neutral"
 longSetupSourceText = longSelectedLevelTouchedCurrent ? "Direct Touch" : not na(longSelectedLevelPrice) ? "Prior-Bar Touch" : "N/A"
 shortSetupSourceText = shortSelectedLevelTouchedCurrent ? "Direct Touch" : not na(shortSelectedLevelPrice) ? "Prior-Bar Touch" : "N/A"
-longOrContextText = longOrlReclaim ? "ORL Reclaim" : longOrhBreakout ? "ORH Breakout" : orBiasContextText
-shortOrContextText = shortOrhReclaim ? "ORH Reclaim" : shortOrlBreakdown ? "ORL Breakdown" : orBiasContextText
-longStatusSetupSourceText = not longScalpSetupQualified ? "N/A" : longOrlReclaim ? "ORL Reclaim" : longOrhBreakout ? "ORH Breakout" : longSetupSourceText
-shortStatusSetupSourceText = not shortScalpSetupQualified ? "N/A" : shortOrhReclaim ? "ORH Reclaim" : shortOrlBreakdown ? "ORL Breakdown" : shortSetupSourceText
+openingRangeAlertText = openingRangeStatus
+longStatusSetupSourceText = not longScalpSetupQualified ? "N/A" : longOpeningRangeLowPlusAnotherLevel ? "ORL + Level" : longOpeningRangeLowOnly ? "ORL Only" : longOpeningRangeHighQualified ? "ORH" : longSetupSourceText
+shortStatusSetupSourceText = not shortScalpSetupQualified ? "N/A" : shortOpeningRangeHighPlusAnotherLevel ? "ORH + Level" : shortOpeningRangeHighOnly ? "ORH Only" : shortOpeningRangeLowQualified ? "ORL" : shortSetupSourceText
 
 // ===================== Scalp Entry / Stop / Risk Logic =====================
 longUsePriorityLevel = longLevelEntryRequired and longLevelEntryRetracementOk
@@ -2008,10 +2033,10 @@ longTargetTypeText = f_abbrevLevelName(longTargetType)
 shortTargetTypeText = f_abbrevLevelName(shortTargetType)
 
 // ===================== Alert Conditions =====================
-bullScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBullSignals and longOpeningRangeAllowed and bullScalpTierAllowed and longScalpSetupQualified and not longExtendedSetupBlocked and longRiskValid and longTargetFilterPassed
+bullScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBullSignals and longOpeningRangeFilterPassed and bullScalpTierAllowed and longScalpSetupQualified and not longExtendedSetupBlocked and longRiskValid and longTargetFilterPassed
 bullAlertLabelTitle = "LONG SCALP"
 
-bearScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBearSignals and shortOpeningRangeAllowed and bearScalpTierAllowed and shortScalpSetupQualified and not shortExtendedSetupBlocked and shortRiskValid and shortTargetFilterPassed
+bearScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBearSignals and shortOpeningRangeFilterPassed and bearScalpTierAllowed and shortScalpSetupQualified and not shortExtendedSetupBlocked and shortRiskValid and shortTargetFilterPassed
 bearAlertLabelTitle = "SHORT SCALP"
 
 effectiveBullScalpAlert = bullScalpAlert
@@ -2053,10 +2078,10 @@ if showHistoricalAlertLabels and (effectiveBullScalpAlert or effectiveBearScalpA
     f_addAlertChartLabel(alertLabelPrice, chartLabelText, alertLabelStyle, alertLabelColor)
 
 // ===================== Alert Message =====================
-f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _selectedLevelName, _orBiasText, _entryType, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _contracts) =>
+f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _selectedLevelName, _openingRangeText, _entryType, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _contracts) =>
     "PA ENGINE " + _directionTitle + "\n" +
      _compactSignalText + " | " + f_abbrevLevelName(_selectedLevelName) + "\n" +
-     "OR Bias: " + _orBiasText + "\n" +
+     "Opening Range: " + _openingRangeText + "\n" +
      syminfo.ticker + " " + timeframe.period + "\n\n" +
      "E " + f_priceText(_entryPrice) + " " + f_abbrevLevelName(_entryType) + "\n" +
      "S " + f_priceText(_stopPrice) + "\n" +
@@ -2064,7 +2089,7 @@ f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _selectedLevelName
      str.tostring(_contracts) + "ct | " + f_rrText(_targetRR)
 
 if effectiveBullScalpAlert or effectiveBearScalpAlert
-    alert(f_buildScalpAlertMessage(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName, orBiasText, alertEntryType, alertEntryPrice, alertStopPrice, alertTargetPrice, alertTargetType, alertTargetRR, alertContracts), alert.freq_once_per_bar_close)
+    alert(f_buildScalpAlertMessage(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName, openingRangeAlertText, alertEntryType, alertEntryPrice, alertStopPrice, alertTargetPrice, alertTargetType, alertTargetRR, alertContracts), alert.freq_once_per_bar_close)
 
 plot(showOpeningRange ? openingRangeDisplayHigh : na, "15m Opening Range High", color=openingRangeHighColor, linewidth=1, style=plot.style_linebr)
 plot(showOpeningRange ? openingRangeDisplayLow : na, "15m Opening Range Low", color=openingRangeLowColor, linewidth=1, style=plot.style_linebr)
@@ -2112,17 +2137,20 @@ if barstate.islast
     table.clear(scalpStatusTable, 0, 0, 1, 79)
     if showScalpStatusTable
         statusNeutralColor = color.rgb(220, 220, 220)
-        orBiasStatusColor = orBias == 1 ? color.lime : orBias == -1 ? color.red : statusNeutralColor
         alertSetupsTableText = alertScalpSetups ? "Scalp" : "Off"
         int scalpStatusRow = 0
         scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Opening Range", openingRangeStatus, statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "OR Bias", orBiasText, orBiasStatusColor)
+        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "OR Rule", "Confluence", statusNeutralColor)
         scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Converted Source", convertedLevelSourceSymbol, statusNeutralColor)
         if showDetailedLevelStatus
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORH", f_priceText(openingRangeDisplayHigh), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORL", f_priceText(openingRangeDisplayLow), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long OR Allowed", f_boolText(longOpeningRangeAllowed), longOpeningRangeAllowed ? color.lime : statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short OR Allowed", f_boolText(shortOpeningRangeAllowed), shortOpeningRangeAllowed ? color.red : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long OR Filter", f_boolText(longOpeningRangeFilterPassed), longOpeningRangeFilterPassed ? color.lime : color.red)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short OR Filter", f_boolText(shortOpeningRangeFilterPassed), shortOpeningRangeFilterPassed ? color.lime : color.red)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long ORL Only", f_boolText(longOpeningRangeLowOnly), longOpeningRangeLowOnly ? color.red : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long ORL + Level", f_boolText(longOpeningRangeLowPlusAnotherLevel), longOpeningRangeLowPlusAnotherLevel ? color.lime : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short ORH Only", f_boolText(shortOpeningRangeHighOnly), shortOpeningRangeHighOnly ? color.red : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short ORH + Level", f_boolText(shortOpeningRangeHighPlusAnotherLevel), shortOpeningRangeHighPlusAnotherLevel ? color.lime : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORL Reclaim", f_boolText(longOrlReclaim), longOrlReclaim ? color.lime : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORH Reclaim", f_boolText(shortOrhReclaim), shortOrhReclaim ? color.red : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Selected Long Level", longSelectedLevelText + " " + f_priceText(longSelectedLevelPrice), statusNeutralColor)
