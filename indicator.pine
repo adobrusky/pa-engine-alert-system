@@ -26,6 +26,8 @@ requireFboSwingSweep = input.bool(false, title="Require FBO Swing Sweep", group=
 skipFiveBarExtension     = input.bool(true, title="Skip 5+ Bar Extension", group=groupSetupFilters)
 skipStrongMicrochannelExtension = input.bool(true, title="Skip 3+ Bar Strong Extension", group=groupSetupFilters)
 minLevelEntryRetracement = input.float(0.20, title="Minimum Level Entry Retracement", minval=0.0, maxval=0.5, step=0.05, group=groupSetupFilters)
+requireDailyOpenBodyAcceptance = input.bool(true, title="Require Daily Open Body Acceptance", group=groupSetupFilters)
+dailyOpenBodyAcceptancePct = input.float(0.50, title="Daily Open Body Acceptance %", minval=0.0, maxval=1.0, step=0.05, group=groupSetupFilters)
 alertSetupSignals        = input.bool(true, title="Allow Setup Signals", group=groupSetupFilters)
 alertIgnitionSignals     = input.bool(true, title="Allow Ignition Signals", group=groupSetupFilters)
 alertStrongIgnitions     = input.bool(true, title="Allow Strong Ignitions", group=groupSetupFilters)
@@ -223,6 +225,9 @@ f_priceText(_price) =>
 
 f_numberText(_value) =>
     na(_value) ? "N/A" : str.tostring(_value, "#.##")
+
+f_pctText(_value) =>
+    na(_value) ? "N/A" : str.tostring(_value * 100.0, "#.##") + "%"
 
 f_pointsText(_value) =>
     na(_value) ? "N/A" : str.tostring(_value, "#.00")
@@ -1607,6 +1612,16 @@ scalpSignalClose = close
 scalpEntry50Raw = (scalpSignalHigh + scalpSignalLow) / 2.0
 longEntry50 = f_roundDownToScalpTick(scalpEntry50Raw)
 shortEntry50 = f_roundUpToScalpTick(scalpEntry50Raw)
+bodyTop = math.max(open, close)
+bodyBottom = math.min(open, close)
+realBodySize = bodyTop - bodyBottom
+dailyOpenTouchedCurrent = f_levelTouched(useDailyOpenLevel, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh)
+bodyAboveDailyOpen = realBodySize > 0 and dailyOpenTouchedCurrent ? math.min(math.max(bodyTop - effectiveDailyOpen, 0.0), realBodySize) : na
+bodyBelowDailyOpen = realBodySize > 0 and dailyOpenTouchedCurrent ? math.min(math.max(effectiveDailyOpen - bodyBottom, 0.0), realBodySize) : na
+bodyAboveDailyOpenPct = realBodySize > 0 and dailyOpenTouchedCurrent ? bodyAboveDailyOpen / realBodySize : na
+bodyBelowDailyOpenPct = realBodySize > 0 and dailyOpenTouchedCurrent ? bodyBelowDailyOpen / realBodySize : na
+longDailyOpenBodyAcceptancePassed = not requireDailyOpenBodyAcceptance or not dailyOpenTouchedCurrent or (realBodySize > 0 and not na(bodyAboveDailyOpenPct) and bodyAboveDailyOpenPct >= dailyOpenBodyAcceptancePct)
+shortDailyOpenBodyAcceptancePassed = not requireDailyOpenBodyAcceptance or not dailyOpenTouchedCurrent or (realBodySize > 0 and not na(bodyBelowDailyOpenPct) and bodyBelowDailyOpenPct >= dailyOpenBodyAcceptancePct)
 float noSelectedLevelPrice = na
 string noSelectedLevelName = "N/A"
 int noSelectedLevelPriority = 999
@@ -2033,10 +2048,10 @@ longTargetTypeText = f_abbrevLevelName(longTargetType)
 shortTargetTypeText = f_abbrevLevelName(shortTargetType)
 
 // ===================== Alert Conditions =====================
-bullScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBullSignals and longOpeningRangeFilterPassed and bullScalpTierAllowed and longScalpSetupQualified and not longExtendedSetupBlocked and longRiskValid and longTargetFilterPassed
+bullScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBullSignals and longOpeningRangeFilterPassed and bullScalpTierAllowed and longScalpSetupQualified and not longExtendedSetupBlocked and longDailyOpenBodyAcceptancePassed and longRiskValid and longTargetFilterPassed
 bullAlertLabelTitle = "LONG SCALP"
 
-bearScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBearSignals and shortOpeningRangeFilterPassed and bearScalpTierAllowed and shortScalpSetupQualified and not shortExtendedSetupBlocked and shortRiskValid and shortTargetFilterPassed
+bearScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBearSignals and shortOpeningRangeFilterPassed and bearScalpTierAllowed and shortScalpSetupQualified and not shortExtendedSetupBlocked and shortDailyOpenBodyAcceptancePassed and shortRiskValid and shortTargetFilterPassed
 bearAlertLabelTitle = "SHORT SCALP"
 
 effectiveBullScalpAlert = bullScalpAlert
@@ -2132,9 +2147,9 @@ f_addScalpStatusRow(table _statusTable, int _row, string _label, string _value, 
     table.cell(_statusTable, 1, _row, _value, text_color=_valueColor, text_size=size.small, text_halign=text.align_right)
     _row + 1
 
-var table scalpStatusTable = table.new(position.bottom_right, 2, 80, bgcolor=color.new(color.black, 85), border_width=0)
+var table scalpStatusTable = table.new(position.bottom_right, 2, 100, bgcolor=color.new(color.black, 85), border_width=0)
 if barstate.islast
-    table.clear(scalpStatusTable, 0, 0, 1, 79)
+    table.clear(scalpStatusTable, 0, 0, 1, 99)
     if showScalpStatusTable
         statusNeutralColor = color.rgb(220, 220, 220)
         alertSetupsTableText = alertScalpSetups ? "Scalp" : "Off"
@@ -2161,6 +2176,9 @@ if barstate.islast
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short Target", f_priceText(shortTargetPrice) + " " + shortTargetTypeText, shortTargetValid ? color.red : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long R:R", f_rrText(longTargetRR), longTargetValid ? color.lime : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short R:R", f_rrText(shortTargetRR), shortTargetValid ? color.red : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "OP Touched", f_boolText(dailyOpenTouchedCurrent), dailyOpenTouchedCurrent ? color.orange : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long OP Body", f_boolText(longDailyOpenBodyAcceptancePassed) + " " + f_pctText(bodyAboveDailyOpenPct), longDailyOpenBodyAcceptancePassed ? color.lime : color.red)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short OP Body", f_boolText(shortDailyOpenBodyAcceptancePassed) + " " + f_pctText(bodyBelowDailyOpenPct), shortDailyOpenBodyAcceptancePassed ? color.lime : color.red)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Alert Setups", alertSetupsTableText, statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Expanded Levels", f_boolText(useExpandedScalpLevels), useExpandedScalpLevels ? color.lime : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "PDH", f_priceText(effectivePrevDayHigh), statusNeutralColor)
