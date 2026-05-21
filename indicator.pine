@@ -49,8 +49,9 @@ premarketLowLevel                = input.float(0.0, title="Manual/Fallback PML L
 useOpeningRangeHighAsEntryLevel  = input.bool(true, title="Use ORH As Entry Level", group=groupScalpLevels)
 useOpeningRangeLowAsEntryLevel   = input.bool(true, title="Use ORL As Entry Level", group=groupScalpLevels)
 showAutoScalpLevels              = input.bool(true, title="Show Auto/Effective Scalp Levels", group=groupScalpLevels)
-showRawFuturesPrevDayLevels      = input.bool(false, title="Show Raw Futures PDH/PDL", group=groupScalpLevels, tooltip="Shows the raw chart/futures previous day high/low used by scalp logic. Off by default to avoid duplicating converted PDH/PDL.")
+showRawFuturesPrevDayLevels      = input.bool(false, title="Show Raw Futures PDH/PDL", group=groupScalpLevels, tooltip="Shows the raw chart/futures previous day high/low. In converted HTF trade mode these are display/debug only.")
 useExpandedScalpLevels           = input.bool(true, title="Use Expanded Converted Levels For Scalp Entries/Targets", group=groupScalpLevels)
+useConvertedHtfLevelsForTradeLogic = input.bool(true, title="Use Converted HTF Levels For Trade Logic", group=groupScalpLevels, tooltip="When enabled, converted SPY/QQQ-derived HTF levels are the only higher-timeframe levels used for entries, targets, close-beyond checks, and Daily Open confluence/acceptance. Futures-derived/manual HTF levels remain available for display/debug/fallback only.")
 allowWeeklyOpenAsEntry           = input.bool(false, title="Allow Weekly Open As Entry Level", group=groupScalpLevels)
 convertedLevelsSourceMode        = input.string("Auto From Ticker", title="Converted Levels Source Mode", options=["Auto From Ticker", "Manual Source"], group=groupScalpLevels)
 manualConvertedLevelsSourceSymbol = input.string("AMEX:SPY", title="Manual Converted Levels Source Symbol", group=groupScalpLevels)
@@ -724,7 +725,8 @@ defaultConvertedSourceTicker = tickerInput == "MES" ? ticker.new("AMEX", "SPY", 
 explicitDailyGapSourceTicker = tickerInput == "MES" ? ticker.new("AMEX", "SPY", "us_regular:23456") : ticker.new("NASDAQ", "QQQ", "us_regular:23456")
 explicitDailyGapPlainSymbol = tickerInput == "MES" ? "AMEX:SPY" : "NASDAQ:QQQ"
 expectedDailyGapSourceSymbol = tickerInput == "MES" ? "SPY" : "QQQ"
-sourceLevelsEnabled = useExpandedScalpLevels or showSwingLevels
+convertedHtfTradeLevelsEnabled = useConvertedHtfLevelsForTradeLogic
+sourceLevelsEnabled = convertedHtfTradeLevelsEnabled or showSwingLevels
 convertedLevelSourceSymbol = sourceLevelsEnabled ? (convertedLevelsSourceMode == "Manual Source" ? manualConvertedLevelsSourceSymbol : defaultConvertedSourceSymbol) : "None"
 convertedLevelSourceTicker = sourceLevelsEnabled ? (convertedLevelsSourceMode == "Manual Source" ? manualConvertedLevelsSourceSymbol : defaultConvertedSourceTicker) : ""
 sourceCloseForConversionNeeded = sourceLevelsEnabled
@@ -1021,22 +1023,23 @@ if sourceDailyGapCount > 0
                 firstValidConvertedGapLow := convertedGapLowForCount
 
 if sourceLevelsEnabled
-    // Expanded scalp calculations use the converted level arrays below. These keep
-    // the current price ratio so scalp logic stays on converted SPY/QQQ levels.
-    if useExpandedScalpLevels
-        f_addSwingLevelWithCloseBeyond(f_convertSourceLevelToChart(sourcePrevMonthHigh), "Previous Month High", 0, false, true, true)
-        f_addSwingLevelWithCloseBeyond(f_convertSourceLevelToChart(sourcePrevMonthLow), "Previous Month Low", 0, false, true, true)
-        f_addSwingLevelWithCloseBeyond(f_convertSourceLevelToChart(sourceMonthOpen), "Current Month Open", 0, false, true, true)
-        f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevWeekHigh), "Previous Week High", 1, true, true)
-        f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevWeekLow), "Previous Week Low", 1, true, true)
-        f_addSwingLevelWithCloseBeyond(f_convertSourceLevelToChart(sourceWeekOpen), "Current Week Open", 2, allowWeeklyOpenAsEntry, true, true)
+    // Converted trade calculations use the level arrays below. These keep the
+    // current price ratio so scalp logic stays on converted SPY/QQQ levels.
+    if convertedHtfTradeLevelsEnabled
+        if useExpandedScalpLevels
+            f_addSwingLevelWithCloseBeyond(f_convertSourceLevelToChart(sourcePrevMonthHigh), "Previous Month High", 0, false, true, true)
+            f_addSwingLevelWithCloseBeyond(f_convertSourceLevelToChart(sourcePrevMonthLow), "Previous Month Low", 0, false, true, true)
+            f_addSwingLevelWithCloseBeyond(f_convertSourceLevelToChart(sourceMonthOpen), "Current Month Open", 0, false, true, true)
+            f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevWeekHigh), "Previous Week High", 1, true, true)
+            f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevWeekLow), "Previous Week Low", 1, true, true)
+            f_addSwingLevelWithCloseBeyond(f_convertSourceLevelToChart(sourceWeekOpen), "Current Week Open", 2, allowWeeklyOpenAsEntry, true, true)
         if usePrevDayHighLevel
             f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevDayHigh), "Previous Day High", 4, true, true)
         if usePrevDayLowLevel
             f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevDayLow), "Previous Day Low", 4, true, true)
         if useDailyOpenLevel
             f_addSwingLevelWithCloseBeyond(f_convertSourceLevelToChart(sourceDayOpen), "Current Day Open", 6, false, true, true)
-        if sourceDailyGapCount > 0
+        if includeDailyGapsInConvertedLevels and sourceDailyGapCount > 0
             // Convert cached source gap boundaries to chart prices, then add the
             // daily gap end as entry/target eligible and the start as target only.
             for sourceGapIndex = 0 to sourceDailyGapCount - 1
@@ -1621,9 +1624,17 @@ scalpSignalClose = close
 scalpEntry50Raw = (scalpSignalHigh + scalpSignalLow) / 2.0
 longEntry50 = f_roundDownToScalpTick(scalpEntry50Raw)
 shortEntry50 = f_roundUpToScalpTick(scalpEntry50Raw)
-dailyOpenTouchedCurrent = f_levelTouched(useDailyOpenLevel, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh)
-rangeAboveDailyOpen = barRange > 0 and dailyOpenTouchedCurrent ? math.max(scalpSignalHigh - effectiveDailyOpen, 0.0) : na
-rangeBelowDailyOpen = barRange > 0 and dailyOpenTouchedCurrent ? math.max(effectiveDailyOpen - scalpSignalLow, 0.0) : na
+useDirectHtfFallbackLevels = not useConvertedHtfLevelsForTradeLogic
+useDirectTradePrevDayHighLevel = useDirectHtfFallbackLevels and usePrevDayHighLevel
+useDirectTradePrevDayLowLevel = useDirectHtfFallbackLevels and usePrevDayLowLevel
+useDirectTradeDailyOpenLevel = useDirectHtfFallbackLevels and useDailyOpenLevel
+convertedDailyOpenForConfluence = convertedHtfTradeLevelsEnabled and useDailyOpenLevel ? f_convertSourceLevelToChart(sourceDayOpen) : na
+convertedDailyOpenValid = useDailyOpenLevel and f_validSourcePrice(convertedDailyOpenForConfluence)
+activeTradeDailyOpen = useDailyOpenLevel ? (useConvertedHtfLevelsForTradeLogic ? (convertedDailyOpenValid ? convertedDailyOpenForConfluence : na) : effectiveDailyOpen) : na
+activeTradeDailyOpenValid = useDailyOpenLevel and f_validSourcePrice(activeTradeDailyOpen)
+dailyOpenTouchedCurrent = f_levelTouched(activeTradeDailyOpenValid, activeTradeDailyOpen, scalpSignalLow, scalpSignalHigh)
+rangeAboveDailyOpen = barRange > 0 and dailyOpenTouchedCurrent ? math.max(scalpSignalHigh - activeTradeDailyOpen, 0.0) : na
+rangeBelowDailyOpen = barRange > 0 and dailyOpenTouchedCurrent ? math.max(activeTradeDailyOpen - scalpSignalLow, 0.0) : na
 rangeAboveDailyOpenPct = barRange > 0 and dailyOpenTouchedCurrent ? math.min(rangeAboveDailyOpen / barRange, 1.0) : na
 rangeBelowDailyOpenPct = barRange > 0 and dailyOpenTouchedCurrent ? math.min(rangeBelowDailyOpen / barRange, 1.0) : na
 longDailyOpenBodyAcceptancePassed = not requireDailyOpenBodyAcceptance or not dailyOpenTouchedCurrent or (barRange > 0 and not na(rangeAboveDailyOpenPct) and rangeAboveDailyOpenPct >= dailyOpenBodyAcceptancePct)
@@ -1650,7 +1661,7 @@ bool shortExpandedScalpLevelFound = false
 priorBarBear = close[1] < open[1]
 priorBarBull = close[1] > open[1]
 
-if useExpandedScalpLevels and array.size(swingLevelPrices) > 0
+if convertedHtfTradeLevelsEnabled and array.size(swingLevelPrices) > 0
     for expandedEntryLevelIndex = 0 to array.size(swingLevelPrices) - 1
         float expandedEntryLevelPrice = array.get(swingLevelPrices, expandedEntryLevelIndex)
         string expandedEntryLevelName = array.get(swingLevelNames, expandedEntryLevelIndex)
@@ -1704,8 +1715,8 @@ if bearScalpSetupTier and array.size(fboSwingHighPrices) > 0
             shortScalpFboSweepQualified := true
             shortScalpFboSweepPrice := fboSwingHighPrice
 
-[longGroup1AfterPDHPrice, longGroup1AfterPDHName, longGroup1AfterPDHPriority, longGroup1AfterPDHCurrent, longGroup1AfterPDHFound] = f_pickLongQualifiedLevel(usePrevDayHighLevel, effectivePrevDayHigh, "PDH", 4, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
-[longGroup1Price, longGroup1Name, longGroup1Priority, longGroup1Current, longGroup1Found] = f_pickLongQualifiedLevel(usePrevDayLowLevel, effectivePrevDayLow, "PDL", 4, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, longGroup1AfterPDHPrice, longGroup1AfterPDHName, longGroup1AfterPDHPriority, longGroup1AfterPDHCurrent, longGroup1AfterPDHFound)
+[longGroup1AfterPDHPrice, longGroup1AfterPDHName, longGroup1AfterPDHPriority, longGroup1AfterPDHCurrent, longGroup1AfterPDHFound] = f_pickLongQualifiedLevel(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, "PDH", 4, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
+[longGroup1Price, longGroup1Name, longGroup1Priority, longGroup1Current, longGroup1Found] = f_pickLongQualifiedLevel(useDirectTradePrevDayLowLevel, effectivePrevDayLow, "PDL", 4, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, longGroup1AfterPDHPrice, longGroup1AfterPDHName, longGroup1AfterPDHPriority, longGroup1AfterPDHCurrent, longGroup1AfterPDHFound)
 // Daily Open is target/confluence only, so it is intentionally disabled as a selectable entry.
 [longGroup2Price, longGroup2Name, longGroup2Priority, longGroup2Current, longGroup2Found] = f_pickLongQualifiedLevel(false, effectiveDailyOpen, "OP", 6, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [longGroup3AfterPMHPrice, longGroup3AfterPMHName, longGroup3AfterPMHPriority, longGroup3AfterPMHCurrent, longGroup3AfterPMHFound] = f_pickLongQualifiedLevel(usePremarketHighLevel, effectivePremarketHigh, "PMH", 7, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
@@ -1713,21 +1724,18 @@ if bearScalpSetupTier and array.size(fboSwingHighPrices) > 0
 [longGroup4AfterORHPrice, longGroup4AfterORHName, longGroup4AfterORHPriority, longGroup4AfterORHCurrent, longGroup4AfterORHFound] = f_pickLongQualifiedLevel(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, "ORH", 8, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [longGroup4Price, longGroup4Name, longGroup4Priority, longGroup4Current, longGroup4Found] = f_pickLongQualifiedLevel(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, "ORL", 8, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, longGroup4AfterORHPrice, longGroup4AfterORHName, longGroup4AfterORHPriority, longGroup4AfterORHCurrent, longGroup4AfterORHFound)
 
-[shortGroup1AfterPDHPrice, shortGroup1AfterPDHName, shortGroup1AfterPDHPriority, shortGroup1AfterPDHCurrent, shortGroup1AfterPDHFound] = f_pickShortQualifiedLevel(usePrevDayHighLevel, effectivePrevDayHigh, "PDH", 4, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
-[shortGroup1Price, shortGroup1Name, shortGroup1Priority, shortGroup1Current, shortGroup1Found] = f_pickShortQualifiedLevel(usePrevDayLowLevel, effectivePrevDayLow, "PDL", 4, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, shortGroup1AfterPDHPrice, shortGroup1AfterPDHName, shortGroup1AfterPDHPriority, shortGroup1AfterPDHCurrent, shortGroup1AfterPDHFound)
+[shortGroup1AfterPDHPrice, shortGroup1AfterPDHName, shortGroup1AfterPDHPriority, shortGroup1AfterPDHCurrent, shortGroup1AfterPDHFound] = f_pickShortQualifiedLevel(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, "PDH", 4, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
+[shortGroup1Price, shortGroup1Name, shortGroup1Priority, shortGroup1Current, shortGroup1Found] = f_pickShortQualifiedLevel(useDirectTradePrevDayLowLevel, effectivePrevDayLow, "PDL", 4, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, shortGroup1AfterPDHPrice, shortGroup1AfterPDHName, shortGroup1AfterPDHPriority, shortGroup1AfterPDHCurrent, shortGroup1AfterPDHFound)
 [shortGroup2Price, shortGroup2Name, shortGroup2Priority, shortGroup2Current, shortGroup2Found] = f_pickShortQualifiedLevel(false, effectiveDailyOpen, "OP", 6, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [shortGroup3AfterPMHPrice, shortGroup3AfterPMHName, shortGroup3AfterPMHPriority, shortGroup3AfterPMHCurrent, shortGroup3AfterPMHFound] = f_pickShortQualifiedLevel(usePremarketHighLevel, effectivePremarketHigh, "PMH", 7, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [shortGroup3Price, shortGroup3Name, shortGroup3Priority, shortGroup3Current, shortGroup3Found] = f_pickShortQualifiedLevel(usePremarketLowLevel, effectivePremarketLow, "PML", 7, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, shortGroup3AfterPMHPrice, shortGroup3AfterPMHName, shortGroup3AfterPMHPriority, shortGroup3AfterPMHCurrent, shortGroup3AfterPMHFound)
 [shortGroup4AfterORHPrice, shortGroup4AfterORHName, shortGroup4AfterORHPriority, shortGroup4AfterORHCurrent, shortGroup4AfterORHFound] = f_pickShortQualifiedLevel(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, "ORH", 8, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [shortGroup4Price, shortGroup4Name, shortGroup4Priority, shortGroup4Current, shortGroup4Found] = f_pickShortQualifiedLevel(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, "ORL", 8, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, shortGroup4AfterORHPrice, shortGroup4AfterORHName, shortGroup4AfterORHPriority, shortGroup4AfterORHCurrent, shortGroup4AfterORHFound)
 
-convertedDailyOpenForConfluence = useExpandedScalpLevels and useDailyOpenLevel ? f_convertSourceLevelToChart(sourceDayOpen) : na
-longDailyOpenConfluenceQualified = f_levelTouched(useDailyOpenLevel, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh) and scalpSignalClose > effectiveDailyOpen
-shortDailyOpenConfluenceQualified = f_levelTouched(useDailyOpenLevel, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh) and scalpSignalClose < effectiveDailyOpen
-longConvertedDailyOpenConfluenceQualified = f_levelTouched(useExpandedScalpLevels and useDailyOpenLevel, convertedDailyOpenForConfluence, scalpSignalLow, scalpSignalHigh) and scalpSignalClose > convertedDailyOpenForConfluence
-shortConvertedDailyOpenConfluenceQualified = f_levelTouched(useExpandedScalpLevels and useDailyOpenLevel, convertedDailyOpenForConfluence, scalpSignalLow, scalpSignalHigh) and scalpSignalClose < convertedDailyOpenForConfluence
-longDailyOpenAnyConfluenceQualified = longDailyOpenConfluenceQualified or longConvertedDailyOpenConfluenceQualified
-shortDailyOpenAnyConfluenceQualified = shortDailyOpenConfluenceQualified or shortConvertedDailyOpenConfluenceQualified
+longDailyOpenConfluenceQualified = f_levelTouched(activeTradeDailyOpenValid, activeTradeDailyOpen, scalpSignalLow, scalpSignalHigh) and scalpSignalClose > activeTradeDailyOpen
+shortDailyOpenConfluenceQualified = f_levelTouched(activeTradeDailyOpenValid, activeTradeDailyOpen, scalpSignalLow, scalpSignalHigh) and scalpSignalClose < activeTradeDailyOpen
+longDailyOpenAnyConfluenceQualified = longDailyOpenConfluenceQualified
+shortDailyOpenAnyConfluenceQualified = shortDailyOpenConfluenceQualified
 
 // ORH is valid by itself for longs, and ORL is valid by itself for shorts.
 // Fading the opposite OR level is allowed only with another qualified entry/confluence level.
@@ -1780,24 +1788,24 @@ shortMostKeyTouchedLevelBroken = shortAnyEntryLevelTouched and scalpSignalClose 
 
 bool longAnyTouchedLevelFailedCloseBeyond = false
 bool shortAnyTouchedLevelFailedCloseBeyond = false
-if useExpandedScalpLevels and array.size(swingLevelPrices) > 0
+if convertedHtfTradeLevelsEnabled and array.size(swingLevelPrices) > 0
     for touchedLevelIndex = 0 to array.size(swingLevelPrices) - 1
         float touchedLevelPrice = array.get(swingLevelPrices, touchedLevelIndex)
         bool touchedLevelRequiresCloseBeyond = array.get(swingLevelCloseBeyondRequired, touchedLevelIndex)
         longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(touchedLevelRequiresCloseBeyond, touchedLevelPrice, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
         shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(touchedLevelRequiresCloseBeyond, touchedLevelPrice, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
 
-longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(usePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
-longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(usePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
-longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(useDailyOpenLevel, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(useDirectTradePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(useDirectTradeDailyOpenLevel, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
 longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(usePremarketHighLevel, effectivePremarketHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
 longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(usePremarketLowLevel, effectivePremarketLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
 longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
 longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
 
-shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(usePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
-shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(usePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
-shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(useDailyOpenLevel, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(useDirectTradePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(useDirectTradeDailyOpenLevel, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
 shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(usePremarketHighLevel, effectivePremarketHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
 shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(usePremarketLowLevel, effectivePremarketLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
 shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
@@ -1911,7 +1919,7 @@ string longTargetType = noTargetType
 float longTargetRR = noTargetRR
 int longTargetPriority = noTargetPriority
 
-if useExpandedScalpLevels and array.size(swingLevelPrices) > 0
+if convertedHtfTradeLevelsEnabled and array.size(swingLevelPrices) > 0
     for expandedLongTargetIndex = 0 to array.size(swingLevelPrices) - 1
         float expandedLongTargetPrice = array.get(swingLevelPrices, expandedLongTargetIndex)
         string expandedLongTargetName = array.get(swingLevelNames, expandedLongTargetIndex)
@@ -1924,19 +1932,19 @@ if useExpandedScalpLevels and array.size(swingLevelPrices) > 0
             longTargetRR := f_targetRRLong(expandedLongTargetPrice, longEntryPrice, longRiskPoints)
             longTargetPriority := expandedLongTargetPriority
 
-if usePrevDayHighLevel and f_longTargetQualifies(effectivePrevDayHigh, "Level PDH", longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectivePrevDayHigh, 4, longTargetPrice, longTargetPriority)
+if useDirectTradePrevDayHighLevel and f_longTargetQualifies(effectivePrevDayHigh, "Level PDH", longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectivePrevDayHigh, 4, longTargetPrice, longTargetPriority)
     longTargetPrice := effectivePrevDayHigh
     longTargetType := "Level PDH"
     longTargetRR := f_targetRRLong(effectivePrevDayHigh, longEntryPrice, longRiskPoints)
     longTargetPriority := 4
 
-if usePrevDayLowLevel and f_longTargetQualifies(effectivePrevDayLow, "Level PDL", longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectivePrevDayLow, 4, longTargetPrice, longTargetPriority)
+if useDirectTradePrevDayLowLevel and f_longTargetQualifies(effectivePrevDayLow, "Level PDL", longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectivePrevDayLow, 4, longTargetPrice, longTargetPriority)
     longTargetPrice := effectivePrevDayLow
     longTargetType := "Level PDL"
     longTargetRR := f_targetRRLong(effectivePrevDayLow, longEntryPrice, longRiskPoints)
     longTargetPriority := 4
 
-if useDailyOpenLevel and f_longTargetQualifies(effectiveDailyOpen, "Level OP", longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectiveDailyOpen, 6, longTargetPrice, longTargetPriority)
+if useDirectTradeDailyOpenLevel and f_longTargetQualifies(effectiveDailyOpen, "Level OP", longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectiveDailyOpen, 6, longTargetPrice, longTargetPriority)
     longTargetPrice := effectiveDailyOpen
     longTargetType := "Level OP"
     longTargetRR := f_targetRRLong(effectiveDailyOpen, longEntryPrice, longRiskPoints)
@@ -1989,7 +1997,7 @@ string shortTargetType = noTargetType
 float shortTargetRR = noTargetRR
 int shortTargetPriority = noTargetPriority
 
-if useExpandedScalpLevels and array.size(swingLevelPrices) > 0
+if convertedHtfTradeLevelsEnabled and array.size(swingLevelPrices) > 0
     for expandedShortTargetIndex = 0 to array.size(swingLevelPrices) - 1
         float expandedShortTargetPrice = array.get(swingLevelPrices, expandedShortTargetIndex)
         string expandedShortTargetName = array.get(swingLevelNames, expandedShortTargetIndex)
@@ -2002,19 +2010,19 @@ if useExpandedScalpLevels and array.size(swingLevelPrices) > 0
             shortTargetRR := f_targetRRShort(expandedShortTargetPrice, shortEntryPrice, shortRiskPoints)
             shortTargetPriority := expandedShortTargetPriority
 
-if usePrevDayHighLevel and f_shortTargetQualifies(effectivePrevDayHigh, "Level PDH", shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectivePrevDayHigh, 4, shortTargetPrice, shortTargetPriority)
+if useDirectTradePrevDayHighLevel and f_shortTargetQualifies(effectivePrevDayHigh, "Level PDH", shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectivePrevDayHigh, 4, shortTargetPrice, shortTargetPriority)
     shortTargetPrice := effectivePrevDayHigh
     shortTargetType := "Level PDH"
     shortTargetRR := f_targetRRShort(effectivePrevDayHigh, shortEntryPrice, shortRiskPoints)
     shortTargetPriority := 4
 
-if usePrevDayLowLevel and f_shortTargetQualifies(effectivePrevDayLow, "Level PDL", shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectivePrevDayLow, 4, shortTargetPrice, shortTargetPriority)
+if useDirectTradePrevDayLowLevel and f_shortTargetQualifies(effectivePrevDayLow, "Level PDL", shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectivePrevDayLow, 4, shortTargetPrice, shortTargetPriority)
     shortTargetPrice := effectivePrevDayLow
     shortTargetType := "Level PDL"
     shortTargetRR := f_targetRRShort(effectivePrevDayLow, shortEntryPrice, shortRiskPoints)
     shortTargetPriority := 4
 
-if useDailyOpenLevel and f_shortTargetQualifies(effectiveDailyOpen, "Level OP", shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectiveDailyOpen, 6, shortTargetPrice, shortTargetPriority)
+if useDirectTradeDailyOpenLevel and f_shortTargetQualifies(effectiveDailyOpen, "Level OP", shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectiveDailyOpen, 6, shortTargetPrice, shortTargetPriority)
     shortTargetPrice := effectiveDailyOpen
     shortTargetType := "Level OP"
     shortTargetRR := f_targetRRShort(effectiveDailyOpen, shortEntryPrice, shortRiskPoints)
@@ -2137,7 +2145,7 @@ pdlPlot = showAutoScalpLevels and showRawFuturesPrevDayLevels and inScalpRTHSess
 
 plot(pdhPlot, "Auto/Effective PDH", color=majorHighLevelColor, linewidth=1, style=plot.style_linebr)
 plot(pdlPlot, "Auto/Effective PDL", color=majorLowLevelColor, linewidth=1, style=plot.style_linebr)
-plot(showAutoScalpLevels and effectiveDailyOpen > 0 ? effectiveDailyOpen : na, "Auto/Effective OP", color=openLevelColor, linewidth=1, style=plot.style_linebr)
+plot(showAutoScalpLevels and effectiveDailyOpen > 0 ? effectiveDailyOpen : na, "Raw/Effective OP", color=openLevelColor, linewidth=1, style=plot.style_linebr)
 plot(showAutoScalpLevels and effectivePremarketHigh > 0 ? effectivePremarketHigh : na, "Auto/Effective Premarket High", color=premarketLevelColor, linewidth=1, style=plot.style_linebr)
 plot(showAutoScalpLevels and effectivePremarketLow > 0 ? effectivePremarketLow : na, "Auto/Effective Premarket Low", color=premarketLevelColor, linewidth=1, style=plot.style_linebr)
 
@@ -2184,6 +2192,12 @@ if barstate.islast
         if showDetailedLevelStatus
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORH", f_priceText(openingRangeDisplayHigh), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORL", f_priceText(openingRangeDisplayLow), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Trade HTF Source", useConvertedHtfLevelsForTradeLogic ? "Converted" : "Direct/Fallback", useConvertedHtfLevelsForTradeLogic ? color.lime : color.orange)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Trade Daily Open", f_priceText(activeTradeDailyOpen), activeTradeDailyOpenValid ? statusNeutralColor : color.orange)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Converted DO Valid", f_boolText(convertedDailyOpenValid), convertedDailyOpenValid ? color.lime : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Raw DO", f_priceText(effectiveDailyOpen), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Converted Levels Count", str.tostring(array.size(swingLevelPrices)), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Direct HTF Fallback", f_boolText(useDirectHtfFallbackLevels), useDirectHtfFallbackLevels ? color.orange : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long OR Filter", f_boolText(longOpeningRangeFilterPassed), longOpeningRangeFilterPassed ? color.lime : color.red)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short OR Filter", f_boolText(shortOpeningRangeFilterPassed), shortOpeningRangeFilterPassed ? color.lime : color.red)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "OR Outside Close", f_boolText(openingRangeOutsideCloseSeen), openingRangeOutsideCloseSeen ? color.lime : statusNeutralColor)
