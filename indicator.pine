@@ -22,7 +22,7 @@ requireValidTarget       = input.bool(true, title="Require Valid Target", group=
 minTargetRR              = input.float(1.0, title="Scalp Minimum Target R:R", minval=0.25, step=0.05, group=groupCoreAlerts, tooltip="Minimum required reward-to-risk for scalp targets. Default is 1.0R. The only exception is the existing HOD/LOD edge exception.")
 
 // 02. Setup Filters
-requireFboSwingSweep = input.bool(false, title="Require FBO Swing Sweep", group=groupSetupFilters, tooltip="When enabled, failed breakout scalp setups must sweep a prior tracked 5m swing. When disabled, failed breakout setups only need the normal level-break, signal, pressure, risk, and target filters.")
+requireFboSwingSweep = input.bool(false, title="Require FBO Swing Sweep", group=groupSetupFilters, tooltip="When enabled, failed breakout scalp setups must sweep a prior tracked 5m swing. When disabled, failed breakout setups only need the normal level-break, signal, body-acceptance, risk, and target filters.")
 skipFiveBarExtension     = input.bool(true, title="Skip 5+ Bar Extension", group=groupSetupFilters)
 skipStrongMicrochannelExtension = input.bool(true, title="Skip 3+ Bar Strong Extension", group=groupSetupFilters)
 minLevelEntryRetracement = input.float(0.20, title="Minimum Level Entry Retracement", minval=0.0, maxval=0.5, step=0.05, group=groupSetupFilters)
@@ -51,6 +51,7 @@ useOpeningRangeLowAsEntryLevel   = input.bool(true, title="Use ORL As Entry Leve
 showAutoScalpLevels              = input.bool(true, title="Show Auto/Effective Scalp Levels", group=groupScalpLevels)
 showRawFuturesPrevDayLevels      = input.bool(false, title="Show Raw Futures PDH/PDL", group=groupScalpLevels, tooltip="Shows the raw chart/futures previous day high/low used by scalp logic. Off by default to avoid duplicating converted PDH/PDL.")
 useExpandedScalpLevels           = input.bool(true, title="Use Expanded Converted Levels For Scalp Entries/Targets", group=groupScalpLevels)
+allowWeeklyOpenAsEntry           = input.bool(false, title="Allow Weekly Open As Entry Level", group=groupScalpLevels)
 convertedLevelsSourceMode        = input.string("Auto From Ticker", title="Converted Levels Source Mode", options=["Auto From Ticker", "Manual Source"], group=groupScalpLevels)
 manualConvertedLevelsSourceSymbol = input.string("AMEX:SPY", title="Manual Converted Levels Source Symbol", group=groupScalpLevels)
 includeDailyGapsInConvertedLevels = input.bool(true, title="Include Daily Gaps In Converted Levels", group=groupScalpLevels)
@@ -84,8 +85,8 @@ acceptableVolatilityThreshold = input(0.33, title="Acceptable Volatility Thresho
 atrLength                     = input(14, title="ATR Length", group=groupSignalEngine, tooltip="Set the length of the ATR calculation.")
 
 // 08. Display / Visuals
-showBullSignals              = input.bool(true, title="Show Bull Signals", group=groupDisplay, tooltip="Enable bullish pressure signal markers and signal-overlap indications.")
-showBearSignals              = input.bool(true, title="Show Bear Signals", group=groupDisplay, tooltip="Enable bearish pressure signal markers and signal-overlap indications.")
+showBullSignals              = input.bool(true, title="Show Bull Signals", group=groupDisplay, tooltip="Enable bullish signal markers and signal-overlap indications.")
+showBearSignals              = input.bool(true, title="Show Bear Signals", group=groupDisplay, tooltip="Enable bearish signal markers and signal-overlap indications.")
 showSetupSignals             = input.bool(true, title="Setup Signals (Circle)", group=groupDisplay, tooltip="Setup-quality bar, not standalone actionable. Best used with failed-breakout context to identify potential reversals.")
 showIgnitionSignals          = input.bool(true, title="Ignition Signals (Triangle)", group=groupDisplay, tooltip="Actionable momentum signal that can stand on its own without requiring failed-breakout context.")
 showStrongIgnitions          = input.bool(true, title="Strong Ignitions (Diamond)", group=groupDisplay, tooltip="Strongest ignition signal; same concept as Ignition but with higher bar quality/strength. Useful for bias shifts through key levels.")
@@ -1028,7 +1029,7 @@ if sourceLevelsEnabled
         f_addSwingLevelWithCloseBeyond(f_convertSourceLevelToChart(sourceMonthOpen), "Current Month Open", 0, false, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevWeekHigh), "Previous Week High", 1, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevWeekLow), "Previous Week Low", 1, true, true)
-        f_addSwingLevel(f_convertSourceLevelToChart(sourceWeekOpen), "Current Week Open", 2, true, true)
+        f_addSwingLevelWithCloseBeyond(f_convertSourceLevelToChart(sourceWeekOpen), "Current Week Open", 2, allowWeeklyOpenAsEntry, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevDayHigh), "Previous Day High", 4, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevDayLow), "Previous Day Low", 4, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourceDayOpen), "Current Day Open", 6, true, true)
@@ -1549,11 +1550,16 @@ bullDirectionalPressureOk =
 bearDirectionalPressureOk =
      bearPressurePass or bearSameColorHighVolumeContinuation
 
+bullSignalSameColor = f_isBullBar(open, close)
+bearSignalSameColor = f_isBearBar(open, close)
+bullOppositeColorVolumePressureOk = bullSignalSameColor or bullPressureA
+bearOppositeColorVolumePressureOk = bearSignalSameColor or bearPressureA
+
 bullSignalBase = sufficientVolumeAndVolatility and bullBarQuality
 bearSignalBase = sufficientVolumeAndVolatility and bearBarQuality
 
-bullSignalHighVol = bullSignalBase and isHighVolume and bullDirectionalPressureOk
-bearSignalHighVol = bearSignalBase and isHighVolume and bearDirectionalPressureOk
+bullSignalHighVol = bullSignalBase and isHighVolume and bullOppositeColorVolumePressureOk
+bearSignalHighVol = bearSignalBase and isHighVolume and bearOppositeColorVolumePressureOk
 bullSignalNormalVol = bullSignalBase and bullPressurePass and not isHighVolume and not onlyHighVolumeSignals
 bearSignalNormalVol = bearSignalBase and bearPressurePass and not isHighVolume and not onlyHighVolumeSignals
 
@@ -1616,8 +1622,8 @@ bodyTop = math.max(open, close)
 bodyBottom = math.min(open, close)
 realBodySize = bodyTop - bodyBottom
 dailyOpenTouchedCurrent = f_levelTouched(useDailyOpenLevel, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh)
-bodyAboveDailyOpen = realBodySize > 0 and dailyOpenTouchedCurrent ? math.min(math.max(bodyTop - effectiveDailyOpen, 0.0), realBodySize) : na
-bodyBelowDailyOpen = realBodySize > 0 and dailyOpenTouchedCurrent ? math.min(math.max(effectiveDailyOpen - bodyBottom, 0.0), realBodySize) : na
+bodyAboveDailyOpen = realBodySize > 0 and dailyOpenTouchedCurrent ? math.min(math.max(bodyTop - math.max(bodyBottom, effectiveDailyOpen), 0.0), realBodySize) : na
+bodyBelowDailyOpen = realBodySize > 0 and dailyOpenTouchedCurrent ? math.min(math.max(math.min(bodyTop, effectiveDailyOpen) - bodyBottom, 0.0), realBodySize) : na
 bodyAboveDailyOpenPct = realBodySize > 0 and dailyOpenTouchedCurrent ? bodyAboveDailyOpen / realBodySize : na
 bodyBelowDailyOpenPct = realBodySize > 0 and dailyOpenTouchedCurrent ? bodyBelowDailyOpen / realBodySize : na
 longDailyOpenBodyAcceptancePassed = not requireDailyOpenBodyAcceptance or not dailyOpenTouchedCurrent or (realBodySize > 0 and not na(bodyAboveDailyOpenPct) and bodyAboveDailyOpenPct >= dailyOpenBodyAcceptancePct)
@@ -1797,6 +1803,13 @@ shortSelectedLevelPrice = shortMostKeyTouchedLevelBroken ? shortMostKeyTouchedLe
 shortSelectedLevelName = shortMostKeyTouchedLevelBroken ? shortMostKeyTouchedLevelName : "N/A"
 shortSelectedLevelTouchedCurrent = shortMostKeyTouchedLevelBroken and shortMostKeyTouchedLevelCurrent
 
+longBodyAboveSelected = not na(longSelectedLevelPrice) ? math.max(math.min(bodyTop, scalpSignalHigh) - math.max(bodyBottom, longSelectedLevelPrice), 0.0) : na
+longUpperWickAboveSelected = not na(longSelectedLevelPrice) ? math.max(scalpSignalHigh - math.max(bodyTop, longSelectedLevelPrice), 0.0) : na
+longSelectedLevelBodyAcceptancePassed = not na(longSelectedLevelPrice) and scalpSignalClose > longSelectedLevelPrice and longBodyAboveSelected > longUpperWickAboveSelected
+shortBodyBelowSelected = not na(shortSelectedLevelPrice) ? math.max(math.min(bodyTop, shortSelectedLevelPrice) - bodyBottom, 0.0) : na
+shortLowerWickBelowSelected = not na(shortSelectedLevelPrice) ? math.max(math.min(bodyBottom, shortSelectedLevelPrice) - scalpSignalLow, 0.0) : na
+shortSelectedLevelBodyAcceptancePassed = not na(shortSelectedLevelPrice) and scalpSignalClose < shortSelectedLevelPrice and shortBodyBelowSelected > shortLowerWickBelowSelected
+
 // Level-entry retracement validation only applies when the broken level would be the entry.
 levelEntryRange = scalpSignalHigh - scalpSignalLow
 longLevelEntryRequired = not na(longSelectedLevelPrice) and longSelectedLevelPrice > longEntry50 and longSelectedLevelPrice < scalpSignalClose
@@ -1809,8 +1822,8 @@ shortLevelEntryRetracementOk = not shortLevelEntryRequired or (not na(shortLevel
 // ===================== Scalp Setup Qualification Logic =====================
 // Level setups reuse the enabled scalp entry level checks above. A selected
 // level only exists after the signal or prior bar qualifies and the signal closes beyond it.
-longLevelBreakSetup = longMostKeyTouchedLevelBroken and longAllTouchedLevelsClosedBeyond and longLevelEntryRetracementOk
-shortLevelBreakSetup = shortMostKeyTouchedLevelBroken and shortAllTouchedLevelsClosedBeyond and shortLevelEntryRetracementOk
+longLevelBreakSetup = longMostKeyTouchedLevelBroken and longAllTouchedLevelsClosedBeyond and longLevelEntryRetracementOk and longSelectedLevelBodyAcceptancePassed
+shortLevelBreakSetup = shortMostKeyTouchedLevelBroken and shortAllTouchedLevelsClosedBeyond and shortLevelEntryRetracementOk and shortSelectedLevelBodyAcceptancePassed
 
 longPullbackBreak = not na(low[1]) and low < low[1]
 shortPullbackBreak = not na(high[1]) and high > high[1]
@@ -2170,6 +2183,11 @@ if barstate.islast
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORH Reclaim", f_boolText(shortOrhReclaim), shortOrhReclaim ? color.red : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Selected Long Level", longSelectedLevelText + " " + f_priceText(longSelectedLevelPrice), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Selected Short Level", shortSelectedLevelText + " " + f_priceText(shortSelectedLevelPrice), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long Sel Body OK", not na(longSelectedLevelPrice) ? f_boolText(longSelectedLevelBodyAcceptancePassed) : "N/A", na(longSelectedLevelPrice) ? statusNeutralColor : longSelectedLevelBodyAcceptancePassed ? color.lime : color.red)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long Body/Wick Sel", f_pointsText(longBodyAboveSelected) + " / " + f_pointsText(longUpperWickAboveSelected), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short Sel Body OK", not na(shortSelectedLevelPrice) ? f_boolText(shortSelectedLevelBodyAcceptancePassed) : "N/A", na(shortSelectedLevelPrice) ? statusNeutralColor : shortSelectedLevelBodyAcceptancePassed ? color.lime : color.red)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short Body/Wick Sel", f_pointsText(shortBodyBelowSelected) + " / " + f_pointsText(shortLowerWickBelowSelected), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "WO Entry", allowWeeklyOpenAsEntry ? "enabled" : "disabled", allowWeeklyOpenAsEntry ? color.orange : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long Setup Source", longStatusSetupSourceText, longScalpSetupQualified ? color.lime : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short Setup Source", shortStatusSetupSourceText, shortScalpSetupQualified ? color.red : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long Target", f_priceText(longTargetPrice) + " " + longTargetTypeText, longTargetValid ? color.lime : statusNeutralColor)
