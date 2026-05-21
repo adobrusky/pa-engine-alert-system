@@ -1030,9 +1030,12 @@ if sourceLevelsEnabled
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevWeekHigh), "Previous Week High", 1, true, true)
         f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevWeekLow), "Previous Week Low", 1, true, true)
         f_addSwingLevelWithCloseBeyond(f_convertSourceLevelToChart(sourceWeekOpen), "Current Week Open", 2, allowWeeklyOpenAsEntry, true, true)
-        f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevDayHigh), "Previous Day High", 4, true, true)
-        f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevDayLow), "Previous Day Low", 4, true, true)
-        f_addSwingLevel(f_convertSourceLevelToChart(sourceDayOpen), "Current Day Open", 6, true, true)
+        if usePrevDayHighLevel
+            f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevDayHigh), "Previous Day High", 4, true, true)
+        if usePrevDayLowLevel
+            f_addSwingLevel(f_convertSourceLevelToChart(sourcePrevDayLow), "Previous Day Low", 4, true, true)
+        if useDailyOpenLevel
+            f_addSwingLevelWithCloseBeyond(f_convertSourceLevelToChart(sourceDayOpen), "Current Day Open", 6, false, true, true)
         if sourceDailyGapCount > 0
             // Convert cached source gap boundaries to chart prices, then add the
             // daily gap end as entry/target eligible and the start as target only.
@@ -1210,11 +1213,13 @@ if barstate.isconfirmed or barstate.islast
 var float autoOpeningRangeHigh = na
 var float autoOpeningRangeLow = na
 var bool openingRangeComplete = false
+var bool openingRangeOutsideCloseSeen = false
 
 if newScalpRTHSession
     autoOpeningRangeHigh := na
     autoOpeningRangeLow := na
     openingRangeComplete := false
+    openingRangeOutsideCloseSeen := false
 
 if inOpeningRangeWindow
     autoOpeningRangeHigh := na(autoOpeningRangeHigh) ? high : math.max(autoOpeningRangeHigh, high)
@@ -1230,6 +1235,9 @@ openingRangeWindowElapsed = inScalpRTHSession and not inOpeningRangeWindow
 openingRangeLevelsReady = openingRangeReady and (openingRangeComplete or (useManualOpeningRangeFallback and openingRangeWindowElapsed))
 openingRangeDisplayHigh = openingRangeLevelsReady ? openingRangeHigh : na
 openingRangeDisplayLow = openingRangeLevelsReady ? openingRangeLow : na
+
+if openingRangeLevelsReady and barstate.isconfirmed and inScalpRTHSession and not inOpeningRangeWindow and (close > openingRangeHigh or close < openingRangeLow)
+    openingRangeOutsideCloseSeen := true
 
 longOrlReclaim = openingRangeLevelsReady and low <= openingRangeLow and close > openingRangeLow
 shortOrhReclaim = openingRangeLevelsReady and high >= openingRangeHigh and close < openingRangeHigh
@@ -1550,16 +1558,11 @@ bullDirectionalPressureOk =
 bearDirectionalPressureOk =
      bearPressurePass or bearSameColorHighVolumeContinuation
 
-bullSignalSameColor = f_isBullBar(open, close)
-bearSignalSameColor = f_isBearBar(open, close)
-bullOppositeColorVolumePressureOk = bullSignalSameColor or bullPressureA
-bearOppositeColorVolumePressureOk = bearSignalSameColor or bearPressureA
-
 bullSignalBase = sufficientVolumeAndVolatility and bullBarQuality
 bearSignalBase = sufficientVolumeAndVolatility and bearBarQuality
 
-bullSignalHighVol = bullSignalBase and isHighVolume and bullOppositeColorVolumePressureOk
-bearSignalHighVol = bearSignalBase and isHighVolume and bearOppositeColorVolumePressureOk
+bullSignalHighVol = bullSignalBase and isHighVolume
+bearSignalHighVol = bearSignalBase and isHighVolume
 bullSignalNormalVol = bullSignalBase and bullPressurePass and not isHighVolume and not onlyHighVolumeSignals
 bearSignalNormalVol = bearSignalBase and bearPressurePass and not isHighVolume and not onlyHighVolumeSignals
 
@@ -1618,16 +1621,13 @@ scalpSignalClose = close
 scalpEntry50Raw = (scalpSignalHigh + scalpSignalLow) / 2.0
 longEntry50 = f_roundDownToScalpTick(scalpEntry50Raw)
 shortEntry50 = f_roundUpToScalpTick(scalpEntry50Raw)
-bodyTop = math.max(open, close)
-bodyBottom = math.min(open, close)
-realBodySize = bodyTop - bodyBottom
 dailyOpenTouchedCurrent = f_levelTouched(useDailyOpenLevel, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh)
-bodyAboveDailyOpen = realBodySize > 0 and dailyOpenTouchedCurrent ? math.min(math.max(bodyTop - math.max(bodyBottom, effectiveDailyOpen), 0.0), realBodySize) : na
-bodyBelowDailyOpen = realBodySize > 0 and dailyOpenTouchedCurrent ? math.min(math.max(math.min(bodyTop, effectiveDailyOpen) - bodyBottom, 0.0), realBodySize) : na
-bodyAboveDailyOpenPct = realBodySize > 0 and dailyOpenTouchedCurrent ? bodyAboveDailyOpen / realBodySize : na
-bodyBelowDailyOpenPct = realBodySize > 0 and dailyOpenTouchedCurrent ? bodyBelowDailyOpen / realBodySize : na
-longDailyOpenBodyAcceptancePassed = not requireDailyOpenBodyAcceptance or not dailyOpenTouchedCurrent or (realBodySize > 0 and not na(bodyAboveDailyOpenPct) and bodyAboveDailyOpenPct >= dailyOpenBodyAcceptancePct)
-shortDailyOpenBodyAcceptancePassed = not requireDailyOpenBodyAcceptance or not dailyOpenTouchedCurrent or (realBodySize > 0 and not na(bodyBelowDailyOpenPct) and bodyBelowDailyOpenPct >= dailyOpenBodyAcceptancePct)
+rangeAboveDailyOpen = barRange > 0 and dailyOpenTouchedCurrent ? math.max(scalpSignalHigh - effectiveDailyOpen, 0.0) : na
+rangeBelowDailyOpen = barRange > 0 and dailyOpenTouchedCurrent ? math.max(effectiveDailyOpen - scalpSignalLow, 0.0) : na
+rangeAboveDailyOpenPct = barRange > 0 and dailyOpenTouchedCurrent ? math.min(rangeAboveDailyOpen / barRange, 1.0) : na
+rangeBelowDailyOpenPct = barRange > 0 and dailyOpenTouchedCurrent ? math.min(rangeBelowDailyOpen / barRange, 1.0) : na
+longDailyOpenBodyAcceptancePassed = not requireDailyOpenBodyAcceptance or not dailyOpenTouchedCurrent or (barRange > 0 and not na(rangeAboveDailyOpenPct) and rangeAboveDailyOpenPct >= dailyOpenBodyAcceptancePct)
+shortDailyOpenBodyAcceptancePassed = not requireDailyOpenBodyAcceptance or not dailyOpenTouchedCurrent or (barRange > 0 and not na(rangeBelowDailyOpenPct) and rangeBelowDailyOpenPct >= dailyOpenBodyAcceptancePct)
 float noSelectedLevelPrice = na
 string noSelectedLevelName = "N/A"
 int noSelectedLevelPriority = 999
@@ -1706,7 +1706,8 @@ if bearScalpSetupTier and array.size(fboSwingHighPrices) > 0
 
 [longGroup1AfterPDHPrice, longGroup1AfterPDHName, longGroup1AfterPDHPriority, longGroup1AfterPDHCurrent, longGroup1AfterPDHFound] = f_pickLongQualifiedLevel(usePrevDayHighLevel, effectivePrevDayHigh, "PDH", 4, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [longGroup1Price, longGroup1Name, longGroup1Priority, longGroup1Current, longGroup1Found] = f_pickLongQualifiedLevel(usePrevDayLowLevel, effectivePrevDayLow, "PDL", 4, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, longGroup1AfterPDHPrice, longGroup1AfterPDHName, longGroup1AfterPDHPriority, longGroup1AfterPDHCurrent, longGroup1AfterPDHFound)
-[longGroup2Price, longGroup2Name, longGroup2Priority, longGroup2Current, longGroup2Found] = f_pickLongQualifiedLevel(useDailyOpenLevel, effectiveDailyOpen, "OP", 6, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
+// Daily Open is target/confluence only, so it is intentionally disabled as a selectable entry.
+[longGroup2Price, longGroup2Name, longGroup2Priority, longGroup2Current, longGroup2Found] = f_pickLongQualifiedLevel(false, effectiveDailyOpen, "OP", 6, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [longGroup3AfterPMHPrice, longGroup3AfterPMHName, longGroup3AfterPMHPriority, longGroup3AfterPMHCurrent, longGroup3AfterPMHFound] = f_pickLongQualifiedLevel(usePremarketHighLevel, effectivePremarketHigh, "PMH", 7, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [longGroup3Price, longGroup3Name, longGroup3Priority, longGroup3Current, longGroup3Found] = f_pickLongQualifiedLevel(usePremarketLowLevel, effectivePremarketLow, "PML", 7, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, longGroup3AfterPMHPrice, longGroup3AfterPMHName, longGroup3AfterPMHPriority, longGroup3AfterPMHCurrent, longGroup3AfterPMHFound)
 [longGroup4AfterORHPrice, longGroup4AfterORHName, longGroup4AfterORHPriority, longGroup4AfterORHCurrent, longGroup4AfterORHFound] = f_pickLongQualifiedLevel(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, "ORH", 8, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
@@ -1714,14 +1715,22 @@ if bearScalpSetupTier and array.size(fboSwingHighPrices) > 0
 
 [shortGroup1AfterPDHPrice, shortGroup1AfterPDHName, shortGroup1AfterPDHPriority, shortGroup1AfterPDHCurrent, shortGroup1AfterPDHFound] = f_pickShortQualifiedLevel(usePrevDayHighLevel, effectivePrevDayHigh, "PDH", 4, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [shortGroup1Price, shortGroup1Name, shortGroup1Priority, shortGroup1Current, shortGroup1Found] = f_pickShortQualifiedLevel(usePrevDayLowLevel, effectivePrevDayLow, "PDL", 4, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, shortGroup1AfterPDHPrice, shortGroup1AfterPDHName, shortGroup1AfterPDHPriority, shortGroup1AfterPDHCurrent, shortGroup1AfterPDHFound)
-[shortGroup2Price, shortGroup2Name, shortGroup2Priority, shortGroup2Current, shortGroup2Found] = f_pickShortQualifiedLevel(useDailyOpenLevel, effectiveDailyOpen, "OP", 6, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
+[shortGroup2Price, shortGroup2Name, shortGroup2Priority, shortGroup2Current, shortGroup2Found] = f_pickShortQualifiedLevel(false, effectiveDailyOpen, "OP", 6, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [shortGroup3AfterPMHPrice, shortGroup3AfterPMHName, shortGroup3AfterPMHPriority, shortGroup3AfterPMHCurrent, shortGroup3AfterPMHFound] = f_pickShortQualifiedLevel(usePremarketHighLevel, effectivePremarketHigh, "PMH", 7, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [shortGroup3Price, shortGroup3Name, shortGroup3Priority, shortGroup3Current, shortGroup3Found] = f_pickShortQualifiedLevel(usePremarketLowLevel, effectivePremarketLow, "PML", 7, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, shortGroup3AfterPMHPrice, shortGroup3AfterPMHName, shortGroup3AfterPMHPriority, shortGroup3AfterPMHCurrent, shortGroup3AfterPMHFound)
 [shortGroup4AfterORHPrice, shortGroup4AfterORHName, shortGroup4AfterORHPriority, shortGroup4AfterORHCurrent, shortGroup4AfterORHFound] = f_pickShortQualifiedLevel(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, "ORH", 8, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [shortGroup4Price, shortGroup4Name, shortGroup4Priority, shortGroup4Current, shortGroup4Found] = f_pickShortQualifiedLevel(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, "ORL", 8, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, shortGroup4AfterORHPrice, shortGroup4AfterORHName, shortGroup4AfterORHPriority, shortGroup4AfterORHCurrent, shortGroup4AfterORHFound)
 
+convertedDailyOpenForConfluence = useExpandedScalpLevels and useDailyOpenLevel ? f_convertSourceLevelToChart(sourceDayOpen) : na
+longDailyOpenConfluenceQualified = f_levelTouched(useDailyOpenLevel, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh) and scalpSignalClose > effectiveDailyOpen
+shortDailyOpenConfluenceQualified = f_levelTouched(useDailyOpenLevel, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh) and scalpSignalClose < effectiveDailyOpen
+longConvertedDailyOpenConfluenceQualified = f_levelTouched(useExpandedScalpLevels and useDailyOpenLevel, convertedDailyOpenForConfluence, scalpSignalLow, scalpSignalHigh) and scalpSignalClose > convertedDailyOpenForConfluence
+shortConvertedDailyOpenConfluenceQualified = f_levelTouched(useExpandedScalpLevels and useDailyOpenLevel, convertedDailyOpenForConfluence, scalpSignalLow, scalpSignalHigh) and scalpSignalClose < convertedDailyOpenForConfluence
+longDailyOpenAnyConfluenceQualified = longDailyOpenConfluenceQualified or longConvertedDailyOpenConfluenceQualified
+shortDailyOpenAnyConfluenceQualified = shortDailyOpenConfluenceQualified or shortConvertedDailyOpenConfluenceQualified
+
 // ORH is valid by itself for longs, and ORL is valid by itself for shorts.
-// Fading the opposite OR level is allowed only with another qualified entry level.
+// Fading the opposite OR level is allowed only with another qualified entry/confluence level.
 bool longOpeningRangeHighTouchedForSignal = f_levelTouched(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh) or f_levelTouchedByPriorBar(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, low[1], high[1], priorBarBear)
 bool longOpeningRangeLowTouchedForSignal = f_levelTouched(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, scalpSignalLow, scalpSignalHigh) or f_levelTouchedByPriorBar(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, low[1], high[1], priorBarBear)
 bool shortOpeningRangeHighTouchedForSignal = f_levelTouched(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh) or f_levelTouchedByPriorBar(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, low[1], high[1], priorBarBull)
@@ -1730,8 +1739,8 @@ bool longOpeningRangeHighQualified = longOpeningRangeHighTouchedForSignal and sc
 bool longOpeningRangeLowQualified = longOpeningRangeLowTouchedForSignal and scalpSignalClose > openingRangeLow
 bool shortOpeningRangeHighQualified = shortOpeningRangeHighTouchedForSignal and scalpSignalClose < openingRangeHigh
 bool shortOpeningRangeLowQualified = shortOpeningRangeLowTouchedForSignal and scalpSignalClose < openingRangeLow
-bool longNonOpeningRangeEntryLevelQualified = longExpandedScalpLevelFound or longGroup1Found or longGroup2Found or longGroup3Found
-bool shortNonOpeningRangeEntryLevelQualified = shortExpandedScalpLevelFound or shortGroup1Found or shortGroup2Found or shortGroup3Found
+bool longNonOpeningRangeEntryLevelQualified = longExpandedScalpLevelFound or longGroup1Found or longGroup3Found or longDailyOpenAnyConfluenceQualified
+bool shortNonOpeningRangeEntryLevelQualified = shortExpandedScalpLevelFound or shortGroup1Found or shortGroup3Found or shortDailyOpenAnyConfluenceQualified
 bool longOpeningRangeHighOnly = longOpeningRangeHighQualified and not longOpeningRangeLowQualified and not longNonOpeningRangeEntryLevelQualified
 bool longOpeningRangeLowOnly = longOpeningRangeLowQualified and not longOpeningRangeHighQualified and not longNonOpeningRangeEntryLevelQualified
 bool longOpeningRangeLowPlusAnotherLevel = longOpeningRangeLowQualified and (longOpeningRangeHighQualified or longNonOpeningRangeEntryLevelQualified)
@@ -1740,6 +1749,8 @@ bool shortOpeningRangeHighOnly = shortOpeningRangeHighQualified and not shortOpe
 bool shortOpeningRangeHighPlusAnotherLevel = shortOpeningRangeHighQualified and (shortOpeningRangeLowQualified or shortNonOpeningRangeEntryLevelQualified)
 longOpeningRangeFilterPassed = not longOpeningRangeLowOnly
 shortOpeningRangeFilterPassed = not shortOpeningRangeHighOnly
+longOpeningRangeMarketStatePassed = openingRangeOutsideCloseSeen or longOpeningRangeLowPlusAnotherLevel
+shortOpeningRangeMarketStatePassed = openingRangeOutsideCloseSeen or shortOpeningRangeHighPlusAnotherLevel
 
 [longBestAfterExpandedPrice, longBestAfterExpandedName, longBestAfterExpandedPriority, longBestAfterExpandedCurrent, longBestAfterExpandedFound] = f_pickLongEntryCandidate(longExpandedScalpLevelPrice, longExpandedScalpLevelName, longExpandedScalpLevelPriority, longExpandedScalpLevelTouchedCurrent, longExpandedScalpLevelFound, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [longBestAfterGroup1Price, longBestAfterGroup1Name, longBestAfterGroup1Priority, longBestAfterGroup1Current, longBestAfterGroup1Found] = f_pickLongEntryCandidate(longGroup1Price, longGroup1Name, longGroup1Priority, longGroup1Current, longGroup1Found, longBestAfterExpandedPrice, longBestAfterExpandedName, longBestAfterExpandedPriority, longBestAfterExpandedCurrent, longBestAfterExpandedFound)
@@ -1803,12 +1814,12 @@ shortSelectedLevelPrice = shortMostKeyTouchedLevelBroken ? shortMostKeyTouchedLe
 shortSelectedLevelName = shortMostKeyTouchedLevelBroken ? shortMostKeyTouchedLevelName : "N/A"
 shortSelectedLevelTouchedCurrent = shortMostKeyTouchedLevelBroken and shortMostKeyTouchedLevelCurrent
 
-longBodyAboveSelected = not na(longSelectedLevelPrice) ? math.max(math.min(bodyTop, scalpSignalHigh) - math.max(bodyBottom, longSelectedLevelPrice), 0.0) : na
-longUpperWickAboveSelected = not na(longSelectedLevelPrice) ? math.max(scalpSignalHigh - math.max(bodyTop, longSelectedLevelPrice), 0.0) : na
-longSelectedLevelBodyAcceptancePassed = not na(longSelectedLevelPrice) and scalpSignalClose > longSelectedLevelPrice and longBodyAboveSelected > longUpperWickAboveSelected
-shortBodyBelowSelected = not na(shortSelectedLevelPrice) ? math.max(math.min(bodyTop, shortSelectedLevelPrice) - bodyBottom, 0.0) : na
-shortLowerWickBelowSelected = not na(shortSelectedLevelPrice) ? math.max(math.min(bodyBottom, shortSelectedLevelPrice) - scalpSignalLow, 0.0) : na
-shortSelectedLevelBodyAcceptancePassed = not na(shortSelectedLevelPrice) and scalpSignalClose < shortSelectedLevelPrice and shortBodyBelowSelected > shortLowerWickBelowSelected
+longCloseBeyondSelectedDistance = not na(longSelectedLevelPrice) and scalpSignalClose > longSelectedLevelPrice ? scalpSignalClose - longSelectedLevelPrice : na
+longCloseToHighDistance = not na(longSelectedLevelPrice) and scalpSignalClose > longSelectedLevelPrice ? scalpSignalHigh - scalpSignalClose : na
+longSelectedLevelCloseAcceptancePassed = not na(longCloseBeyondSelectedDistance) and not na(longCloseToHighDistance) and longCloseBeyondSelectedDistance > longCloseToHighDistance
+shortCloseBeyondSelectedDistance = not na(shortSelectedLevelPrice) and scalpSignalClose < shortSelectedLevelPrice ? shortSelectedLevelPrice - scalpSignalClose : na
+shortCloseToLowDistance = not na(shortSelectedLevelPrice) and scalpSignalClose < shortSelectedLevelPrice ? scalpSignalClose - scalpSignalLow : na
+shortSelectedLevelCloseAcceptancePassed = not na(shortCloseBeyondSelectedDistance) and not na(shortCloseToLowDistance) and shortCloseBeyondSelectedDistance > shortCloseToLowDistance
 
 // Level-entry retracement validation only applies when the broken level would be the entry.
 levelEntryRange = scalpSignalHigh - scalpSignalLow
@@ -1822,8 +1833,8 @@ shortLevelEntryRetracementOk = not shortLevelEntryRequired or (not na(shortLevel
 // ===================== Scalp Setup Qualification Logic =====================
 // Level setups reuse the enabled scalp entry level checks above. A selected
 // level only exists after the signal or prior bar qualifies and the signal closes beyond it.
-longLevelBreakSetup = longMostKeyTouchedLevelBroken and longAllTouchedLevelsClosedBeyond and longLevelEntryRetracementOk and longSelectedLevelBodyAcceptancePassed
-shortLevelBreakSetup = shortMostKeyTouchedLevelBroken and shortAllTouchedLevelsClosedBeyond and shortLevelEntryRetracementOk and shortSelectedLevelBodyAcceptancePassed
+longLevelBreakSetup = longMostKeyTouchedLevelBroken and longAllTouchedLevelsClosedBeyond and longLevelEntryRetracementOk and longSelectedLevelCloseAcceptancePassed
+shortLevelBreakSetup = shortMostKeyTouchedLevelBroken and shortAllTouchedLevelsClosedBeyond and shortLevelEntryRetracementOk and shortSelectedLevelCloseAcceptancePassed
 
 longPullbackBreak = not na(low[1]) and low < low[1]
 shortPullbackBreak = not na(high[1]) and high > high[1]
@@ -2061,10 +2072,10 @@ longTargetTypeText = f_abbrevLevelName(longTargetType)
 shortTargetTypeText = f_abbrevLevelName(shortTargetType)
 
 // ===================== Alert Conditions =====================
-bullScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBullSignals and longOpeningRangeFilterPassed and bullScalpTierAllowed and longScalpSetupQualified and not longExtendedSetupBlocked and longDailyOpenBodyAcceptancePassed and longRiskValid and longTargetFilterPassed
+bullScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBullSignals and longOpeningRangeFilterPassed and longOpeningRangeMarketStatePassed and bullScalpTierAllowed and longScalpSetupQualified and not longExtendedSetupBlocked and longDailyOpenBodyAcceptancePassed and longRiskValid and longTargetFilterPassed
 bullAlertLabelTitle = "LONG SCALP"
 
-bearScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBearSignals and shortOpeningRangeFilterPassed and bearScalpTierAllowed and shortScalpSetupQualified and not shortExtendedSetupBlocked and shortDailyOpenBodyAcceptancePassed and shortRiskValid and shortTargetFilterPassed
+bearScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBearSignals and shortOpeningRangeFilterPassed and shortOpeningRangeMarketStatePassed and bearScalpTierAllowed and shortScalpSetupQualified and not shortExtendedSetupBlocked and shortDailyOpenBodyAcceptancePassed and shortRiskValid and shortTargetFilterPassed
 bearAlertLabelTitle = "SHORT SCALP"
 
 effectiveBullScalpAlert = bullScalpAlert
@@ -2175,6 +2186,9 @@ if barstate.islast
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORL", f_priceText(openingRangeDisplayLow), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long OR Filter", f_boolText(longOpeningRangeFilterPassed), longOpeningRangeFilterPassed ? color.lime : color.red)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short OR Filter", f_boolText(shortOpeningRangeFilterPassed), shortOpeningRangeFilterPassed ? color.lime : color.red)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "OR Outside Close", f_boolText(openingRangeOutsideCloseSeen), openingRangeOutsideCloseSeen ? color.lime : statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long OR State", f_boolText(longOpeningRangeMarketStatePassed), longOpeningRangeMarketStatePassed ? color.lime : color.red)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short OR State", f_boolText(shortOpeningRangeMarketStatePassed), shortOpeningRangeMarketStatePassed ? color.lime : color.red)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long ORL Only", f_boolText(longOpeningRangeLowOnly), longOpeningRangeLowOnly ? color.red : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long ORL + Level", f_boolText(longOpeningRangeLowPlusAnotherLevel), longOpeningRangeLowPlusAnotherLevel ? color.lime : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short ORH Only", f_boolText(shortOpeningRangeHighOnly), shortOpeningRangeHighOnly ? color.red : statusNeutralColor)
@@ -2183,10 +2197,10 @@ if barstate.islast
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORH Reclaim", f_boolText(shortOrhReclaim), shortOrhReclaim ? color.red : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Selected Long Level", longSelectedLevelText + " " + f_priceText(longSelectedLevelPrice), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Selected Short Level", shortSelectedLevelText + " " + f_priceText(shortSelectedLevelPrice), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long Sel Body OK", not na(longSelectedLevelPrice) ? f_boolText(longSelectedLevelBodyAcceptancePassed) : "N/A", na(longSelectedLevelPrice) ? statusNeutralColor : longSelectedLevelBodyAcceptancePassed ? color.lime : color.red)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long Body/Wick Sel", f_pointsText(longBodyAboveSelected) + " / " + f_pointsText(longUpperWickAboveSelected), statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short Sel Body OK", not na(shortSelectedLevelPrice) ? f_boolText(shortSelectedLevelBodyAcceptancePassed) : "N/A", na(shortSelectedLevelPrice) ? statusNeutralColor : shortSelectedLevelBodyAcceptancePassed ? color.lime : color.red)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short Body/Wick Sel", f_pointsText(shortBodyBelowSelected) + " / " + f_pointsText(shortLowerWickBelowSelected), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long Sel Close OK", not na(longSelectedLevelPrice) ? f_boolText(longSelectedLevelCloseAcceptancePassed) : "N/A", na(longSelectedLevelPrice) ? statusNeutralColor : longSelectedLevelCloseAcceptancePassed ? color.lime : color.red)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long Close Dist", f_pointsText(longCloseBeyondSelectedDistance) + " / " + f_pointsText(longCloseToHighDistance), statusNeutralColor)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short Sel Close OK", not na(shortSelectedLevelPrice) ? f_boolText(shortSelectedLevelCloseAcceptancePassed) : "N/A", na(shortSelectedLevelPrice) ? statusNeutralColor : shortSelectedLevelCloseAcceptancePassed ? color.lime : color.red)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short Close Dist", f_pointsText(shortCloseBeyondSelectedDistance) + " / " + f_pointsText(shortCloseToLowDistance), statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "WO Entry", allowWeeklyOpenAsEntry ? "enabled" : "disabled", allowWeeklyOpenAsEntry ? color.orange : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long Setup Source", longStatusSetupSourceText, longScalpSetupQualified ? color.lime : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short Setup Source", shortStatusSetupSourceText, shortScalpSetupQualified ? color.red : statusNeutralColor)
@@ -2195,8 +2209,8 @@ if barstate.islast
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long R:R", f_rrText(longTargetRR), longTargetValid ? color.lime : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short R:R", f_rrText(shortTargetRR), shortTargetValid ? color.red : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "OP Touched", f_boolText(dailyOpenTouchedCurrent), dailyOpenTouchedCurrent ? color.orange : statusNeutralColor)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long OP Body", f_boolText(longDailyOpenBodyAcceptancePassed) + " " + f_pctText(bodyAboveDailyOpenPct), longDailyOpenBodyAcceptancePassed ? color.lime : color.red)
-            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short OP Body", f_boolText(shortDailyOpenBodyAcceptancePassed) + " " + f_pctText(bodyBelowDailyOpenPct), shortDailyOpenBodyAcceptancePassed ? color.lime : color.red)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Long OP Range", f_boolText(longDailyOpenBodyAcceptancePassed) + " " + f_pctText(rangeAboveDailyOpenPct), longDailyOpenBodyAcceptancePassed ? color.lime : color.red)
+            scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Short OP Range", f_boolText(shortDailyOpenBodyAcceptancePassed) + " " + f_pctText(rangeBelowDailyOpenPct), shortDailyOpenBodyAcceptancePassed ? color.lime : color.red)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Alert Setups", alertSetupsTableText, statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Expanded Levels", f_boolText(useExpandedScalpLevels), useExpandedScalpLevels ? color.lime : statusNeutralColor)
             scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "PDH", f_priceText(effectivePrevDayHigh), statusNeutralColor)
