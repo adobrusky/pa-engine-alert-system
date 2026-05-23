@@ -77,7 +77,6 @@ maxTrackedSwingTargets         = input.int(100, title="Max Tracked 5m Swing Targ
 allowRthSwingsBrokenPremarket  = input.bool(true, title="Allow Prior RTH 5m Swings Broken In Premarket", group=groupTargets, tooltip="When enabled, prior RTH 5m swings remain eligible for scalp failed-breakout tracking even if they are tested or broken during the current premarket. They are still invalidated normally if broken during current RTH.")
 
 // 07. Signal Engine Tuning
-onlyHighVolumeSignals         = input.bool(false, title="Pressure: Only Show High-Volume Signals", group=groupSignalEngine, tooltip="When enabled, pressure bull/bear signals are shown only when volume is greater than the prior bar.")
 maxLookback                   = input.int(20, title="Pressure: Max Lookback", group=groupSignalEngine, minval=3, tooltip="Maximum number of bars to scan backward when finding prior up/down legs for fallback midpoint checks.")
 pressureBodyWickThreshold     = input.float(0.40, title="Pressure: Body/Wick Range Threshold", group=groupSignalEngine, minval=0.05, maxval=0.95, step=0.05, tooltip="Minimum fraction of the full bar range required for body or wick qualification in pressure bar quality checks (default 40%).")
 acceptableVolumeThreshold     = input(0.33, title="Acceptable Volume Threshold", group=groupSignalEngine, tooltip="Set the minimum volume threshold as a multiple of the volume average (e.g., 0.33x volume average). Bars with volume below this threshold will not display indications.")
@@ -86,12 +85,8 @@ acceptableVolatilityThreshold = input(0.33, title="Acceptable Volatility Thresho
 atrLength                     = input(14, title="ATR Length", group=groupSignalEngine, tooltip="Set the length of the ATR calculation.")
 
 // 08. Display / Visuals
-showBullSignals              = input.bool(true, title="Show Bull Signals", group=groupDisplay, tooltip="Enable bullish signal markers and signal-overlap indications.")
-showBearSignals              = input.bool(true, title="Show Bear Signals", group=groupDisplay, tooltip="Enable bearish signal markers and signal-overlap indications.")
-showSetupSignals             = input.bool(true, title="Setup Signals (Circle)", group=groupDisplay, tooltip="Setup-quality bar, not standalone actionable. Best used with failed-breakout context to identify potential reversals.")
-showIgnitionSignals          = input.bool(true, title="Ignition Signals (Triangle)", group=groupDisplay, tooltip="Actionable momentum signal that can stand on its own without requiring failed-breakout context.")
-showStrongIgnitions          = input.bool(true, title="Strong Ignitions (Diamond)", group=groupDisplay, tooltip="Strongest ignition signal; same concept as Ignition but with higher bar quality/strength. Useful for bias shifts through key levels.")
-showSignalLegend             = input.bool(false, title="Show Signal Legend", group=groupDisplay, tooltip="Display a small on-chart legend mapping shapes to signal tiers.")
+showBullSignals              = input.bool(true, title="Show Bull Signals", group=groupDisplay, tooltip="Enable bullish high-volume signal markers.")
+showBearSignals              = input.bool(true, title="Show Bear Signals", group=groupDisplay, tooltip="Enable bearish high-volume signal markers.")
 alertLabelMode               = input.string("Compact", title="Historical Alert Labels", options=["Off", "Marker Only", "Compact"], group=groupDisplay)
 showAlertSignalDetails       = input.bool(false, title="Show Alert Signal Details", group=groupDisplay)
 showSwingLevels              = input.bool(true, title="Show Converted Levels", group=groupDisplay, tooltip="Plots converted higher-timeframe levels used for scalp entries and targets.")
@@ -712,6 +707,8 @@ effectivePrevDayLow = useAutoPrevDayHighLow and not na(autoPrevDayLow) ? autoPre
 effectiveDailyOpen = useAutoDailyOpen and not na(autoDailyOpen) ? autoDailyOpen : dailyOpenLevel
 effectivePremarketHigh = useAutoPremarketHighLow and not na(finalizedPremarketHigh) ? finalizedPremarketHigh : premarketHighLevel
 effectivePremarketLow = useAutoPremarketHighLow and not na(finalizedPremarketLow) ? finalizedPremarketLow : premarketLowLevel
+premarketDisplayHigh = showAutoScalpLevels and usePremarketHighLevel and timeframe.isintraday ? (inPremarketSession ? autoPremarketHigh : inScalpRTHSession ? finalizedPremarketHigh : na) : na
+premarketDisplayLow = showAutoScalpLevels and usePremarketLowLevel and timeframe.isintraday ? (inPremarketSession ? autoPremarketLow : inScalpRTHSession ? finalizedPremarketLow : na) : na
 
 prevDayHighLowSource = useAutoPrevDayHighLow ? (not na(autoPrevDayHigh) and not na(autoPrevDayLow) ? "Auto" : "Manual Fallback") : "Manual"
 dailyOpenSource = useAutoDailyOpen ? (not na(autoDailyOpen) ? "Auto" : "Manual Fallback") : "Manual"
@@ -1236,8 +1233,8 @@ openingRangeLow = useManualOpeningRangeFallback and manualOpeningRangeLow > 0 ? 
 openingRangeReady = not na(openingRangeHigh) and not na(openingRangeLow)
 openingRangeWindowElapsed = inScalpRTHSession and not inOpeningRangeWindow
 openingRangeLevelsReady = openingRangeReady and (openingRangeComplete or (useManualOpeningRangeFallback and openingRangeWindowElapsed))
-openingRangeDisplayHigh = openingRangeLevelsReady ? openingRangeHigh : na
-openingRangeDisplayLow = openingRangeLevelsReady ? openingRangeLow : na
+openingRangeDisplayHigh = inScalpRTHSession and openingRangeLevelsReady ? openingRangeHigh : na
+openingRangeDisplayLow = inScalpRTHSession and openingRangeLevelsReady ? openingRangeLow : na
 
 if openingRangeLevelsReady and barstate.isconfirmed and inScalpRTHSession and not inOpeningRangeWindow and (close > openingRangeHigh or close < openingRangeLow)
     openingRangeOutsideCloseSeen := true
@@ -1566,37 +1563,14 @@ bearSignalBase = sufficientVolumeAndVolatility and bearBarQuality
 
 bullSignalHighVol = bullSignalBase and isHighVolume
 bearSignalHighVol = bearSignalBase and isHighVolume
-bullSignalNormalVol = bullSignalBase and bullPressurePass and not isHighVolume and not onlyHighVolumeSignals
-bearSignalNormalVol = bearSignalBase and bearPressurePass and not isHighVolume and not onlyHighVolumeSignals
 
 // ===================== Plotting =====================
-plotBullSignalHighVol = showBullSignals and bullSignalHighVol
-plotBullSignalNormalVol = showBullSignals and bullSignalNormalVol
-plotBearSignalHighVol = showBearSignals and bearSignalHighVol
-plotBearSignalNormalVol = showBearSignals and bearSignalNormalVol
+plotBullSignal = showBullSignals and bullSignalHighVol
+plotBearSignal = showBearSignals and bearSignalHighVol
 
-hasBullSignal = plotBullSignalHighVol or plotBullSignalNormalVol
-hasBearSignal = plotBearSignalHighVol or plotBearSignalNormalVol
-onlyBullSignal = hasBullSignal
-onlyBearSignal = hasBearSignal
-
-// Confirmed signals close beyond the prior bar extreme; unconfirmed keep signal logic but use alternate markers.
+// Confirmed signals close beyond the prior bar extreme and remain part of alert tier qualification.
 bullSignalConfirmed = close > high[1]
 bearSignalConfirmed = close < low[1]
-
-// Signal-tier visibility filters
-plotBullHV_diamond  = plotBullSignalHighVol and showStrongIgnitions
-plotBullHV_tri      = plotBullSignalHighVol and showIgnitionSignals
-plotBullHV_circle   = plotBullSignalHighVol and showSetupSignals
-plotBearHV_diamond  = plotBearSignalHighVol and showStrongIgnitions
-plotBearHV_tri      = plotBearSignalHighVol and showIgnitionSignals
-plotBearHV_circle   = plotBearSignalHighVol and showSetupSignals
-plotBullNV_diamond  = plotBullSignalNormalVol and showStrongIgnitions
-plotBullNV_tri      = plotBullSignalNormalVol and showIgnitionSignals
-plotBullNV_circle   = plotBullSignalNormalVol and showSetupSignals
-plotBearNV_diamond  = plotBearSignalNormalVol and showStrongIgnitions
-plotBearNV_tri      = plotBearSignalNormalVol and showIgnitionSignals
-plotBearNV_circle   = plotBearSignalNormalVol and showSetupSignals
 
 // ===================== Alert Signal Tier Logic =====================
 bullScalpSignalAllowed = bullSignalHighVol
@@ -2146,32 +2120,12 @@ pdlPlot = showAutoScalpLevels and showRawFuturesPrevDayLevels and inScalpRTHSess
 plot(pdhPlot, "Auto/Effective PDH", color=majorHighLevelColor, linewidth=1, style=plot.style_linebr)
 plot(pdlPlot, "Auto/Effective PDL", color=majorLowLevelColor, linewidth=1, style=plot.style_linebr)
 plot(showAutoScalpLevels and effectiveDailyOpen > 0 ? effectiveDailyOpen : na, "Raw/Effective OP", color=openLevelColor, linewidth=1, style=plot.style_linebr)
-plot(showAutoScalpLevels and effectivePremarketHigh > 0 ? effectivePremarketHigh : na, "Auto/Effective Premarket High", color=premarketLevelColor, linewidth=1, style=plot.style_linebr)
-plot(showAutoScalpLevels and effectivePremarketLow > 0 ? effectivePremarketLow : na, "Auto/Effective Premarket Low", color=premarketLevelColor, linewidth=1, style=plot.style_linebr)
+plot(premarketDisplayHigh, "Premarket High", color=premarketLevelColor, linewidth=1, style=plot.style_linebr)
+plot(premarketDisplayLow, "Premarket Low", color=premarketLevelColor, linewidth=1, style=plot.style_linebr)
 
 // Signals
-plotshape(plotBullHV_diamond and onlyBullSignal and bullSignalConfirmed and isMostlyBody, style=shape.diamond, size=size.small, location=location.belowbar, color=color.lime)
-plotshape(plotBullHV_tri and onlyBullSignal and bullSignalConfirmed and not isMostlyBody, style=shape.triangleup, size=size.small, location=location.belowbar, color=color.lime)
-plotshape(plotBullHV_circle and onlyBullSignal and not bullSignalConfirmed, style=shape.circle, size=size.small, location=location.belowbar, color=color.lime)
-plotshape(plotBearHV_diamond and onlyBearSignal and bearSignalConfirmed and isMostlyBody, style=shape.diamond, size=size.small, location=location.abovebar, color=color.red)
-plotshape(plotBearHV_tri and onlyBearSignal and bearSignalConfirmed and not isMostlyBody, style=shape.triangledown, size=size.small, location=location.abovebar, color=color.red)
-plotshape(plotBearHV_circle and onlyBearSignal and not bearSignalConfirmed, style=shape.circle, size=size.small, location=location.abovebar, color=color.red)
-plotshape(plotBullNV_diamond and onlyBullSignal and bullSignalConfirmed and isMostlyBody, style=shape.diamond, size=size.tiny, location=location.belowbar, color=color.new(color.lime, 55))
-plotshape(plotBullNV_tri and onlyBullSignal and bullSignalConfirmed and not isMostlyBody, style=shape.triangleup, size=size.tiny, location=location.belowbar, color=color.new(color.lime, 55))
-plotshape(plotBullNV_circle and onlyBullSignal and not bullSignalConfirmed, style=shape.circle, size=size.tiny, location=location.belowbar, color=color.new(color.lime, 55))
-plotshape(plotBearNV_diamond and onlyBearSignal and bearSignalConfirmed and isMostlyBody, style=shape.diamond, size=size.tiny, location=location.abovebar, color=color.new(color.red, 55))
-plotshape(plotBearNV_tri and onlyBearSignal and bearSignalConfirmed and not isMostlyBody, style=shape.triangledown, size=size.tiny, location=location.abovebar, color=color.new(color.red, 55))
-plotshape(plotBearNV_circle and onlyBearSignal and not bearSignalConfirmed, style=shape.circle, size=size.tiny, location=location.abovebar, color=color.new(color.red, 55))
-
-// ===================== Signal Legend =====================
-var table legendTable = table.new(position.top_right, 2, 3, bgcolor=color.new(color.black, 85), border_width=0)
-if barstate.islast and showSignalLegend
-    table.cell(legendTable, 0, 0, "○",  text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_center)
-    table.cell(legendTable, 1, 0, " Setup",           text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-    table.cell(legendTable, 0, 1, "△",  text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_center)
-    table.cell(legendTable, 1, 1, " Ignition",        text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
-    table.cell(legendTable, 0, 2, "◇",  text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_center)
-    table.cell(legendTable, 1, 2, " Strong Ignition",  text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+plotshape(plotBullSignal, title="Bullish High-Volume Signal", style=shape.triangleup, size=size.small, location=location.belowbar, color=color.lime)
+plotshape(plotBearSignal, title="Bearish High-Volume Signal", style=shape.triangledown, size=size.small, location=location.abovebar, color=color.red)
 
 // ===================== Scalp Status Table =====================
 f_addScalpStatusRow(table _statusTable, int _row, string _label, string _value, color _valueColor) =>
