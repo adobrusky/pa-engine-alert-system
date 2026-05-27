@@ -23,6 +23,7 @@ minTargetRR              = input.float(1.0, title="Scalp Minimum Target R:R", mi
 
 // 02. Setup Filters
 requireFboSwingSweep = input.bool(false, title="Require FBO Swing Sweep", group=groupSetupFilters, tooltip="When enabled, failed breakout scalp setups must sweep a prior tracked 5m swing. When disabled, failed breakout setups only need the normal level-break, signal, body-acceptance, risk, and target filters.")
+useLiquidityRetestModel = input.bool(false, "Use Liquidity Retest Model", group=groupSetupFilters, tooltip="Backtest-only alternate model for HV bars testing session liquidity in the extreme third of the signal bar. Uses level-retest entry and 1 ATR stop.")
 skipFiveBarExtension     = input.bool(true, title="Skip 5+ Bar Extension", group=groupSetupFilters)
 skipStrongMicrochannelExtension = input.bool(true, title="Skip 3+ Bar Strong Extension", group=groupSetupFilters)
 minLevelEntryRetracement = input.float(0.20, title="Minimum Level Entry Retracement", minval=0.0, maxval=0.5, step=0.05, group=groupSetupFilters)
@@ -98,6 +99,7 @@ showScalpStatusTable         = input.bool(true, title="Show Scalp Status Table",
 showConvertedLevelDebug = input.bool(false, title="Show Converted Level Debug", group=groupDebug)
 showDetailedLevelStatus = input.bool(false, title="Show Detailed Level Status", group=groupDebug)
 showGapRequestDiagnostics = input.bool(false, title="Show Gap Request Diagnostics", group=groupDebug)
+showLiquidityRetestDebug = input.bool(false, title="Show LRT Debug", group=groupDebug)
 
 scalpPointValue = tickerInput == "MES" ? 5.0 : 2.0
 scalpTickSize   = 0.25
@@ -289,6 +291,12 @@ f_longTouchedLevelFailedCloseBeyond(_enabled, _level, _signalLow, _signalHigh, _
 f_shortTouchedLevelFailedCloseBeyond(_enabled, _level, _signalLow, _signalHigh, _signalClose) =>
     bool touched = f_levelTouched(_enabled, _level, _signalLow, _signalHigh)
     touched and not f_levelClosedBeyondShort(_level, _signalClose)
+
+f_longLevelTouchedAndCleared(bool _enabled, float _levelPrice, float _signalLow, float _signalHigh, float _signalClose) =>
+    f_levelTouched(_enabled, _levelPrice, _signalLow, _signalHigh) and f_levelClosedBeyondLong(_levelPrice, _signalClose)
+
+f_shortLevelTouchedAndCleared(bool _enabled, float _levelPrice, float _signalLow, float _signalHigh, float _signalClose) =>
+    f_levelTouched(_enabled, _levelPrice, _signalLow, _signalHigh) and f_levelClosedBeyondShort(_levelPrice, _signalClose)
 
 f_currentRthOpen() =>
     var float rthOpen = na
@@ -1883,168 +1891,322 @@ longRiskValid = longRiskPoints > 0 and not na(longRiskDollarsPerContract) and lo
 shortRiskValid = shortRiskPoints > 0 and not na(shortRiskDollarsPerContract) and shortRiskDollarsPerContract > 0 and shortContracts >= 1
 
 // ===================== Scalp Target Selection Logic =====================
-float noTargetPrice = na
-string noTargetType = "N/A"
-float noTargetRR = na
-int noTargetPriority = 999
+f_selectLongScalpTarget(string _entryType, float _entryPrice, float _riskPoints) =>
+    float selectedTargetPrice = na
+    string selectedTargetType = "N/A"
+    float selectedTargetRR = na
+    int selectedTargetPriority = 999
 
-float longTargetPrice = noTargetPrice
-string longTargetType = noTargetType
-float longTargetRR = noTargetRR
-int longTargetPriority = noTargetPriority
+    if convertedHtfTradeLevelsEnabled and array.size(swingLevelPrices) > 0
+        for expandedLongTargetIndex = 0 to array.size(swingLevelPrices) - 1
+            float expandedLongTargetPrice = array.get(swingLevelPrices, expandedLongTargetIndex)
+            string expandedLongTargetName = array.get(swingLevelNames, expandedLongTargetIndex)
+            int expandedLongTargetPriority = array.get(swingLevelPriority, expandedLongTargetIndex)
+            bool expandedLongTargetAllowed = array.get(swingLevelAllowedForTarget, expandedLongTargetIndex)
+            string expandedLongTargetType = "Level " + expandedLongTargetName
+            if expandedLongTargetAllowed and f_longTargetQualifies(expandedLongTargetPrice, expandedLongTargetType, _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(expandedLongTargetPrice, expandedLongTargetPriority, selectedTargetPrice, selectedTargetPriority)
+                selectedTargetPrice := expandedLongTargetPrice
+                selectedTargetType := expandedLongTargetType
+                selectedTargetRR := f_targetRRLong(expandedLongTargetPrice, _entryPrice, _riskPoints)
+                selectedTargetPriority := expandedLongTargetPriority
 
+    if useDirectTradePrevDayHighLevel and f_longTargetQualifies(effectivePrevDayHigh, "Level PDH", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectivePrevDayHigh, 4, selectedTargetPrice, selectedTargetPriority)
+        selectedTargetPrice := effectivePrevDayHigh
+        selectedTargetType := "Level PDH"
+        selectedTargetRR := f_targetRRLong(effectivePrevDayHigh, _entryPrice, _riskPoints)
+        selectedTargetPriority := 4
+
+    if useDirectTradePrevDayLowLevel and f_longTargetQualifies(effectivePrevDayLow, "Level PDL", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectivePrevDayLow, 4, selectedTargetPrice, selectedTargetPriority)
+        selectedTargetPrice := effectivePrevDayLow
+        selectedTargetType := "Level PDL"
+        selectedTargetRR := f_targetRRLong(effectivePrevDayLow, _entryPrice, _riskPoints)
+        selectedTargetPriority := 4
+
+    if useDirectTradeDailyOpenLevel and f_longTargetQualifies(effectiveDailyOpen, "Level OP", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectiveDailyOpen, 6, selectedTargetPrice, selectedTargetPriority)
+        selectedTargetPrice := effectiveDailyOpen
+        selectedTargetType := "Level OP"
+        selectedTargetRR := f_targetRRLong(effectiveDailyOpen, _entryPrice, _riskPoints)
+        selectedTargetPriority := 6
+
+    if usePremarketHighLevel and f_longTargetQualifies(effectivePremarketHigh, "Level PMH", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectivePremarketHigh, 7, selectedTargetPrice, selectedTargetPriority)
+        selectedTargetPrice := effectivePremarketHigh
+        selectedTargetType := "Level PMH"
+        selectedTargetRR := f_targetRRLong(effectivePremarketHigh, _entryPrice, _riskPoints)
+        selectedTargetPriority := 7
+
+    if usePremarketLowLevel and f_longTargetQualifies(effectivePremarketLow, "Level PML", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectivePremarketLow, 7, selectedTargetPrice, selectedTargetPriority)
+        selectedTargetPrice := effectivePremarketLow
+        selectedTargetType := "Level PML"
+        selectedTargetRR := f_targetRRLong(effectivePremarketLow, _entryPrice, _riskPoints)
+        selectedTargetPriority := 7
+
+    if useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady and f_longTargetQualifies(openingRangeHigh, "Level ORH", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(openingRangeHigh, 8, selectedTargetPrice, selectedTargetPriority)
+        selectedTargetPrice := openingRangeHigh
+        selectedTargetType := "Level ORH"
+        selectedTargetRR := f_targetRRLong(openingRangeHigh, _entryPrice, _riskPoints)
+        selectedTargetPriority := 8
+
+    if useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady and f_longTargetQualifies(openingRangeLow, "Level ORL", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(openingRangeLow, 8, selectedTargetPrice, selectedTargetPriority)
+        selectedTargetPrice := openingRangeLow
+        selectedTargetType := "Level ORL"
+        selectedTargetRR := f_targetRRLong(openingRangeLow, _entryPrice, _riskPoints)
+        selectedTargetPriority := 8
+
+    if array.size(swingHighPrices) > 0
+        for swingHighIndex = 0 to array.size(swingHighPrices) - 1
+            float swingHighPrice = array.get(swingHighPrices, swingHighIndex)
+            bool swingHighAllowed = array.get(swingHighActive, swingHighIndex) and f_swingTargetSessionAllowed(array.get(swingHighSessions, swingHighIndex), array.get(swingHighDateKeys, swingHighIndex), nySessionDateKey, activeCurrentRTHDateKey, activePreviousRTHDateKey)
+            if swingHighAllowed and f_longTargetQualifies(swingHighPrice, "5m Swing", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(swingHighPrice, 9, selectedTargetPrice, selectedTargetPriority)
+                selectedTargetPrice := swingHighPrice
+                selectedTargetType := "5m Swing"
+                selectedTargetRR := f_targetRRLong(swingHighPrice, _entryPrice, _riskPoints)
+                selectedTargetPriority := 9
+
+    if f_longTargetQualifies(currentRTHHigh, "HOD", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(currentRTHHigh, 9, selectedTargetPrice, selectedTargetPriority)
+        selectedTargetPrice := currentRTHHigh
+        selectedTargetType := "HOD"
+        selectedTargetRR := f_targetRRLong(currentRTHHigh, _entryPrice, _riskPoints)
+        selectedTargetPriority := 9
+
+    [selectedTargetPrice, selectedTargetType, selectedTargetRR, selectedTargetPriority]
+
+f_selectShortScalpTarget(string _entryType, float _entryPrice, float _riskPoints) =>
+    float selectedTargetPrice = na
+    string selectedTargetType = "N/A"
+    float selectedTargetRR = na
+    int selectedTargetPriority = 999
+
+    if convertedHtfTradeLevelsEnabled and array.size(swingLevelPrices) > 0
+        for expandedShortTargetIndex = 0 to array.size(swingLevelPrices) - 1
+            float expandedShortTargetPrice = array.get(swingLevelPrices, expandedShortTargetIndex)
+            string expandedShortTargetName = array.get(swingLevelNames, expandedShortTargetIndex)
+            int expandedShortTargetPriority = array.get(swingLevelPriority, expandedShortTargetIndex)
+            bool expandedShortTargetAllowed = array.get(swingLevelAllowedForTarget, expandedShortTargetIndex)
+            string expandedShortTargetType = "Level " + expandedShortTargetName
+            if expandedShortTargetAllowed and f_shortTargetQualifies(expandedShortTargetPrice, expandedShortTargetType, _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(expandedShortTargetPrice, expandedShortTargetPriority, selectedTargetPrice, selectedTargetPriority)
+                selectedTargetPrice := expandedShortTargetPrice
+                selectedTargetType := expandedShortTargetType
+                selectedTargetRR := f_targetRRShort(expandedShortTargetPrice, _entryPrice, _riskPoints)
+                selectedTargetPriority := expandedShortTargetPriority
+
+    if useDirectTradePrevDayHighLevel and f_shortTargetQualifies(effectivePrevDayHigh, "Level PDH", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectivePrevDayHigh, 4, selectedTargetPrice, selectedTargetPriority)
+        selectedTargetPrice := effectivePrevDayHigh
+        selectedTargetType := "Level PDH"
+        selectedTargetRR := f_targetRRShort(effectivePrevDayHigh, _entryPrice, _riskPoints)
+        selectedTargetPriority := 4
+
+    if useDirectTradePrevDayLowLevel and f_shortTargetQualifies(effectivePrevDayLow, "Level PDL", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectivePrevDayLow, 4, selectedTargetPrice, selectedTargetPriority)
+        selectedTargetPrice := effectivePrevDayLow
+        selectedTargetType := "Level PDL"
+        selectedTargetRR := f_targetRRShort(effectivePrevDayLow, _entryPrice, _riskPoints)
+        selectedTargetPriority := 4
+
+    if useDirectTradeDailyOpenLevel and f_shortTargetQualifies(effectiveDailyOpen, "Level OP", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectiveDailyOpen, 6, selectedTargetPrice, selectedTargetPriority)
+        selectedTargetPrice := effectiveDailyOpen
+        selectedTargetType := "Level OP"
+        selectedTargetRR := f_targetRRShort(effectiveDailyOpen, _entryPrice, _riskPoints)
+        selectedTargetPriority := 6
+
+    if usePremarketHighLevel and f_shortTargetQualifies(effectivePremarketHigh, "Level PMH", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectivePremarketHigh, 7, selectedTargetPrice, selectedTargetPriority)
+        selectedTargetPrice := effectivePremarketHigh
+        selectedTargetType := "Level PMH"
+        selectedTargetRR := f_targetRRShort(effectivePremarketHigh, _entryPrice, _riskPoints)
+        selectedTargetPriority := 7
+
+    if usePremarketLowLevel and f_shortTargetQualifies(effectivePremarketLow, "Level PML", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectivePremarketLow, 7, selectedTargetPrice, selectedTargetPriority)
+        selectedTargetPrice := effectivePremarketLow
+        selectedTargetType := "Level PML"
+        selectedTargetRR := f_targetRRShort(effectivePremarketLow, _entryPrice, _riskPoints)
+        selectedTargetPriority := 7
+
+    if useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady and f_shortTargetQualifies(openingRangeHigh, "Level ORH", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(openingRangeHigh, 8, selectedTargetPrice, selectedTargetPriority)
+        selectedTargetPrice := openingRangeHigh
+        selectedTargetType := "Level ORH"
+        selectedTargetRR := f_targetRRShort(openingRangeHigh, _entryPrice, _riskPoints)
+        selectedTargetPriority := 8
+
+    if useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady and f_shortTargetQualifies(openingRangeLow, "Level ORL", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(openingRangeLow, 8, selectedTargetPrice, selectedTargetPriority)
+        selectedTargetPrice := openingRangeLow
+        selectedTargetType := "Level ORL"
+        selectedTargetRR := f_targetRRShort(openingRangeLow, _entryPrice, _riskPoints)
+        selectedTargetPriority := 8
+
+    if array.size(swingLowPrices) > 0
+        for swingLowIndex = 0 to array.size(swingLowPrices) - 1
+            float swingLowPrice = array.get(swingLowPrices, swingLowIndex)
+            bool swingLowAllowed = array.get(swingLowActive, swingLowIndex) and f_swingTargetSessionAllowed(array.get(swingLowSessions, swingLowIndex), array.get(swingLowDateKeys, swingLowIndex), nySessionDateKey, activeCurrentRTHDateKey, activePreviousRTHDateKey)
+            if swingLowAllowed and f_shortTargetQualifies(swingLowPrice, "5m Swing", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(swingLowPrice, 9, selectedTargetPrice, selectedTargetPriority)
+                selectedTargetPrice := swingLowPrice
+                selectedTargetType := "5m Swing"
+                selectedTargetRR := f_targetRRShort(swingLowPrice, _entryPrice, _riskPoints)
+                selectedTargetPriority := 9
+
+    if f_shortTargetQualifies(currentRTHLow, "LOD", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(currentRTHLow, 9, selectedTargetPrice, selectedTargetPriority)
+        selectedTargetPrice := currentRTHLow
+        selectedTargetType := "LOD"
+        selectedTargetRR := f_targetRRShort(currentRTHLow, _entryPrice, _riskPoints)
+        selectedTargetPriority := 9
+
+    [selectedTargetPrice, selectedTargetType, selectedTargetRR, selectedTargetPriority]
+
+[longTargetPrice, longTargetType, longTargetRR, longTargetPriority] = f_selectLongScalpTarget(longEntryType, longEntryPrice, longRiskPoints)
+[shortTargetPrice, shortTargetType, shortTargetRR, shortTargetPriority] = f_selectShortScalpTarget(shortEntryType, shortEntryPrice, shortRiskPoints)
+bool longNormalRiskValid = longRiskValid
+bool shortNormalRiskValid = shortRiskValid
+bool longNormalTargetValid = not na(longTargetPrice) and longTargetType != "N/A"
+bool shortNormalTargetValid = not na(shortTargetPrice) and shortTargetType != "N/A"
+bool longNormalTargetFilterPassed = not requireValidTarget or longNormalTargetValid
+bool shortNormalTargetFilterPassed = not requireValidTarget or shortNormalTargetValid
+float longNormalEntryPrice = longEntryPrice
+float shortNormalEntryPrice = shortEntryPrice
+float longNormalStopPrice = longStopPrice
+float shortNormalStopPrice = shortStopPrice
+float longNormalTargetPrice = longTargetPrice
+float shortNormalTargetPrice = shortTargetPrice
+float longNormalTargetRR = longTargetRR
+float shortNormalTargetRR = shortTargetRR
+int longNormalContracts = longContracts
+int shortNormalContracts = shortContracts
+
+// LRT is a backtest-only alternate entry/stop model for clean session-liquidity retests.
+float premarketHigh = effectivePremarketHigh
+float premarketLow = effectivePremarketLow
+float openingRangeHigh15m = openingRangeHigh
+float openingRangeLow15m = openingRangeLow
+float liquidityRetestAtr = ta.atr(14)
+float liquidityRetestAtrValue = liquidityRetestAtr
+float longLiquidityRetestLowerThirdMax = scalpSignalLow + (scalpSignalHigh - scalpSignalLow) / 3.0
+float shortLiquidityRetestUpperThirdMin = scalpSignalHigh - (scalpSignalHigh - scalpSignalLow) / 3.0
+
+bool longPremarketHighInSetup = usePremarketHighLevel and f_validSourcePrice(premarketHigh) and f_levelTouched(usePremarketHighLevel, premarketHigh, scalpSignalLow, scalpSignalHigh) and scalpSignalClose > premarketHigh
+bool longPremarketLowInSetup = usePremarketLowLevel and f_validSourcePrice(premarketLow) and f_levelTouched(usePremarketLowLevel, premarketLow, scalpSignalLow, scalpSignalHigh) and scalpSignalClose > premarketLow
+bool longOpeningRangeHigh15mInSetup = useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady and f_validSourcePrice(openingRangeHigh15m) and f_levelTouched(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh15m, scalpSignalLow, scalpSignalHigh) and scalpSignalClose > openingRangeHigh15m
+bool longOpeningRangeLow15mInSetup = useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady and f_validSourcePrice(openingRangeLow15m) and f_levelTouched(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow15m, scalpSignalLow, scalpSignalHigh) and scalpSignalClose > openingRangeLow15m
+
+bool shortPremarketHighInSetup = usePremarketHighLevel and f_validSourcePrice(premarketHigh) and f_levelTouched(usePremarketHighLevel, premarketHigh, scalpSignalLow, scalpSignalHigh) and scalpSignalClose < premarketHigh
+bool shortPremarketLowInSetup = usePremarketLowLevel and f_validSourcePrice(premarketLow) and f_levelTouched(usePremarketLowLevel, premarketLow, scalpSignalLow, scalpSignalHigh) and scalpSignalClose < premarketLow
+bool shortOpeningRangeHigh15mInSetup = useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady and f_validSourcePrice(openingRangeHigh15m) and f_levelTouched(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh15m, scalpSignalLow, scalpSignalHigh) and scalpSignalClose < openingRangeHigh15m
+bool shortOpeningRangeLow15mInSetup = useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady and f_validSourcePrice(openingRangeLow15m) and f_levelTouched(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow15m, scalpSignalLow, scalpSignalHigh) and scalpSignalClose < openingRangeLow15m
+
+bool longPremarketHighLrtQualifies = longPremarketHighInSetup and premarketHigh <= longLiquidityRetestLowerThirdMax
+bool longPremarketLowLrtQualifies = longPremarketLowInSetup and premarketLow <= longLiquidityRetestLowerThirdMax
+bool longOpeningRangeHigh15mLrtQualifies = longOpeningRangeHigh15mInSetup and openingRangeHigh15m <= longLiquidityRetestLowerThirdMax
+bool longOpeningRangeLow15mLrtQualifies = longOpeningRangeLow15mInSetup and openingRangeLow15m <= longLiquidityRetestLowerThirdMax
+
+bool shortPremarketHighLrtQualifies = shortPremarketHighInSetup and premarketHigh >= shortLiquidityRetestUpperThirdMin
+bool shortPremarketLowLrtQualifies = shortPremarketLowInSetup and premarketLow >= shortLiquidityRetestUpperThirdMin
+bool shortOpeningRangeHigh15mLrtQualifies = shortOpeningRangeHigh15mInSetup and openingRangeHigh15m >= shortLiquidityRetestUpperThirdMin
+bool shortOpeningRangeLow15mLrtQualifies = shortOpeningRangeLow15mInSetup and openingRangeLow15m >= shortLiquidityRetestUpperThirdMin
+bool longLrtLevelInExtremeThird = longPremarketHighLrtQualifies or longPremarketLowLrtQualifies or longOpeningRangeHigh15mLrtQualifies or longOpeningRangeLow15mLrtQualifies
+bool shortLrtLevelInExtremeThird = shortPremarketHighLrtQualifies or shortPremarketLowLrtQualifies or shortOpeningRangeHigh15mLrtQualifies or shortOpeningRangeLow15mLrtQualifies
+
+float longLiquidityRetestEntry = na
+longLiquidityRetestEntry := longPremarketHighLrtQualifies ? premarketHigh : longLiquidityRetestEntry
+longLiquidityRetestEntry := longPremarketLowLrtQualifies ? (na(longLiquidityRetestEntry) ? premarketLow : math.max(longLiquidityRetestEntry, premarketLow)) : longLiquidityRetestEntry
+longLiquidityRetestEntry := longOpeningRangeHigh15mLrtQualifies ? (na(longLiquidityRetestEntry) ? openingRangeHigh15m : math.max(longLiquidityRetestEntry, openingRangeHigh15m)) : longLiquidityRetestEntry
+longLiquidityRetestEntry := longOpeningRangeLow15mLrtQualifies ? (na(longLiquidityRetestEntry) ? openingRangeLow15m : math.max(longLiquidityRetestEntry, openingRangeLow15m)) : longLiquidityRetestEntry
+
+float shortLiquidityRetestEntry = na
+shortLiquidityRetestEntry := shortPremarketHighLrtQualifies ? premarketHigh : shortLiquidityRetestEntry
+shortLiquidityRetestEntry := shortPremarketLowLrtQualifies ? (na(shortLiquidityRetestEntry) ? premarketLow : math.min(shortLiquidityRetestEntry, premarketLow)) : shortLiquidityRetestEntry
+shortLiquidityRetestEntry := shortOpeningRangeHigh15mLrtQualifies ? (na(shortLiquidityRetestEntry) ? openingRangeHigh15m : math.min(shortLiquidityRetestEntry, openingRangeHigh15m)) : shortLiquidityRetestEntry
+shortLiquidityRetestEntry := shortOpeningRangeLow15mLrtQualifies ? (na(shortLiquidityRetestEntry) ? openingRangeLow15m : math.min(shortLiquidityRetestEntry, openingRangeLow15m)) : shortLiquidityRetestEntry
+
+string longLiquidityRetestLevelName = longPremarketHighLrtQualifies and premarketHigh == longLiquidityRetestEntry ? "Premarket High" : longPremarketLowLrtQualifies and premarketLow == longLiquidityRetestEntry ? "Premarket Low" : longOpeningRangeHigh15mLrtQualifies and openingRangeHigh15m == longLiquidityRetestEntry ? "15m Opening Range High" : longOpeningRangeLow15mLrtQualifies and openingRangeLow15m == longLiquidityRetestEntry ? "15m Opening Range Low" : "N/A"
+string shortLiquidityRetestLevelName = shortPremarketHighLrtQualifies and premarketHigh == shortLiquidityRetestEntry ? "Premarket High" : shortPremarketLowLrtQualifies and premarketLow == shortLiquidityRetestEntry ? "Premarket Low" : shortOpeningRangeHigh15mLrtQualifies and openingRangeHigh15m == shortLiquidityRetestEntry ? "15m Opening Range High" : shortOpeningRangeLow15mLrtQualifies and openingRangeLow15m == shortLiquidityRetestEntry ? "15m Opening Range Low" : "N/A"
+
+bool longLiquidityRetestTouchedNonEligibleLevel = false
+bool shortLiquidityRetestTouchedNonEligibleLevel = false
 if convertedHtfTradeLevelsEnabled and array.size(swingLevelPrices) > 0
-    for expandedLongTargetIndex = 0 to array.size(swingLevelPrices) - 1
-        float expandedLongTargetPrice = array.get(swingLevelPrices, expandedLongTargetIndex)
-        string expandedLongTargetName = array.get(swingLevelNames, expandedLongTargetIndex)
-        int expandedLongTargetPriority = array.get(swingLevelPriority, expandedLongTargetIndex)
-        bool expandedLongTargetAllowed = array.get(swingLevelAllowedForTarget, expandedLongTargetIndex)
-        string expandedLongTargetType = "Level " + expandedLongTargetName
-        if expandedLongTargetAllowed and f_longTargetQualifies(expandedLongTargetPrice, expandedLongTargetType, longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and f_longTargetCandidateBetter(expandedLongTargetPrice, expandedLongTargetPriority, longTargetPrice, longTargetPriority)
-            longTargetPrice := expandedLongTargetPrice
-            longTargetType := expandedLongTargetType
-            longTargetRR := f_targetRRLong(expandedLongTargetPrice, longEntryPrice, longRiskPoints)
-            longTargetPriority := expandedLongTargetPriority
+    for liquidityRetestLevelIndex = 0 to array.size(swingLevelPrices) - 1
+        float liquidityRetestLevelPrice = array.get(swingLevelPrices, liquidityRetestLevelIndex)
+        bool liquidityRetestConvertedLevelActive = array.get(swingLevelAllowedForEntry, liquidityRetestLevelIndex) or array.get(swingLevelCloseBeyondRequired, liquidityRetestLevelIndex)
+        longLiquidityRetestTouchedNonEligibleLevel := longLiquidityRetestTouchedNonEligibleLevel or f_longLevelTouchedAndCleared(liquidityRetestConvertedLevelActive, liquidityRetestLevelPrice, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+        shortLiquidityRetestTouchedNonEligibleLevel := shortLiquidityRetestTouchedNonEligibleLevel or f_shortLevelTouchedAndCleared(liquidityRetestConvertedLevelActive, liquidityRetestLevelPrice, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
 
-if useDirectTradePrevDayHighLevel and f_longTargetQualifies(effectivePrevDayHigh, "Level PDH", longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectivePrevDayHigh, 4, longTargetPrice, longTargetPriority)
-    longTargetPrice := effectivePrevDayHigh
-    longTargetType := "Level PDH"
-    longTargetRR := f_targetRRLong(effectivePrevDayHigh, longEntryPrice, longRiskPoints)
-    longTargetPriority := 4
+longLiquidityRetestTouchedNonEligibleLevel := longLiquidityRetestTouchedNonEligibleLevel or f_longLevelTouchedAndCleared(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longLiquidityRetestTouchedNonEligibleLevel := longLiquidityRetestTouchedNonEligibleLevel or f_longLevelTouchedAndCleared(useDirectTradePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longLiquidityRetestTouchedNonEligibleLevel := longLiquidityRetestTouchedNonEligibleLevel or f_longLevelTouchedAndCleared(activeTradeDailyOpenValid, activeTradeDailyOpen, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortLiquidityRetestTouchedNonEligibleLevel := shortLiquidityRetestTouchedNonEligibleLevel or f_shortLevelTouchedAndCleared(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortLiquidityRetestTouchedNonEligibleLevel := shortLiquidityRetestTouchedNonEligibleLevel or f_shortLevelTouchedAndCleared(useDirectTradePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+shortLiquidityRetestTouchedNonEligibleLevel := shortLiquidityRetestTouchedNonEligibleLevel or f_shortLevelTouchedAndCleared(activeTradeDailyOpenValid, activeTradeDailyOpen, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
 
-if useDirectTradePrevDayLowLevel and f_longTargetQualifies(effectivePrevDayLow, "Level PDL", longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectivePrevDayLow, 4, longTargetPrice, longTargetPriority)
-    longTargetPrice := effectivePrevDayLow
-    longTargetType := "Level PDL"
-    longTargetRR := f_targetRRLong(effectivePrevDayLow, longEntryPrice, longRiskPoints)
-    longTargetPriority := 4
+bool longLrtBlockedByNonSessionLiquidity = longLiquidityRetestTouchedNonEligibleLevel
+bool shortLrtBlockedByNonSessionLiquidity = shortLiquidityRetestTouchedNonEligibleLevel
+float longLrtQualifyingLevel = longLiquidityRetestEntry
+float shortLrtQualifyingLevel = shortLiquidityRetestEntry
+bool longLrtCandidate = useLiquidityRetestModel and longScalpSetupQualified and bullSignalHighVol and longLrtLevelInExtremeThird and not longLrtBlockedByNonSessionLiquidity and not na(liquidityRetestAtrValue) and liquidityRetestAtrValue > 0
+bool shortLrtCandidate = useLiquidityRetestModel and shortScalpSetupQualified and bearSignalHighVol and shortLrtLevelInExtremeThird and not shortLrtBlockedByNonSessionLiquidity and not na(liquidityRetestAtrValue) and liquidityRetestAtrValue > 0
+bool longLiquidityRetestSetupQualified = longLrtCandidate
+bool shortLiquidityRetestSetupQualified = shortLrtCandidate
 
-if useDirectTradeDailyOpenLevel and f_longTargetQualifies(effectiveDailyOpen, "Level OP", longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectiveDailyOpen, 6, longTargetPrice, longTargetPriority)
-    longTargetPrice := effectiveDailyOpen
-    longTargetType := "Level OP"
-    longTargetRR := f_targetRRLong(effectiveDailyOpen, longEntryPrice, longRiskPoints)
-    longTargetPriority := 6
+float longLiquidityRetestStop = longLiquidityRetestEntry - liquidityRetestAtrValue
+float shortLiquidityRetestStop = shortLiquidityRetestEntry + liquidityRetestAtrValue
+float longLiquidityRetestRiskPoints = longLiquidityRetestEntry - longLiquidityRetestStop
+float shortLiquidityRetestRiskPoints = shortLiquidityRetestStop - shortLiquidityRetestEntry
+float longLiquidityRetestStopDistance = not na(longLiquidityRetestEntry) and not na(longLiquidityRetestStop) ? math.abs(longLiquidityRetestEntry - longLiquidityRetestStop) : na
+float shortLiquidityRetestStopDistance = not na(shortLiquidityRetestEntry) and not na(shortLiquidityRetestStop) ? math.abs(shortLiquidityRetestStop - shortLiquidityRetestEntry) : na
+bool longLiquidityRetestStopDistanceMatchesAtr = not na(longLiquidityRetestStopDistance) and not na(liquidityRetestAtrValue) and math.abs(longLiquidityRetestStopDistance - liquidityRetestAtrValue) <= scalpTickSize * 0.01
+bool shortLiquidityRetestStopDistanceMatchesAtr = not na(shortLiquidityRetestStopDistance) and not na(liquidityRetestAtrValue) and math.abs(shortLiquidityRetestStopDistance - liquidityRetestAtrValue) <= scalpTickSize * 0.01
+float longLiquidityRetestRiskDollarsPerContract = longLiquidityRetestRiskPoints > 0 ? longLiquidityRetestRiskPoints * scalpPointValue + commissionRoundTrip : na
+float shortLiquidityRetestRiskDollarsPerContract = shortLiquidityRetestRiskPoints > 0 ? shortLiquidityRetestRiskPoints * scalpPointValue + commissionRoundTrip : na
+int longLiquidityRetestRawContracts = not na(longLiquidityRetestRiskDollarsPerContract) and longLiquidityRetestRiskDollarsPerContract > 0 ? int(math.floor(maxRiskDollars / longLiquidityRetestRiskDollarsPerContract)) : 0
+int shortLiquidityRetestRawContracts = not na(shortLiquidityRetestRiskDollarsPerContract) and shortLiquidityRetestRiskDollarsPerContract > 0 ? int(math.floor(maxRiskDollars / shortLiquidityRetestRiskDollarsPerContract)) : 0
+int longLiquidityRetestContracts = useMaxContractCap ? math.min(longLiquidityRetestRawContracts, maxContracts) : longLiquidityRetestRawContracts
+int shortLiquidityRetestContracts = useMaxContractCap ? math.min(shortLiquidityRetestRawContracts, maxContracts) : shortLiquidityRetestRawContracts
+bool longLiquidityRetestRiskValid = longLiquidityRetestRiskPoints > 0 and not na(longLiquidityRetestRiskDollarsPerContract) and longLiquidityRetestRiskDollarsPerContract > 0 and longLiquidityRetestContracts >= 1
+bool shortLiquidityRetestRiskValid = shortLiquidityRetestRiskPoints > 0 and not na(shortLiquidityRetestRiskDollarsPerContract) and shortLiquidityRetestRiskDollarsPerContract > 0 and shortLiquidityRetestContracts >= 1
 
-if usePremarketHighLevel and f_longTargetQualifies(effectivePremarketHigh, "Level PMH", longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectivePremarketHigh, 7, longTargetPrice, longTargetPriority)
-    longTargetPrice := effectivePremarketHigh
-    longTargetType := "Level PMH"
-    longTargetRR := f_targetRRLong(effectivePremarketHigh, longEntryPrice, longRiskPoints)
-    longTargetPriority := 7
+// LRT re-runs normal target selection with the LRT entry/stop risk. This keeps
+// the original target if it still passes, or scans farther targets if it does not.
+[longLiquidityRetestTargetPrice, longLiquidityRetestTargetType, longLiquidityRetestTargetRR, longLiquidityRetestTargetPriority] = f_selectLongScalpTarget("LRT", longLiquidityRetestEntry, longLiquidityRetestRiskPoints)
+[shortLiquidityRetestTargetPrice, shortLiquidityRetestTargetType, shortLiquidityRetestTargetRR, shortLiquidityRetestTargetPriority] = f_selectShortScalpTarget("LRT", shortLiquidityRetestEntry, shortLiquidityRetestRiskPoints)
+bool longLiquidityRetestTargetValid = not na(longLiquidityRetestTargetPrice) and longLiquidityRetestTargetType != "N/A"
+bool shortLiquidityRetestTargetValid = not na(shortLiquidityRetestTargetPrice) and shortLiquidityRetestTargetType != "N/A"
+bool longLrtFailedFinalRr = longLrtCandidate and not longLiquidityRetestTargetValid
+bool shortLrtFailedFinalRr = shortLrtCandidate and not shortLiquidityRetestTargetValid
+bool longLrtFailedFinalValidation = longLrtCandidate and (not longLiquidityRetestRiskValid or not longLiquidityRetestTargetValid)
+bool shortLrtFailedFinalValidation = shortLrtCandidate and (not shortLiquidityRetestRiskValid or not shortLiquidityRetestTargetValid)
 
-if usePremarketLowLevel and f_longTargetQualifies(effectivePremarketLow, "Level PML", longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectivePremarketLow, 7, longTargetPrice, longTargetPriority)
-    longTargetPrice := effectivePremarketLow
-    longTargetType := "Level PML"
-    longTargetRR := f_targetRRLong(effectivePremarketLow, longEntryPrice, longRiskPoints)
-    longTargetPriority := 7
+// Active means LRT conditions were met. From here it is a priority override,
+// so failed LRT final validation suppresses the normal scalp instead of falling back.
+longLiquidityRetestActive = longLiquidityRetestSetupQualified
+shortLiquidityRetestActive = shortLiquidityRetestSetupQualified
 
-if useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady and f_longTargetQualifies(openingRangeHigh, "Level ORH", longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and f_longTargetCandidateBetter(openingRangeHigh, 8, longTargetPrice, longTargetPriority)
-    longTargetPrice := openingRangeHigh
-    longTargetType := "Level ORH"
-    longTargetRR := f_targetRRLong(openingRangeHigh, longEntryPrice, longRiskPoints)
-    longTargetPriority := 8
+if longLiquidityRetestActive
+    longSelectedLevelName := longLiquidityRetestLevelName
+    longEntryType := "LRT"
+    longEntryPrice := longLiquidityRetestEntry
+    longStopPrice := longLiquidityRetestStop
+    longRiskPoints := longLiquidityRetestRiskPoints
+    longRiskDollarsPerContract := longLiquidityRetestRiskDollarsPerContract
+    longRawContracts := longLiquidityRetestRawContracts
+    longContracts := longLiquidityRetestContracts
+    longRiskValid := longLiquidityRetestRiskValid
+    longTargetPrice := longLiquidityRetestTargetPrice
+    longTargetType := longLiquidityRetestTargetType
+    longTargetRR := longLiquidityRetestTargetRR
+    longTargetPriority := longLiquidityRetestTargetPriority
 
-if useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady and f_longTargetQualifies(openingRangeLow, "Level ORL", longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and f_longTargetCandidateBetter(openingRangeLow, 8, longTargetPrice, longTargetPriority)
-    longTargetPrice := openingRangeLow
-    longTargetType := "Level ORL"
-    longTargetRR := f_targetRRLong(openingRangeLow, longEntryPrice, longRiskPoints)
-    longTargetPriority := 8
-
-if array.size(swingHighPrices) > 0
-    for swingHighIndex = 0 to array.size(swingHighPrices) - 1
-        float swingHighPrice = array.get(swingHighPrices, swingHighIndex)
-        bool swingHighAllowed = array.get(swingHighActive, swingHighIndex) and f_swingTargetSessionAllowed(array.get(swingHighSessions, swingHighIndex), array.get(swingHighDateKeys, swingHighIndex), nySessionDateKey, activeCurrentRTHDateKey, activePreviousRTHDateKey)
-        if swingHighAllowed and f_longTargetQualifies(swingHighPrice, "5m Swing", longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and f_longTargetCandidateBetter(swingHighPrice, 9, longTargetPrice, longTargetPriority)
-            longTargetPrice := swingHighPrice
-            longTargetType := "5m Swing"
-            longTargetRR := f_targetRRLong(swingHighPrice, longEntryPrice, longRiskPoints)
-            longTargetPriority := 9
-
-if f_longTargetQualifies(currentRTHHigh, "HOD", longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh) and f_longTargetCandidateBetter(currentRTHHigh, 9, longTargetPrice, longTargetPriority)
-    longTargetPrice := currentRTHHigh
-    longTargetType := "HOD"
-    longTargetRR := f_targetRRLong(currentRTHHigh, longEntryPrice, longRiskPoints)
-    longTargetPriority := 9
+if shortLiquidityRetestActive
+    shortSelectedLevelName := shortLiquidityRetestLevelName
+    shortEntryType := "LRT"
+    shortEntryPrice := shortLiquidityRetestEntry
+    shortStopPrice := shortLiquidityRetestStop
+    shortRiskPoints := shortLiquidityRetestRiskPoints
+    shortRiskDollarsPerContract := shortLiquidityRetestRiskDollarsPerContract
+    shortRawContracts := shortLiquidityRetestRawContracts
+    shortContracts := shortLiquidityRetestContracts
+    shortRiskValid := shortLiquidityRetestRiskValid
+    shortTargetPrice := shortLiquidityRetestTargetPrice
+    shortTargetType := shortLiquidityRetestTargetType
+    shortTargetRR := shortLiquidityRetestTargetRR
+    shortTargetPriority := shortLiquidityRetestTargetPriority
 
 longTargetValid = not na(longTargetPrice) and longTargetType != "N/A"
-
-float shortTargetPrice = noTargetPrice
-string shortTargetType = noTargetType
-float shortTargetRR = noTargetRR
-int shortTargetPriority = noTargetPriority
-
-if convertedHtfTradeLevelsEnabled and array.size(swingLevelPrices) > 0
-    for expandedShortTargetIndex = 0 to array.size(swingLevelPrices) - 1
-        float expandedShortTargetPrice = array.get(swingLevelPrices, expandedShortTargetIndex)
-        string expandedShortTargetName = array.get(swingLevelNames, expandedShortTargetIndex)
-        int expandedShortTargetPriority = array.get(swingLevelPriority, expandedShortTargetIndex)
-        bool expandedShortTargetAllowed = array.get(swingLevelAllowedForTarget, expandedShortTargetIndex)
-        string expandedShortTargetType = "Level " + expandedShortTargetName
-        if expandedShortTargetAllowed and f_shortTargetQualifies(expandedShortTargetPrice, expandedShortTargetType, shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and f_shortTargetCandidateBetter(expandedShortTargetPrice, expandedShortTargetPriority, shortTargetPrice, shortTargetPriority)
-            shortTargetPrice := expandedShortTargetPrice
-            shortTargetType := expandedShortTargetType
-            shortTargetRR := f_targetRRShort(expandedShortTargetPrice, shortEntryPrice, shortRiskPoints)
-            shortTargetPriority := expandedShortTargetPriority
-
-if useDirectTradePrevDayHighLevel and f_shortTargetQualifies(effectivePrevDayHigh, "Level PDH", shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectivePrevDayHigh, 4, shortTargetPrice, shortTargetPriority)
-    shortTargetPrice := effectivePrevDayHigh
-    shortTargetType := "Level PDH"
-    shortTargetRR := f_targetRRShort(effectivePrevDayHigh, shortEntryPrice, shortRiskPoints)
-    shortTargetPriority := 4
-
-if useDirectTradePrevDayLowLevel and f_shortTargetQualifies(effectivePrevDayLow, "Level PDL", shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectivePrevDayLow, 4, shortTargetPrice, shortTargetPriority)
-    shortTargetPrice := effectivePrevDayLow
-    shortTargetType := "Level PDL"
-    shortTargetRR := f_targetRRShort(effectivePrevDayLow, shortEntryPrice, shortRiskPoints)
-    shortTargetPriority := 4
-
-if useDirectTradeDailyOpenLevel and f_shortTargetQualifies(effectiveDailyOpen, "Level OP", shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectiveDailyOpen, 6, shortTargetPrice, shortTargetPriority)
-    shortTargetPrice := effectiveDailyOpen
-    shortTargetType := "Level OP"
-    shortTargetRR := f_targetRRShort(effectiveDailyOpen, shortEntryPrice, shortRiskPoints)
-    shortTargetPriority := 6
-
-if usePremarketHighLevel and f_shortTargetQualifies(effectivePremarketHigh, "Level PMH", shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectivePremarketHigh, 7, shortTargetPrice, shortTargetPriority)
-    shortTargetPrice := effectivePremarketHigh
-    shortTargetType := "Level PMH"
-    shortTargetRR := f_targetRRShort(effectivePremarketHigh, shortEntryPrice, shortRiskPoints)
-    shortTargetPriority := 7
-
-if usePremarketLowLevel and f_shortTargetQualifies(effectivePremarketLow, "Level PML", shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectivePremarketLow, 7, shortTargetPrice, shortTargetPriority)
-    shortTargetPrice := effectivePremarketLow
-    shortTargetType := "Level PML"
-    shortTargetRR := f_targetRRShort(effectivePremarketLow, shortEntryPrice, shortRiskPoints)
-    shortTargetPriority := 7
-
-if useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady and f_shortTargetQualifies(openingRangeHigh, "Level ORH", shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and f_shortTargetCandidateBetter(openingRangeHigh, 8, shortTargetPrice, shortTargetPriority)
-    shortTargetPrice := openingRangeHigh
-    shortTargetType := "Level ORH"
-    shortTargetRR := f_targetRRShort(openingRangeHigh, shortEntryPrice, shortRiskPoints)
-    shortTargetPriority := 8
-
-if useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady and f_shortTargetQualifies(openingRangeLow, "Level ORL", shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and f_shortTargetCandidateBetter(openingRangeLow, 8, shortTargetPrice, shortTargetPriority)
-    shortTargetPrice := openingRangeLow
-    shortTargetType := "Level ORL"
-    shortTargetRR := f_targetRRShort(openingRangeLow, shortEntryPrice, shortRiskPoints)
-    shortTargetPriority := 8
-
-if array.size(swingLowPrices) > 0
-    for swingLowIndex = 0 to array.size(swingLowPrices) - 1
-        float swingLowPrice = array.get(swingLowPrices, swingLowIndex)
-        bool swingLowAllowed = array.get(swingLowActive, swingLowIndex) and f_swingTargetSessionAllowed(array.get(swingLowSessions, swingLowIndex), array.get(swingLowDateKeys, swingLowIndex), nySessionDateKey, activeCurrentRTHDateKey, activePreviousRTHDateKey)
-        if swingLowAllowed and f_shortTargetQualifies(swingLowPrice, "5m Swing", shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and f_shortTargetCandidateBetter(swingLowPrice, 9, shortTargetPrice, shortTargetPriority)
-            shortTargetPrice := swingLowPrice
-            shortTargetType := "5m Swing"
-            shortTargetRR := f_targetRRShort(swingLowPrice, shortEntryPrice, shortRiskPoints)
-            shortTargetPriority := 9
-
-if f_shortTargetQualifies(currentRTHLow, "LOD", shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow) and f_shortTargetCandidateBetter(currentRTHLow, 9, shortTargetPrice, shortTargetPriority)
-    shortTargetPrice := currentRTHLow
-    shortTargetType := "LOD"
-    shortTargetRR := f_targetRRShort(currentRTHLow, shortEntryPrice, shortRiskPoints)
-    shortTargetPriority := 9
-
 shortTargetValid = not na(shortTargetPrice) and shortTargetType != "N/A"
-longTargetFilterPassed = not requireValidTarget or longTargetValid
-shortTargetFilterPassed = not requireValidTarget or shortTargetValid
+longTargetFilterPassed = longLiquidityRetestActive ? longLiquidityRetestTargetValid : (not requireValidTarget or longTargetValid)
+shortTargetFilterPassed = shortLiquidityRetestActive ? shortLiquidityRetestTargetValid : (not requireValidTarget or shortTargetValid)
 
 longSelectedLevelText = f_abbrevLevelName(longSelectedLevelName)
 shortSelectedLevelText = f_abbrevLevelName(shortSelectedLevelName)
@@ -2054,14 +2216,22 @@ longTargetTypeText = f_abbrevLevelName(longTargetType)
 shortTargetTypeText = f_abbrevLevelName(shortTargetType)
 
 // ===================== Alert Conditions =====================
+// LRT is a priority override model, not an optional fallback. If its level/bar
+// conditions are met, these gates validate only the LRT entry/stop/target/size.
+// A failed LRT final validation produces no alert for that signal.
 bullScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBullSignals and longOpeningRangeFilterPassed and longOpeningRangeMarketStatePassed and bullScalpTierAllowed and longScalpSetupQualified and not longExtendedSetupBlocked and longDailyOpenBodyAcceptancePassed and longRiskValid and longTargetFilterPassed
-bullAlertLabelTitle = "LONG SCALP"
+bullAlertLabelTitle = longLiquidityRetestActive ? "LONG LRT SCALP" : "LONG SCALP"
 
 bearScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBearSignals and shortOpeningRangeFilterPassed and shortOpeningRangeMarketStatePassed and bearScalpTierAllowed and shortScalpSetupQualified and not shortExtendedSetupBlocked and shortDailyOpenBodyAcceptancePassed and shortRiskValid and shortTargetFilterPassed
-bearAlertLabelTitle = "SHORT SCALP"
+bearAlertLabelTitle = shortLiquidityRetestActive ? "SHORT LRT SCALP" : "SHORT SCALP"
 
 effectiveBullScalpAlert = bullScalpAlert
 effectiveBearScalpAlert = not effectiveBullScalpAlert and bearScalpAlert
+
+bool longNormalWouldAlertBeforeLrt = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBullSignals and longOpeningRangeFilterPassed and longOpeningRangeMarketStatePassed and bullScalpTierAllowed and longScalpSetupQualified and not longExtendedSetupBlocked and longDailyOpenBodyAcceptancePassed and longNormalRiskValid and longNormalTargetFilterPassed
+bool shortNormalWouldAlertBeforeLrt = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBearSignals and shortOpeningRangeFilterPassed and shortOpeningRangeMarketStatePassed and bearScalpTierAllowed and shortScalpSetupQualified and not shortExtendedSetupBlocked and shortDailyOpenBodyAcceptancePassed and shortNormalRiskValid and shortNormalTargetFilterPassed
+bool longLrtSuppressedNormalAlert = longLrtCandidate and longNormalWouldAlertBeforeLrt and not bullScalpAlert
+bool shortLrtSuppressedNormalAlert = shortLrtCandidate and shortNormalWouldAlertBeforeLrt and not bearScalpAlert
 
 showHistoricalAlertLabels = alertLabelMode != "Off"
 showCompactAlertLabels = alertLabelMode == "Compact"
@@ -2081,7 +2251,7 @@ f_addAlertChartLabel(_price, _text, _style, _color) =>
     label.new(bar_index, _price, _text, style=_style, textcolor=color.white, color=_color, size=showCompactAlertLabels ? size.small : size.tiny)
 
 alertDirectionTitle = effectiveBullScalpAlert ? bullAlertLabelTitle : effectiveBearScalpAlert ? bearAlertLabelTitle : ""
-alertCompactSignalText = effectiveBullScalpAlert ? bullCompactSignalText : effectiveBearScalpAlert ? bearCompactSignalText : ""
+alertCompactSignalText = effectiveBullScalpAlert ? (longLiquidityRetestActive ? "LRT" : bullCompactSignalText) : effectiveBearScalpAlert ? (shortLiquidityRetestActive ? "LRT" : bearCompactSignalText) : ""
 alertSelectedLevelName = effectiveBullScalpAlert ? longSelectedLevelText : effectiveBearScalpAlert ? shortSelectedLevelText : "N/A"
 alertEntryType = effectiveBullScalpAlert ? longEntryTypeText : effectiveBearScalpAlert ? shortEntryTypeText : "N/A"
 alertEntryPrice = effectiveBullScalpAlert ? longEntryPrice : effectiveBearScalpAlert ? shortEntryPrice : na
@@ -2132,6 +2302,74 @@ f_addScalpStatusRow(table _statusTable, int _row, string _label, string _value, 
     table.cell(_statusTable, 0, _row, _label, text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
     table.cell(_statusTable, 1, _row, _value, text_color=_valueColor, text_size=size.small, text_halign=text.align_right)
     _row + 1
+
+f_statusColor(bool _condition) =>
+    _condition ? color.lime : color.red
+
+f_boolPairText(bool _left, bool _right) =>
+    f_boolText(_left) + " / " + f_boolText(_right)
+
+var table liquidityRetestDebugTable = table.new(position.top_right, 2, 80, bgcolor=color.new(color.black, 85), border_width=0)
+if barstate.islast
+    table.clear(liquidityRetestDebugTable, 0, 0, 1, 79)
+    if showLiquidityRetestDebug
+        color lrtNeutralColor = color.rgb(220, 220, 220)
+        int lrtDebugRow = 0
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "LRT Enabled", f_boolText(useLiquidityRetestModel), f_statusColor(useLiquidityRetestModel))
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "RTH / OR Ready", f_boolPairText(inScalpRTHSession, openingRangeLevelsReady), inScalpRTHSession and openingRangeLevelsReady ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Not OR Window", f_boolText(not inOpeningRangeWindow), not inOpeningRangeWindow ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Range", f_pointsText(scalpSignalHigh - scalpSignalLow), lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long Lower 1/3", f_priceText(longLiquidityRetestLowerThirdMax), lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short Upper 1/3", f_priceText(shortLiquidityRetestUpperThirdMin), lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "LRT ATR", f_pointsText(liquidityRetestAtrValue), not na(liquidityRetestAtrValue) and liquidityRetestAtrValue > 0 ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "PMH / PML", f_priceText(premarketHigh) + " / " + f_priceText(premarketLow), lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "ORH / ORL", f_priceText(openingRangeHigh15m) + " / " + f_priceText(openingRangeLow15m), lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long Normal Alert", f_boolText(longNormalWouldAlertBeforeLrt), longNormalWouldAlertBeforeLrt ? color.lime : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long Final Alert", f_boolText(bullScalpAlert), bullScalpAlert ? color.lime : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long Setup / HV", f_boolPairText(longScalpSetupQualified, bullSignalHighVol), longScalpSetupQualified and bullSignalHighVol ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long Tier / OR", f_boolPairText(bullScalpTierAllowed, longOpeningRangeFilterPassed and longOpeningRangeMarketStatePassed), bullScalpTierAllowed and longOpeningRangeFilterPassed and longOpeningRangeMarketStatePassed ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long Ext / DO", f_boolPairText(not longExtendedSetupBlocked, longDailyOpenBodyAcceptancePassed), not longExtendedSetupBlocked and longDailyOpenBodyAcceptancePassed ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long Norm Risk/Tgt", f_boolPairText(longNormalRiskValid, longNormalTargetFilterPassed), longNormalRiskValid and longNormalTargetFilterPassed ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long Norm E/S", f_priceText(longNormalEntryPrice) + " / " + f_priceText(longNormalStopPrice), lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long Norm T/R", f_priceText(longNormalTargetPrice) + " / " + f_rrText(longNormalTargetRR), longNormalTargetFilterPassed ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "L PMH setup/LRT", f_boolPairText(longPremarketHighInSetup, longPremarketHighLrtQualifies), longPremarketHighLrtQualifies ? color.lime : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "L PML setup/LRT", f_boolPairText(longPremarketLowInSetup, longPremarketLowLrtQualifies), longPremarketLowLrtQualifies ? color.lime : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "L ORH setup/LRT", f_boolPairText(longOpeningRangeHigh15mInSetup, longOpeningRangeHigh15mLrtQualifies), longOpeningRangeHigh15mLrtQualifies ? color.lime : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "L ORL setup/LRT", f_boolPairText(longOpeningRangeLow15mInSetup, longOpeningRangeLow15mLrtQualifies), longOpeningRangeLow15mLrtQualifies ? color.lime : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long LRT Candidate", f_boolText(longLrtCandidate), longLrtCandidate ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long LRT Active", f_boolText(longLiquidityRetestActive), longLiquidityRetestActive ? color.lime : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long LRT Blocked", f_boolText(longLrtBlockedByNonSessionLiquidity), longLrtBlockedByNonSessionLiquidity ? color.red : color.lime)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long LRT Level", f_abbrevLevelName(longLiquidityRetestLevelName) + " " + f_priceText(longLrtQualifyingLevel), longLrtCandidate ? color.lime : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long LRT E/S", f_priceText(longLiquidityRetestEntry) + " / " + f_priceText(longLiquidityRetestStop), lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long LRT Stop Dist", f_pointsText(longLiquidityRetestStopDistance), longLiquidityRetestStopDistanceMatchesAtr ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long LRT Target", f_priceText(longLiquidityRetestTargetPrice) + " " + f_abbrevLevelName(longLiquidityRetestTargetType), longLiquidityRetestTargetValid ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long LRT R:R", f_rrText(longLiquidityRetestTargetRR), longLiquidityRetestTargetValid ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long LRT Ct/Risk", str.tostring(longLiquidityRetestContracts) + " / " + f_boolText(longLiquidityRetestRiskValid), longLiquidityRetestRiskValid ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long LRT Failed", f_boolText(longLrtFailedFinalValidation), longLrtFailedFinalValidation ? color.red : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Long Suppressed", f_boolText(longLrtSuppressedNormalAlert), longLrtSuppressedNormalAlert ? color.red : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short Normal Alert", f_boolText(shortNormalWouldAlertBeforeLrt), shortNormalWouldAlertBeforeLrt ? color.lime : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short Final Alert", f_boolText(bearScalpAlert), bearScalpAlert ? color.lime : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short Setup / HV", f_boolPairText(shortScalpSetupQualified, bearSignalHighVol), shortScalpSetupQualified and bearSignalHighVol ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short Tier / OR", f_boolPairText(bearScalpTierAllowed, shortOpeningRangeFilterPassed and shortOpeningRangeMarketStatePassed), bearScalpTierAllowed and shortOpeningRangeFilterPassed and shortOpeningRangeMarketStatePassed ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short Ext / DO", f_boolPairText(not shortExtendedSetupBlocked, shortDailyOpenBodyAcceptancePassed), not shortExtendedSetupBlocked and shortDailyOpenBodyAcceptancePassed ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short Norm Risk/Tgt", f_boolPairText(shortNormalRiskValid, shortNormalTargetFilterPassed), shortNormalRiskValid and shortNormalTargetFilterPassed ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short Norm E/S", f_priceText(shortNormalEntryPrice) + " / " + f_priceText(shortNormalStopPrice), lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short Norm T/R", f_priceText(shortNormalTargetPrice) + " / " + f_rrText(shortNormalTargetRR), shortNormalTargetFilterPassed ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "S PMH setup/LRT", f_boolPairText(shortPremarketHighInSetup, shortPremarketHighLrtQualifies), shortPremarketHighLrtQualifies ? color.lime : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "S PML setup/LRT", f_boolPairText(shortPremarketLowInSetup, shortPremarketLowLrtQualifies), shortPremarketLowLrtQualifies ? color.lime : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "S ORH setup/LRT", f_boolPairText(shortOpeningRangeHigh15mInSetup, shortOpeningRangeHigh15mLrtQualifies), shortOpeningRangeHigh15mLrtQualifies ? color.lime : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "S ORL setup/LRT", f_boolPairText(shortOpeningRangeLow15mInSetup, shortOpeningRangeLow15mLrtQualifies), shortOpeningRangeLow15mLrtQualifies ? color.lime : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short LRT Candidate", f_boolText(shortLrtCandidate), shortLrtCandidate ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short LRT Active", f_boolText(shortLiquidityRetestActive), shortLiquidityRetestActive ? color.lime : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short LRT Blocked", f_boolText(shortLrtBlockedByNonSessionLiquidity), shortLrtBlockedByNonSessionLiquidity ? color.red : color.lime)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short LRT Level", f_abbrevLevelName(shortLiquidityRetestLevelName) + " " + f_priceText(shortLrtQualifyingLevel), shortLrtCandidate ? color.lime : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short LRT E/S", f_priceText(shortLiquidityRetestEntry) + " / " + f_priceText(shortLiquidityRetestStop), lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short LRT Stop Dist", f_pointsText(shortLiquidityRetestStopDistance), shortLiquidityRetestStopDistanceMatchesAtr ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short LRT Target", f_priceText(shortLiquidityRetestTargetPrice) + " " + f_abbrevLevelName(shortLiquidityRetestTargetType), shortLiquidityRetestTargetValid ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short LRT R:R", f_rrText(shortLiquidityRetestTargetRR), shortLiquidityRetestTargetValid ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short LRT Ct/Risk", str.tostring(shortLiquidityRetestContracts) + " / " + f_boolText(shortLiquidityRetestRiskValid), shortLiquidityRetestRiskValid ? color.lime : color.red)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short LRT Failed", f_boolText(shortLrtFailedFinalValidation), shortLrtFailedFinalValidation ? color.red : lrtNeutralColor)
+        lrtDebugRow := f_addScalpStatusRow(liquidityRetestDebugTable, lrtDebugRow, "Short Suppressed", f_boolText(shortLrtSuppressedNormalAlert), shortLrtSuppressedNormalAlert ? color.red : lrtNeutralColor)
 
 var table scalpStatusTable = table.new(position.bottom_right, 2, 100, bgcolor=color.new(color.black, 85), border_width=0)
 if barstate.islast
