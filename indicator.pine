@@ -22,13 +22,18 @@ minTargetRR              = input.float(1.0, title="Scalp Minimum Target R:R", mi
 alertTradingWindow       = input.session("0930-1130", title="Alert Trading Window", group=groupCoreAlerts, tooltip="Only produces scalp alerts during this New York time window. Default is the first two hours of RTH.")
 
 // 02. Setup Filters
-requireFboSwingSweep = input.bool(false, title="Require FBO Swing Sweep", group=groupSetupFilters, tooltip="When enabled, failed breakout scalp setups must sweep a prior tracked 5m swing. When disabled, failed breakout setups only need the normal level-break, signal, body-acceptance, risk, and target filters.")
+requireFboSwingSweep = input.bool(false, title="Require FBO Swing Sweep", group=groupSetupFilters, tooltip="When enabled, failed breakout scalp setups must sweep a prior tracked 5m swing. When disabled, failed breakout setups only need the normal level-break, signal, range-acceptance, risk, and target filters.")
 useLiquidityRetestModel = input.bool(true, "Use Liquidity Retest Model", group=groupSetupFilters, tooltip="Backtest-only alternate model for HV bars testing session liquidity in the extreme third of the signal bar. Uses level-retest entry and 1 ATR stop.")
-skipFiveBarExtension     = input.bool(true, title="Skip 5+ Bar Extension", group=groupSetupFilters)
-skipStrongMicrochannelExtension = input.bool(true, title="Skip 3+ Bar Strong Extension", group=groupSetupFilters)
+useNineEmaMomentumSetup = input.bool(true, title="Use 9 EMA Momentum Setup", group=groupSetupFilters, tooltip="Allows a no-level-required high-volume momentum continuation setup when the full signal bar is at least one tick beyond the rounded 9 EMA. Uses 50% retracement entry and signal-bar stop.")
+requirePriorBarBeyondNineEma = input.bool(true, title="Require Prior Bar Beyond 9 EMA", group=groupSetupFilters, tooltip="When enabled, the 9 EMA Momentum Setup requires the prior bar to also be at least one tick beyond the rounded 9 EMA in the trade direction.")
+requireRecentStrongCloseForNineEma = input.bool(true, title="Require Recent Strong Close For 9 EMA Setup", group=groupSetupFilters, tooltip="When enabled, the 9 EMA Momentum Setup requires either the prior bar or the bar two bars back to close in the upper third for longs, or in the lower third for shorts.")
+blockNineEmaSetupWhenTooFarFromEma = input.bool(true, title="Block 9 EMA Setup When Too Far From EMA", group=groupSetupFilters, tooltip="When enabled, blocks the 9 EMA Momentum Setup if the distance from the signal bar to the rounded 9 EMA is greater than the signal bar's total range.")
+skipFiveSameColorBarExtension = input.bool(true, title="Skip 5 Same-Color Bar Extension", group=groupSetupFilters, tooltip="Blocks long signals when the signal bar is the 5th consecutive bull bar or later, and blocks short signals when the signal bar is the 5th consecutive bear bar or later.")
+skipFiveBarExtension     = input.bool(false, title="Skip 5+ No-Pullback Extension - Legacy", group=groupSetupFilters)
+skipStrongMicrochannelExtension = input.bool(false, title="Skip 3+ Strong Microchannel Extension - Legacy", group=groupSetupFilters)
 minLevelEntryRetracement = input.float(0.20, title="Minimum Level Entry Retracement", minval=0.0, maxval=0.5, step=0.05, group=groupSetupFilters)
-requireDailyOpenBodyAcceptance = input.bool(true, title="Require Daily Open Body Acceptance", group=groupSetupFilters)
-dailyOpenBodyAcceptancePct = input.float(0.50, title="Daily Open Body Acceptance %", minval=0.0, maxval=1.0, step=0.05, group=groupSetupFilters)
+requireDailyOpenRangeAcceptance = input.bool(true, title="Require Daily Open Range Acceptance", group=groupSetupFilters, tooltip="When enabled, signals touching the daily open must have enough of the full signal-bar range accepted beyond the daily open in the trade direction.")
+dailyOpenRangeAcceptancePct = input.float(0.50, title="Daily Open Range Acceptance %", minval=0.0, maxval=1.0, step=0.05, group=groupSetupFilters, tooltip="Minimum percentage of the full signal-bar range that must be beyond the daily open in the trade direction when the signal bar touches the daily open.")
 alertSetupSignals        = input.bool(true, title="Allow Setup Signals", group=groupSetupFilters)
 alertIgnitionSignals     = input.bool(true, title="Allow Ignition Signals", group=groupSetupFilters)
 alertStrongIgnitions     = input.bool(true, title="Allow Strong Ignitions", group=groupSetupFilters)
@@ -1379,6 +1384,8 @@ while array.size(fboSwingLowPrices) > maxTrackedSwingTargets
 
 // ===================== Pre-computed Conditions =====================
 sufficientVolumeAndVolatility = sufficientVolume and sufficientVolatility
+nineEma = ta.ema(close, 9)
+roundedNineEma = f_roundToScalpTick(nineEma)
 
 // ===================== Pressure Signal Conditions =====================
 pressureRange = f_safeRange(high, low)
@@ -1478,13 +1485,27 @@ convertedDailyOpenForConfluence = convertedHtfTradeLevelsEnabled and useDailyOpe
 convertedDailyOpenValid = useDailyOpenLevel and f_validSourcePrice(convertedDailyOpenForConfluence)
 activeTradeDailyOpen = useDailyOpenLevel ? (useConvertedHtfLevelsForTradeLogic ? (convertedDailyOpenValid ? convertedDailyOpenForConfluence : na) : effectiveDailyOpen) : na
 activeTradeDailyOpenValid = useDailyOpenLevel and f_validSourcePrice(activeTradeDailyOpen)
-dailyOpenTouchedCurrent = f_levelTouched(activeTradeDailyOpenValid, activeTradeDailyOpen, scalpSignalLow, scalpSignalHigh)
-rangeAboveDailyOpen = barRange > 0 and dailyOpenTouchedCurrent ? math.max(scalpSignalHigh - activeTradeDailyOpen, 0.0) : na
-rangeBelowDailyOpen = barRange > 0 and dailyOpenTouchedCurrent ? math.max(activeTradeDailyOpen - scalpSignalLow, 0.0) : na
-rangeAboveDailyOpenPct = barRange > 0 and dailyOpenTouchedCurrent ? math.min(rangeAboveDailyOpen / barRange, 1.0) : na
-rangeBelowDailyOpenPct = barRange > 0 and dailyOpenTouchedCurrent ? math.min(rangeBelowDailyOpen / barRange, 1.0) : na
-longDailyOpenBodyAcceptancePassed = not requireDailyOpenBodyAcceptance or not dailyOpenTouchedCurrent or (barRange > 0 and not na(rangeAboveDailyOpenPct) and rangeAboveDailyOpenPct >= dailyOpenBodyAcceptancePct)
-shortDailyOpenBodyAcceptancePassed = not requireDailyOpenBodyAcceptance or not dailyOpenTouchedCurrent or (barRange > 0 and not na(rangeBelowDailyOpenPct) and rangeBelowDailyOpenPct >= dailyOpenBodyAcceptancePct)
+chartDailyOpenRangeAcceptanceValid = useDailyOpenLevel and f_validSourcePrice(effectiveDailyOpen) and (not activeTradeDailyOpenValid or not f_sameRoundedTargetPrice(activeTradeDailyOpen, effectiveDailyOpen))
+// Daily Open Acceptance is range-based, not body-based. It measures how much of the full signal-bar high-low range is beyond the daily open in the trade direction.
+// Check both the active trade DO and the chart's effective DO so a visible OP touch cannot bypass this gate when converted levels are different or unavailable.
+dailyOpenSignalRange = scalpSignalHigh - scalpSignalLow
+activeDailyOpenTouchedCurrent = f_levelTouched(activeTradeDailyOpenValid, activeTradeDailyOpen, scalpSignalLow, scalpSignalHigh)
+chartDailyOpenTouchedCurrent = f_levelTouched(chartDailyOpenRangeAcceptanceValid, effectiveDailyOpen, scalpSignalLow, scalpSignalHigh)
+dailyOpenTouchedCurrent = activeDailyOpenTouchedCurrent or chartDailyOpenTouchedCurrent
+activeRangeAboveDailyOpen = dailyOpenSignalRange > 0 and activeDailyOpenTouchedCurrent ? math.max(scalpSignalHigh - activeTradeDailyOpen, 0.0) : na
+activeRangeBelowDailyOpen = dailyOpenSignalRange > 0 and activeDailyOpenTouchedCurrent ? math.max(activeTradeDailyOpen - scalpSignalLow, 0.0) : na
+chartRangeAboveDailyOpen = dailyOpenSignalRange > 0 and chartDailyOpenTouchedCurrent ? math.max(scalpSignalHigh - effectiveDailyOpen, 0.0) : na
+chartRangeBelowDailyOpen = dailyOpenSignalRange > 0 and chartDailyOpenTouchedCurrent ? math.max(effectiveDailyOpen - scalpSignalLow, 0.0) : na
+activeRangeAboveDailyOpenPct = dailyOpenSignalRange > 0 and activeDailyOpenTouchedCurrent ? math.min(activeRangeAboveDailyOpen / dailyOpenSignalRange, 1.0) : na
+activeRangeBelowDailyOpenPct = dailyOpenSignalRange > 0 and activeDailyOpenTouchedCurrent ? math.min(activeRangeBelowDailyOpen / dailyOpenSignalRange, 1.0) : na
+chartRangeAboveDailyOpenPct = dailyOpenSignalRange > 0 and chartDailyOpenTouchedCurrent ? math.min(chartRangeAboveDailyOpen / dailyOpenSignalRange, 1.0) : na
+chartRangeBelowDailyOpenPct = dailyOpenSignalRange > 0 and chartDailyOpenTouchedCurrent ? math.min(chartRangeBelowDailyOpen / dailyOpenSignalRange, 1.0) : na
+activeLongDailyOpenRangeAccepted = not activeDailyOpenTouchedCurrent or (dailyOpenSignalRange > 0 and not na(activeRangeAboveDailyOpenPct) and activeRangeAboveDailyOpenPct >= dailyOpenRangeAcceptancePct)
+activeShortDailyOpenRangeAccepted = not activeDailyOpenTouchedCurrent or (dailyOpenSignalRange > 0 and not na(activeRangeBelowDailyOpenPct) and activeRangeBelowDailyOpenPct >= dailyOpenRangeAcceptancePct)
+chartLongDailyOpenRangeAccepted = not chartDailyOpenTouchedCurrent or (dailyOpenSignalRange > 0 and not na(chartRangeAboveDailyOpenPct) and chartRangeAboveDailyOpenPct >= dailyOpenRangeAcceptancePct)
+chartShortDailyOpenRangeAccepted = not chartDailyOpenTouchedCurrent or (dailyOpenSignalRange > 0 and not na(chartRangeBelowDailyOpenPct) and chartRangeBelowDailyOpenPct >= dailyOpenRangeAcceptancePct)
+longDailyOpenRangeAcceptancePassed = not requireDailyOpenRangeAcceptance or (activeLongDailyOpenRangeAccepted and chartLongDailyOpenRangeAccepted)
+shortDailyOpenRangeAcceptancePassed = not requireDailyOpenRangeAcceptance or (activeShortDailyOpenRangeAccepted and chartShortDailyOpenRangeAccepted)
 float noSelectedLevelPrice = na
 string noSelectedLevelName = "N/A"
 int noSelectedLevelPriority = 999
@@ -1707,33 +1728,89 @@ longFiveBarExtension = longBarsWithoutPullbackBreak >= 5
 shortFiveBarExtension = shortBarsWithoutPullbackBreak >= 5
 longStrongMicrochannelExtension = longBarsWithoutPullbackBreak >= 3 and prior1StrongBull and prior2StrongBull
 shortStrongMicrochannelExtension = shortBarsWithoutPullbackBreak >= 3 and prior1StrongBear and prior2StrongBear
+longFiveSameColorBarExtension =
+     f_isBullBar(open, close) and
+     f_isBullBar(open[1], close[1]) and
+     f_isBullBar(open[2], close[2]) and
+     f_isBullBar(open[3], close[3]) and
+     f_isBullBar(open[4], close[4])
+shortFiveSameColorBarExtension =
+     f_isBearBar(open, close) and
+     f_isBearBar(open[1], close[1]) and
+     f_isBearBar(open[2], close[2]) and
+     f_isBearBar(open[3], close[3]) and
+     f_isBearBar(open[4], close[4])
 longExtendedSetup = longFiveBarExtension or longStrongMicrochannelExtension
 shortExtendedSetup = shortFiveBarExtension or shortStrongMicrochannelExtension
-longExtendedSetupBlocked = longExtendedSetup and ((skipFiveBarExtension and longFiveBarExtension) or (skipStrongMicrochannelExtension and longStrongMicrochannelExtension))
-shortExtendedSetupBlocked = shortExtendedSetup and ((skipFiveBarExtension and shortFiveBarExtension) or (skipStrongMicrochannelExtension and shortStrongMicrochannelExtension))
+longExtendedSetupBlocked =
+     (skipFiveSameColorBarExtension and longFiveSameColorBarExtension) or
+     (skipFiveBarExtension and longFiveBarExtension) or
+     (skipStrongMicrochannelExtension and longStrongMicrochannelExtension)
+shortExtendedSetupBlocked =
+     (skipFiveSameColorBarExtension and shortFiveSameColorBarExtension) or
+     (skipFiveBarExtension and shortFiveBarExtension) or
+     (skipStrongMicrochannelExtension and shortStrongMicrochannelExtension)
 
 longFboSwingSweepFilterPassed = not requireFboSwingSweep or longScalpFboSweepQualified
 shortFboSwingSweepFilterPassed = not requireFboSwingSweep or shortScalpFboSweepQualified
 longFboLevelSetupQualified = longLevelBreakSetup and bullScalpSetupTier and alertSetupSignals and longFboSwingSweepFilterPassed
 longIgnitionLevelSetupQualified = longLevelBreakSetup and bullScalpIgnitionTier and alertIgnitionSignals
 longStrongIgnitionLevelSetupQualified = longLevelBreakSetup and bullScalpStrongIgnitionTier and alertStrongIgnitions
-longScalpSetupQualified = longFboLevelSetupQualified or longIgnitionLevelSetupQualified or longStrongIgnitionLevelSetupQualified
+// Prior bar must use roundedNineEma[1], not current roundedNineEma, so the prior bar is checked against its own EMA value.
+longPriorBarBeyondNineEma = not requirePriorBarBeyondNineEma or (not na(roundedNineEma[1]) and low[1] >= roundedNineEma[1] + scalpTickSize)
+shortPriorBarBeyondNineEma = not requirePriorBarBeyondNineEma or (not na(roundedNineEma[1]) and high[1] <= roundedNineEma[1] - scalpTickSize)
+longRecentStrongCloseForNineEma = not requireRecentStrongCloseForNineEma or closeInUpperThird[1] or closeInUpperThird[2]
+shortRecentStrongCloseForNineEma = not requireRecentStrongCloseForNineEma or closeInLowerThird[1] or closeInLowerThird[2]
+// Blocks 9 EMA continuation setups only when the signal bar is more than one full bar range away from its rounded EMA.
+longNineEmaDistanceFromEma = low - roundedNineEma
+shortNineEmaDistanceFromEma = roundedNineEma - high
+longNineEmaDistanceNotTooExtended = not blockNineEmaSetupWhenTooFarFromEma or (barRange > 0 and not na(roundedNineEma) and longNineEmaDistanceFromEma <= barRange)
+shortNineEmaDistanceNotTooExtended = not blockNineEmaSetupWhenTooFarFromEma or (barRange > 0 and not na(roundedNineEma) and shortNineEmaDistanceFromEma <= barRange)
+longNineEmaMomentumSetup =
+     useNineEmaMomentumSetup and
+     bullSignalHighVol and
+     isMostlyBody and
+     f_isBullBar(open, close) and
+     closeInUpperThird and
+     not na(roundedNineEma) and
+     low >= roundedNineEma + scalpTickSize and
+     longPriorBarBeyondNineEma and
+     longRecentStrongCloseForNineEma and
+     longNineEmaDistanceNotTooExtended
+longNineEmaMomentumSetupQualified = longNineEmaMomentumSetup and alertStrongIgnitions
+longLevelScalpSetupQualified = longFboLevelSetupQualified or longIgnitionLevelSetupQualified or longStrongIgnitionLevelSetupQualified
+longScalpSetupQualified = longLevelScalpSetupQualified or longNineEmaMomentumSetupQualified
 
 shortFboLevelSetupQualified = shortLevelBreakSetup and bearScalpSetupTier and alertSetupSignals and shortFboSwingSweepFilterPassed
 shortIgnitionLevelSetupQualified = shortLevelBreakSetup and bearScalpIgnitionTier and alertIgnitionSignals
 shortStrongIgnitionLevelSetupQualified = shortLevelBreakSetup and bearScalpStrongIgnitionTier and alertStrongIgnitions
-shortScalpSetupQualified = shortFboLevelSetupQualified or shortIgnitionLevelSetupQualified or shortStrongIgnitionLevelSetupQualified
+shortNineEmaMomentumSetup =
+     useNineEmaMomentumSetup and
+     bearSignalHighVol and
+     isMostlyBody and
+     f_isBearBar(open, close) and
+     closeInLowerThird and
+     not na(roundedNineEma) and
+     high <= roundedNineEma - scalpTickSize and
+     shortPriorBarBeyondNineEma and
+     shortRecentStrongCloseForNineEma and
+     shortNineEmaDistanceNotTooExtended
+shortNineEmaMomentumSetupQualified = shortNineEmaMomentumSetup and alertStrongIgnitions
+shortLevelScalpSetupQualified = shortFboLevelSetupQualified or shortIgnitionLevelSetupQualified or shortStrongIgnitionLevelSetupQualified
+shortScalpSetupQualified = shortLevelScalpSetupQualified or shortNineEmaMomentumSetupQualified
+longNineEmaMomentumActive = longNineEmaMomentumSetupQualified and not longLevelScalpSetupQualified
+shortNineEmaMomentumActive = shortNineEmaMomentumSetupQualified and not shortLevelScalpSetupQualified
 
 openingRangeAlertText = openingRangeStatus
 
 // ===================== Scalp Entry / Stop / Risk Logic =====================
-longUsePriorityLevel = longLevelEntryRequired and longLevelEntryRetracementOk
-shortUsePriorityLevel = shortLevelEntryRequired and shortLevelEntryRetracementOk
-longEntryType = longUsePriorityLevel ? longSelectedLevelName : "50%"
-shortEntryType = shortUsePriorityLevel ? shortSelectedLevelName : "50%"
+longUsePriorityLevel = not longNineEmaMomentumActive and longLevelEntryRequired and longLevelEntryRetracementOk
+shortUsePriorityLevel = not shortNineEmaMomentumActive and shortLevelEntryRequired and shortLevelEntryRetracementOk
+longEntryType = longNineEmaMomentumActive ? "50%" : longUsePriorityLevel ? longSelectedLevelName : "50%"
+shortEntryType = shortNineEmaMomentumActive ? "50%" : shortUsePriorityLevel ? shortSelectedLevelName : "50%"
 
-longEntryPrice = longUsePriorityLevel ? longSelectedLevelPrice : longEntry50
-shortEntryPrice = shortUsePriorityLevel ? shortSelectedLevelPrice : shortEntry50
+longEntryPrice = longNineEmaMomentumActive ? longEntry50 : longUsePriorityLevel ? longSelectedLevelPrice : longEntry50
+shortEntryPrice = shortNineEmaMomentumActive ? shortEntry50 : shortUsePriorityLevel ? shortSelectedLevelPrice : shortEntry50
 longStopPrice = scalpSignalLow - scalpTickSize
 shortStopPrice = scalpSignalHigh + scalpTickSize
 longRiskPoints = longEntryPrice - longStopPrice
@@ -1938,6 +2015,19 @@ bool shortPremarketHighLrtQualifies = shortPremarketHighInSetup and premarketHig
 bool shortPremarketLowLrtQualifies = shortPremarketLowInSetup and premarketLow >= shortLiquidityRetestUpperThirdMin
 bool shortOpeningRangeHigh15mLrtQualifies = shortOpeningRangeHigh15mInSetup and openingRangeHigh15m >= shortLiquidityRetestUpperThirdMin
 bool shortOpeningRangeLow15mLrtQualifies = shortOpeningRangeLow15mInSetup and openingRangeLow15m >= shortLiquidityRetestUpperThirdMin
+bool longAnySessionLiquidityLevelTouched = longPremarketHighInSetup or longPremarketLowInSetup or longOpeningRangeHigh15mInSetup or longOpeningRangeLow15mInSetup
+bool shortAnySessionLiquidityLevelTouched = shortPremarketHighInSetup or shortPremarketLowInSetup or shortOpeningRangeHigh15mInSetup or shortOpeningRangeLow15mInSetup
+// LRT is only valid if every touched session-liquidity level is in the correct extreme third. One qualifying OR/PM level cannot override another touched OR/PM level that is too far from the entry zone.
+bool longAllTouchedSessionLiquidityLevelsInLowerThird =
+     (not longPremarketHighInSetup or longPremarketHighLrtQualifies) and
+     (not longPremarketLowInSetup or longPremarketLowLrtQualifies) and
+     (not longOpeningRangeHigh15mInSetup or longOpeningRangeHigh15mLrtQualifies) and
+     (not longOpeningRangeLow15mInSetup or longOpeningRangeLow15mLrtQualifies)
+bool shortAllTouchedSessionLiquidityLevelsInUpperThird =
+     (not shortPremarketHighInSetup or shortPremarketHighLrtQualifies) and
+     (not shortPremarketLowInSetup or shortPremarketLowLrtQualifies) and
+     (not shortOpeningRangeHigh15mInSetup or shortOpeningRangeHigh15mLrtQualifies) and
+     (not shortOpeningRangeLow15mInSetup or shortOpeningRangeLow15mLrtQualifies)
 bool longLrtLevelInExtremeThird = longPremarketHighLrtQualifies or longPremarketLowLrtQualifies or longOpeningRangeHigh15mLrtQualifies or longOpeningRangeLow15mLrtQualifies
 bool shortLrtLevelInExtremeThird = shortPremarketHighLrtQualifies or shortPremarketLowLrtQualifies or shortOpeningRangeHigh15mLrtQualifies or shortOpeningRangeLow15mLrtQualifies
 
@@ -1958,6 +2048,7 @@ string shortLiquidityRetestLevelName = shortPremarketHighLrtQualifies and premar
 
 bool longLiquidityRetestTouchedNonEligibleLevel = false
 bool shortLiquidityRetestTouchedNonEligibleLevel = false
+// LRT should only consider PMH/PML/ORH/ORL. Any other touched/cleared trade level blocks LRT.
 if convertedHtfTradeLevelsEnabled and array.size(swingLevelPrices) > 0
     for liquidityRetestLevelIndex = 0 to array.size(swingLevelPrices) - 1
         float liquidityRetestLevelPrice = array.get(swingLevelPrices, liquidityRetestLevelIndex)
@@ -1974,8 +2065,8 @@ shortLiquidityRetestTouchedNonEligibleLevel := shortLiquidityRetestTouchedNonEli
 
 bool longLrtBlockedByNonSessionLiquidity = longLiquidityRetestTouchedNonEligibleLevel
 bool shortLrtBlockedByNonSessionLiquidity = shortLiquidityRetestTouchedNonEligibleLevel
-bool longLrtCandidate = useLiquidityRetestModel and longScalpSetupQualified and bullSignalHighVol and longLrtLevelInExtremeThird and not longLrtBlockedByNonSessionLiquidity and not na(liquidityRetestAtrValue) and liquidityRetestAtrValue > 0
-bool shortLrtCandidate = useLiquidityRetestModel and shortScalpSetupQualified and bearSignalHighVol and shortLrtLevelInExtremeThird and not shortLrtBlockedByNonSessionLiquidity and not na(liquidityRetestAtrValue) and liquidityRetestAtrValue > 0
+bool longLrtCandidate = useLiquidityRetestModel and longLevelScalpSetupQualified and bullSignalHighVol and longAnySessionLiquidityLevelTouched and longLrtLevelInExtremeThird and longAllTouchedSessionLiquidityLevelsInLowerThird and not longLrtBlockedByNonSessionLiquidity and not na(liquidityRetestAtrValue) and liquidityRetestAtrValue > 0
+bool shortLrtCandidate = useLiquidityRetestModel and shortLevelScalpSetupQualified and bearSignalHighVol and shortAnySessionLiquidityLevelTouched and shortLrtLevelInExtremeThird and shortAllTouchedSessionLiquidityLevelsInUpperThird and not shortLrtBlockedByNonSessionLiquidity and not na(liquidityRetestAtrValue) and liquidityRetestAtrValue > 0
 bool longLiquidityRetestSetupQualified = longLrtCandidate
 bool shortLiquidityRetestSetupQualified = shortLrtCandidate
 
@@ -2034,6 +2125,12 @@ if shortLiquidityRetestActive
     shortTargetRR := shortLiquidityRetestTargetRR
     shortTargetPriority := shortLiquidityRetestTargetPriority
 
+if longNineEmaMomentumActive
+    longSelectedLevelName := "9 EMA"
+
+if shortNineEmaMomentumActive
+    shortSelectedLevelName := "9 EMA"
+
 longTargetValid = not na(longTargetPrice) and longTargetType != "N/A"
 shortTargetValid = not na(shortTargetPrice) and shortTargetType != "N/A"
 longTargetFilterPassed = longLiquidityRetestActive ? longLiquidityRetestTargetValid : (not requireValidTarget or longTargetValid)
@@ -2050,11 +2147,13 @@ shortTargetTypeText = f_abbrevLevelName(shortTargetType)
 // LRT is a priority override model, not an optional fallback. If its level/bar
 // conditions are met, these gates validate only the LRT entry/stop/target/size.
 // A failed LRT final validation produces no alert for that signal.
-bullScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and inAlertTradingWindow and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBullSignals and longOpeningRangeFilterPassed and longOpeningRangeMarketStatePassed and bullScalpTierAllowed and longScalpSetupQualified and not longExtendedSetupBlocked and longDailyOpenBodyAcceptancePassed and longRiskValid and longTargetFilterPassed
-bullAlertLabelTitle = longLiquidityRetestActive ? "LONG LRT SCALP" : "LONG SCALP"
+longScalpTierFilterPassed = longNineEmaMomentumActive ? alertStrongIgnitions : bullScalpTierAllowed
+shortScalpTierFilterPassed = shortNineEmaMomentumActive ? alertStrongIgnitions : bearScalpTierAllowed
+bullScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and inAlertTradingWindow and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBullSignals and longOpeningRangeFilterPassed and longOpeningRangeMarketStatePassed and longScalpTierFilterPassed and longScalpSetupQualified and not longExtendedSetupBlocked and longDailyOpenRangeAcceptancePassed and longRiskValid and longTargetFilterPassed
+bullAlertLabelTitle = longLiquidityRetestActive ? "LONG LRT SCALP" : longNineEmaMomentumActive ? "LONG 9EMA SCALP" : "LONG SCALP"
 
-bearScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and inAlertTradingWindow and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBearSignals and shortOpeningRangeFilterPassed and shortOpeningRangeMarketStatePassed and bearScalpTierAllowed and shortScalpSetupQualified and not shortExtendedSetupBlocked and shortDailyOpenBodyAcceptancePassed and shortRiskValid and shortTargetFilterPassed
-bearAlertLabelTitle = shortLiquidityRetestActive ? "SHORT LRT SCALP" : "SHORT SCALP"
+bearScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and inAlertTradingWindow and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBearSignals and shortOpeningRangeFilterPassed and shortOpeningRangeMarketStatePassed and shortScalpTierFilterPassed and shortScalpSetupQualified and not shortExtendedSetupBlocked and shortDailyOpenRangeAcceptancePassed and shortRiskValid and shortTargetFilterPassed
+bearAlertLabelTitle = shortLiquidityRetestActive ? "SHORT LRT SCALP" : shortNineEmaMomentumActive ? "SHORT 9EMA SCALP" : "SHORT SCALP"
 
 effectiveBullScalpAlert = bullScalpAlert
 effectiveBearScalpAlert = not effectiveBullScalpAlert and bearScalpAlert
@@ -2077,7 +2176,7 @@ f_addAlertChartLabel(_price, _text, _style, _color) =>
     label.new(bar_index, _price, _text, style=_style, textcolor=color.white, color=_color, size=showCompactAlertLabels ? size.small : size.tiny)
 
 alertDirectionTitle = effectiveBullScalpAlert ? bullAlertLabelTitle : effectiveBearScalpAlert ? bearAlertLabelTitle : ""
-alertCompactSignalText = effectiveBullScalpAlert ? (longLiquidityRetestActive ? "LRT" : bullCompactSignalText) : effectiveBearScalpAlert ? (shortLiquidityRetestActive ? "LRT" : bearCompactSignalText) : ""
+alertCompactSignalText = effectiveBullScalpAlert ? (longLiquidityRetestActive ? "LRT" : longNineEmaMomentumActive ? "9EMA" : bullCompactSignalText) : effectiveBearScalpAlert ? (shortLiquidityRetestActive ? "LRT" : shortNineEmaMomentumActive ? "9EMA" : bearCompactSignalText) : ""
 alertSelectedLevelName = effectiveBullScalpAlert ? longSelectedLevelText : effectiveBearScalpAlert ? shortSelectedLevelText : "N/A"
 alertEntryType = effectiveBullScalpAlert ? longEntryTypeText : effectiveBearScalpAlert ? shortEntryTypeText : "N/A"
 alertEntryPrice = effectiveBullScalpAlert ? longEntryPrice : effectiveBearScalpAlert ? shortEntryPrice : na
