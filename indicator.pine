@@ -11,6 +11,7 @@ groupRisk = "05. Risk / Position Sizing"
 groupTargets = "06. Target Settings"
 groupSignalEngine = "07. Signal Engine Tuning"
 groupDisplay = "08. Display / Visuals"
+groupLatestAlertTracker = "09. Latest Alert Tracker"
 
 // 01. Core Alert Controls
 alertScalpSetups         = input.bool(true, title="Alert Scalp Setups", group=groupCoreAlerts, tooltip="Alerts high-volume scalp setups only. Scalp stops use the signal-bar extreme plus one tick.")
@@ -100,6 +101,13 @@ showSwingLevelLabels         = input.bool(false, title="Show Converted Level Lab
 maxDisplayedDailyGaps        = input.int(20, title="Max Displayed Daily Gaps", minval=0, maxval=100, group=groupDisplay)
 showScalpStatusTable         = input.bool(true, title="Show Scalp Status Table", group=groupDisplay)
 
+// 09. Latest Alert Tracker
+trackLatestScalpAlert = input.bool(true, "Track Latest Scalp Alert", group=groupLatestAlertTracker)
+alertLatestScalpCancellation = input.bool(true, "Alert Latest Alert Cancellation", group=groupLatestAlertTracker)
+showLatestScalpCancellationLabels = input.bool(true, "Show Latest Alert Cancellation Labels", group=groupLatestAlertTracker)
+cancelLatestOnTargetBeforeEntry = input.bool(true, "Cancel If Target Hit Before Entry", group=groupLatestAlertTracker)
+cancelLatestOnMeasuredMoveBeforeEntry = input.bool(true, "Cancel If Measured Move Hit Before Entry", group=groupLatestAlertTracker)
+
 scalpPointValue = tickerInput == "MES" ? 5.0 : 2.0
 scalpTickSize   = 0.25
 
@@ -115,6 +123,7 @@ paEngineOpenLevelColor = color.rgb(243, 152, 15)
 dailyGapLineColor = color.rgb(255, 255, 255)
 dailyGapBoxColor = color.rgb(255, 255, 255, 95)
 dailyGapBorderColor = color.rgb(255, 255, 255, 30)
+latestScalpCancellationLabelColor = color.rgb(245, 180, 45)
 
 // ===================== Volume Calculations =====================
 volumeSMA = ta.sma(volume, volumeMetricLength)
@@ -2209,8 +2218,88 @@ f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _selectedLevelName
      "T " + f_priceText(_targetPrice) + " " + f_abbrevLevelName(_targetType) + "\n" +
      str.tostring(_contracts) + "ct | " + f_rrText(_targetRR)
 
+// ===================== Latest Alert Cancellation Tracker =====================
+var bool latestScalpAlertActive = false
+var int latestScalpAlertId = 0
+var int latestScalpDirection = 0
+var int latestScalpSignalBar = na
+var float latestScalpEntry = na
+var float latestScalpTarget = na
+var float latestScalpMeasuredMove = na
+var string latestScalpTargetType = "N/A"
+var string latestScalpSetupText = "N/A"
+
+f_buildLatestScalpCancellationAlertMessage(_direction, _reason, _entryPrice, _targetPrice, _measuredMove, _targetType, _signalId) =>
+    "PA ENGINE CANCEL " + (_direction == 1 ? "LONG" : "SHORT") + "\n" +
+     "Reason: " + _reason + "\n" +
+     syminfo.ticker + " " + timeframe.period + "\n" +
+     "E " + f_priceText(_entryPrice) + "\n" +
+     "T " + f_priceText(_targetPrice) + " " + _targetType + "\n" +
+     "MM " + f_priceText(_measuredMove) + "\n" +
+     "ID " + str.tostring(_signalId)
+
 if effectiveBullScalpAlert or effectiveBearScalpAlert
     alert(f_buildScalpAlertMessage(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName, openingRangeAlertText, alertEntryType, alertEntryPrice, alertStopPrice, alertTargetPrice, alertTargetType, alertTargetRR, alertContracts), alert.freq_once_per_bar_close)
+
+bool newEffectiveScalpAlert = effectiveBullScalpAlert or effectiveBearScalpAlert
+
+if newScalpRTHSession
+    latestScalpAlertActive := false
+    latestScalpAlertId := 0
+    latestScalpDirection := 0
+    latestScalpSignalBar := na
+    latestScalpEntry := na
+    latestScalpTarget := na
+    latestScalpMeasuredMove := na
+    latestScalpTargetType := "N/A"
+    latestScalpSetupText := "N/A"
+else if not inScalpRTHSession
+    latestScalpAlertActive := false
+
+if not trackLatestScalpAlert
+    latestScalpAlertActive := false
+else
+    if effectiveBullScalpAlert
+        latestScalpAlertActive := true
+        latestScalpAlertId += 1
+        latestScalpDirection := 1
+        latestScalpSignalBar := bar_index
+        latestScalpEntry := longEntryPrice
+        latestScalpTarget := longTargetPrice
+        latestScalpTargetType := longTargetType
+        latestScalpSetupText := alertCompactSignalText
+        latestScalpMeasuredMove := high + (high - low)
+    else if effectiveBearScalpAlert
+        latestScalpAlertActive := true
+        latestScalpAlertId += 1
+        latestScalpDirection := -1
+        latestScalpSignalBar := bar_index
+        latestScalpEntry := shortEntryPrice
+        latestScalpTarget := shortTargetPrice
+        latestScalpTargetType := shortTargetType
+        latestScalpSetupText := alertCompactSignalText
+        latestScalpMeasuredMove := low - (high - low)
+
+    bool canEvaluateLatestScalpAlert = latestScalpAlertActive and bar_index > latestScalpSignalBar and not newEffectiveScalpAlert
+    if canEvaluateLatestScalpAlert
+        bool latestLongAlert = latestScalpDirection == 1
+        bool latestShortAlert = latestScalpDirection == -1
+        bool latestEntryTouched = latestLongAlert ? low <= latestScalpEntry : latestShortAlert ? high >= latestScalpEntry : false
+        bool latestTargetHit = cancelLatestOnTargetBeforeEntry and not na(latestScalpTarget) and (latestLongAlert ? latestScalpTargetType != "HOD" and high >= latestScalpTarget : latestShortAlert ? latestScalpTargetType != "LOD" and low <= latestScalpTarget : false)
+        bool latestMeasuredMoveHit = cancelLatestOnMeasuredMoveBeforeEntry and not na(latestScalpMeasuredMove) and (latestLongAlert ? high >= latestScalpMeasuredMove : latestShortAlert ? low <= latestScalpMeasuredMove : false)
+        bool latestCancellationHit = latestMeasuredMoveHit or latestTargetHit
+
+        // Historical OHLC bars cannot prove intrabar sequence; if entry and cancellation both print on the same bar, cancellation wins.
+        if latestCancellationHit
+            string latestCancellationReason = latestMeasuredMoveHit ? "MM BEFORE ENTRY" : "TGT BEFORE ENTRY"
+            string latestCancellationLabelText = (latestLongAlert ? "CXL L\n" : "CXL S\n") + (latestMeasuredMoveHit ? "MM" : "TGT")
+            if showLatestScalpCancellationLabels
+                label.new(bar_index, latestLongAlert ? high : low, latestCancellationLabelText, style=latestLongAlert ? label.style_label_down : label.style_label_up, textcolor=color.black, color=latestScalpCancellationLabelColor, size=size.tiny)
+            if alertLatestScalpCancellation
+                alert(f_buildLatestScalpCancellationAlertMessage(latestScalpDirection, latestCancellationReason, latestScalpEntry, latestScalpTarget, latestScalpMeasuredMove, latestScalpTargetType, latestScalpAlertId), alert.freq_once_per_bar)
+            latestScalpAlertActive := false
+        else if latestEntryTouched
+            latestScalpAlertActive := false
 
 plot(showOpeningRange ? openingRangeDisplayHigh : na, "15m Opening Range High", color=openingRangeHighColor, linewidth=1, style=plot.style_linebr)
 plot(showOpeningRange ? openingRangeDisplayLow : na, "15m Opening Range Low", color=openingRangeLowColor, linewidth=1, style=plot.style_linebr)
