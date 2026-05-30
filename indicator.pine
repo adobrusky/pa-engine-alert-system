@@ -255,6 +255,26 @@ f_abbrevLevelName(string _levelName) =>
      normalized == "LOD" ? "LOD" :
      normalized
 
+f_isScalpRetracementEntryLevel(string _levelName) =>
+    string normalized = str.replace_all(_levelName, "Level ", "")
+    normalized == "Previous Week High" or
+     normalized == "Previous Week Low" or
+     normalized == "Previous Day High" or
+     normalized == "Previous Day Low" or
+     normalized == "PDH" or
+     normalized == "PDL" or
+     normalized == "Current Day Open" or
+     normalized == "Daily Open" or
+     normalized == "OP" or
+     normalized == "Premarket High" or
+     normalized == "Premarket Low" or
+     normalized == "PMH" or
+     normalized == "PML" or
+     normalized == "15m Opening Range High" or
+     normalized == "15m Opening Range Low" or
+     normalized == "ORH" or
+     normalized == "ORL"
+
 f_isLeanScalpTradeLevel(string _levelId) =>
     bool isLeanLevel = false
     isLeanLevel := isLeanLevel or _levelId == "Premarket High"
@@ -319,6 +339,16 @@ f_longLevelTouchedAndCleared(bool _enabled, float _levelPrice, float _signalLow,
 
 f_shortLevelTouchedAndCleared(bool _enabled, float _levelPrice, float _signalLow, float _signalHigh, float _signalClose) =>
     f_levelTouched(_enabled, _levelPrice, _signalLow, _signalHigh) and f_levelClosedBeyondShort(_levelPrice, _signalClose)
+
+f_longTouchedClearedLevelRetracementOk(bool _enabled, float _levelPrice, float _signalLow, float _signalHigh, float _signalClose, float _minRetracement) =>
+    bool touchedAndCleared = f_longLevelTouchedAndCleared(_enabled, _levelPrice, _signalLow, _signalHigh, _signalClose)
+    float entryRange = _signalHigh - _signalLow
+    not touchedAndCleared or (entryRange > 0 and (_signalHigh - _levelPrice) / entryRange >= _minRetracement)
+
+f_shortTouchedClearedLevelRetracementOk(bool _enabled, float _levelPrice, float _signalLow, float _signalHigh, float _signalClose, float _minRetracement) =>
+    bool touchedAndCleared = f_shortLevelTouchedAndCleared(_enabled, _levelPrice, _signalLow, _signalHigh, _signalClose)
+    float entryRange = _signalHigh - _signalLow
+    not touchedAndCleared or (entryRange > 0 and (_levelPrice - _signalLow) / entryRange >= _minRetracement)
 
 f_currentRthOpen() =>
     var float rthOpen = na
@@ -1669,12 +1699,24 @@ shortMostKeyTouchedLevelBroken = shortAnyEntryLevelTouched and scalpSignalClose 
 
 bool longAnyTouchedLevelFailedCloseBeyond = false
 bool shortAnyTouchedLevelFailedCloseBeyond = false
+bool longNineEmaNoSignalBarLevelTouched = true
+bool shortNineEmaNoSignalBarLevelTouched = true
+bool longAllCurrentTouchedLevelsRetracementOk = true
+bool shortAllCurrentTouchedLevelsRetracementOk = true
 if convertedHtfTradeLevelsEnabled and array.size(swingLevelPrices) > 0
     for touchedLevelIndex = 0 to array.size(swingLevelPrices) - 1
         float touchedLevelPrice = array.get(swingLevelPrices, touchedLevelIndex)
+        string touchedLevelName = array.get(swingLevelNames, touchedLevelIndex)
+        bool touchedLevelAllowedForEntry = array.get(swingLevelAllowedForEntry, touchedLevelIndex)
         bool touchedLevelRequiresCloseBeyond = array.get(swingLevelCloseBeyondRequired, touchedLevelIndex)
+        bool touchedLevelRetracementEntry = touchedLevelAllowedForEntry and f_isScalpRetracementEntryLevel(touchedLevelName)
+        bool touchedLevelTouchedCurrent = f_levelTouched(touchedLevelRetracementEntry, touchedLevelPrice, scalpSignalLow, scalpSignalHigh)
         longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(touchedLevelRequiresCloseBeyond, touchedLevelPrice, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
         shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(touchedLevelRequiresCloseBeyond, touchedLevelPrice, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+        longNineEmaNoSignalBarLevelTouched := longNineEmaNoSignalBarLevelTouched and not touchedLevelTouchedCurrent
+        shortNineEmaNoSignalBarLevelTouched := shortNineEmaNoSignalBarLevelTouched and not touchedLevelTouchedCurrent
+        longAllCurrentTouchedLevelsRetracementOk := longAllCurrentTouchedLevelsRetracementOk and f_longTouchedClearedLevelRetracementOk(touchedLevelRetracementEntry, touchedLevelPrice, scalpSignalLow, scalpSignalHigh, scalpSignalClose, minLevelEntryRetracement)
+        shortAllCurrentTouchedLevelsRetracementOk := shortAllCurrentTouchedLevelsRetracementOk and f_shortTouchedClearedLevelRetracementOk(touchedLevelRetracementEntry, touchedLevelPrice, scalpSignalLow, scalpSignalHigh, scalpSignalClose, minLevelEntryRetracement)
 
 longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
 longAnyTouchedLevelFailedCloseBeyond := longAnyTouchedLevelFailedCloseBeyond or f_longTouchedLevelFailedCloseBeyond(useDirectTradePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
@@ -1691,6 +1733,38 @@ shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond o
 shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(usePremarketLowLevel, effectivePremarketLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
 shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
 shortAnyTouchedLevelFailedCloseBeyond := shortAnyTouchedLevelFailedCloseBeyond or f_shortTouchedLevelFailedCloseBeyond(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+
+longNineEmaNoSignalBarLevelTouched := longNineEmaNoSignalBarLevelTouched and not f_levelTouched(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh)
+longNineEmaNoSignalBarLevelTouched := longNineEmaNoSignalBarLevelTouched and not f_levelTouched(useDirectTradePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh)
+longNineEmaNoSignalBarLevelTouched := longNineEmaNoSignalBarLevelTouched and not f_levelTouched(activeTradeDailyOpenValid, activeTradeDailyOpen, scalpSignalLow, scalpSignalHigh)
+longNineEmaNoSignalBarLevelTouched := longNineEmaNoSignalBarLevelTouched and not f_levelTouched(usePremarketHighLevel, effectivePremarketHigh, scalpSignalLow, scalpSignalHigh)
+longNineEmaNoSignalBarLevelTouched := longNineEmaNoSignalBarLevelTouched and not f_levelTouched(usePremarketLowLevel, effectivePremarketLow, scalpSignalLow, scalpSignalHigh)
+longNineEmaNoSignalBarLevelTouched := longNineEmaNoSignalBarLevelTouched and not f_levelTouched(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh)
+longNineEmaNoSignalBarLevelTouched := longNineEmaNoSignalBarLevelTouched and not f_levelTouched(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, scalpSignalLow, scalpSignalHigh)
+
+shortNineEmaNoSignalBarLevelTouched := shortNineEmaNoSignalBarLevelTouched and not f_levelTouched(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh)
+shortNineEmaNoSignalBarLevelTouched := shortNineEmaNoSignalBarLevelTouched and not f_levelTouched(useDirectTradePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh)
+shortNineEmaNoSignalBarLevelTouched := shortNineEmaNoSignalBarLevelTouched and not f_levelTouched(activeTradeDailyOpenValid, activeTradeDailyOpen, scalpSignalLow, scalpSignalHigh)
+shortNineEmaNoSignalBarLevelTouched := shortNineEmaNoSignalBarLevelTouched and not f_levelTouched(usePremarketHighLevel, effectivePremarketHigh, scalpSignalLow, scalpSignalHigh)
+shortNineEmaNoSignalBarLevelTouched := shortNineEmaNoSignalBarLevelTouched and not f_levelTouched(usePremarketLowLevel, effectivePremarketLow, scalpSignalLow, scalpSignalHigh)
+shortNineEmaNoSignalBarLevelTouched := shortNineEmaNoSignalBarLevelTouched and not f_levelTouched(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh)
+shortNineEmaNoSignalBarLevelTouched := shortNineEmaNoSignalBarLevelTouched and not f_levelTouched(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, scalpSignalLow, scalpSignalHigh)
+
+longAllCurrentTouchedLevelsRetracementOk := longAllCurrentTouchedLevelsRetracementOk and f_longTouchedClearedLevelRetracementOk(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose, minLevelEntryRetracement)
+longAllCurrentTouchedLevelsRetracementOk := longAllCurrentTouchedLevelsRetracementOk and f_longTouchedClearedLevelRetracementOk(useDirectTradePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose, minLevelEntryRetracement)
+longAllCurrentTouchedLevelsRetracementOk := longAllCurrentTouchedLevelsRetracementOk and f_longTouchedClearedLevelRetracementOk(activeTradeDailyOpenValid, activeTradeDailyOpen, scalpSignalLow, scalpSignalHigh, scalpSignalClose, minLevelEntryRetracement)
+longAllCurrentTouchedLevelsRetracementOk := longAllCurrentTouchedLevelsRetracementOk and f_longTouchedClearedLevelRetracementOk(usePremarketHighLevel, effectivePremarketHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose, minLevelEntryRetracement)
+longAllCurrentTouchedLevelsRetracementOk := longAllCurrentTouchedLevelsRetracementOk and f_longTouchedClearedLevelRetracementOk(usePremarketLowLevel, effectivePremarketLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose, minLevelEntryRetracement)
+longAllCurrentTouchedLevelsRetracementOk := longAllCurrentTouchedLevelsRetracementOk and f_longTouchedClearedLevelRetracementOk(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose, minLevelEntryRetracement)
+longAllCurrentTouchedLevelsRetracementOk := longAllCurrentTouchedLevelsRetracementOk and f_longTouchedClearedLevelRetracementOk(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose, minLevelEntryRetracement)
+
+shortAllCurrentTouchedLevelsRetracementOk := shortAllCurrentTouchedLevelsRetracementOk and f_shortTouchedClearedLevelRetracementOk(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose, minLevelEntryRetracement)
+shortAllCurrentTouchedLevelsRetracementOk := shortAllCurrentTouchedLevelsRetracementOk and f_shortTouchedClearedLevelRetracementOk(useDirectTradePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose, minLevelEntryRetracement)
+shortAllCurrentTouchedLevelsRetracementOk := shortAllCurrentTouchedLevelsRetracementOk and f_shortTouchedClearedLevelRetracementOk(activeTradeDailyOpenValid, activeTradeDailyOpen, scalpSignalLow, scalpSignalHigh, scalpSignalClose, minLevelEntryRetracement)
+shortAllCurrentTouchedLevelsRetracementOk := shortAllCurrentTouchedLevelsRetracementOk and f_shortTouchedClearedLevelRetracementOk(usePremarketHighLevel, effectivePremarketHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose, minLevelEntryRetracement)
+shortAllCurrentTouchedLevelsRetracementOk := shortAllCurrentTouchedLevelsRetracementOk and f_shortTouchedClearedLevelRetracementOk(usePremarketLowLevel, effectivePremarketLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose, minLevelEntryRetracement)
+shortAllCurrentTouchedLevelsRetracementOk := shortAllCurrentTouchedLevelsRetracementOk and f_shortTouchedClearedLevelRetracementOk(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose, minLevelEntryRetracement)
+shortAllCurrentTouchedLevelsRetracementOk := shortAllCurrentTouchedLevelsRetracementOk and f_shortTouchedClearedLevelRetracementOk(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose, minLevelEntryRetracement)
 
 longAllTouchedLevelsClosedBeyond = not longAnyTouchedLevelFailedCloseBeyond
 shortAllTouchedLevelsClosedBeyond = not shortAnyTouchedLevelFailedCloseBeyond
@@ -1722,8 +1796,8 @@ shortLevelEntryRetracementOk = not shortLevelEntryRequired or (not na(shortLevel
 // ===================== Scalp Setup Qualification Logic =====================
 // Level setups reuse the enabled scalp entry level checks above. A selected
 // level only exists after the signal or prior bar qualifies and the signal closes beyond it.
-longLevelBreakSetup = longMostKeyTouchedLevelBroken and longAllTouchedLevelsClosedBeyond and longLevelEntryRetracementOk and longSelectedLevelCloseAcceptancePassed
-shortLevelBreakSetup = shortMostKeyTouchedLevelBroken and shortAllTouchedLevelsClosedBeyond and shortLevelEntryRetracementOk and shortSelectedLevelCloseAcceptancePassed
+longLevelBreakSetup = longMostKeyTouchedLevelBroken and longAllTouchedLevelsClosedBeyond and longLevelEntryRetracementOk and longAllCurrentTouchedLevelsRetracementOk and longSelectedLevelCloseAcceptancePassed
+shortLevelBreakSetup = shortMostKeyTouchedLevelBroken and shortAllTouchedLevelsClosedBeyond and shortLevelEntryRetracementOk and shortAllCurrentTouchedLevelsRetracementOk and shortSelectedLevelCloseAcceptancePassed
 
 longPullbackBreak = not na(low[1]) and low < low[1]
 shortPullbackBreak = not na(high[1]) and high > high[1]
@@ -1790,7 +1864,8 @@ longNineEmaMomentumSetup =
      low >= roundedNineEma + scalpTickSize and
      longPriorBarBeyondNineEma and
      longRecentStrongCloseForNineEma and
-     longNineEmaDistanceNotTooExtended
+     longNineEmaDistanceNotTooExtended and
+     longNineEmaNoSignalBarLevelTouched
 longNineEmaMomentumSetupQualified = longNineEmaMomentumSetup and alertStrongIgnitions
 longLevelScalpSetupQualified = longFboLevelSetupQualified or longIgnitionLevelSetupQualified or longStrongIgnitionLevelSetupQualified
 longScalpSetupQualified = longLevelScalpSetupQualified or longNineEmaMomentumSetupQualified
@@ -1808,7 +1883,8 @@ shortNineEmaMomentumSetup =
      high <= roundedNineEma - scalpTickSize and
      shortPriorBarBeyondNineEma and
      shortRecentStrongCloseForNineEma and
-     shortNineEmaDistanceNotTooExtended
+     shortNineEmaDistanceNotTooExtended and
+     shortNineEmaNoSignalBarLevelTouched
 shortNineEmaMomentumSetupQualified = shortNineEmaMomentumSetup and alertStrongIgnitions
 shortLevelScalpSetupQualified = shortFboLevelSetupQualified or shortIgnitionLevelSetupQualified or shortStrongIgnitionLevelSetupQualified
 shortScalpSetupQualified = shortLevelScalpSetupQualified or shortNineEmaMomentumSetupQualified
