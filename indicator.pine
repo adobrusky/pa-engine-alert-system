@@ -14,16 +14,16 @@ groupDisplay = "08. Display / Visuals"
 groupLatestAlertTracker = "09. Latest Alert Tracker"
 
 // 01. Core Alert Controls
-alertScalpSetups         = input.bool(true, title="Alert Scalp Setups", group=groupCoreAlerts, tooltip="Alerts high-volume scalp setups only. Scalp stops use the signal-bar extreme plus one tick.")
+alertScalpSetups         = input.bool(true, title="Alert Scalp Setups", group=groupCoreAlerts, tooltip="Alerts qualified scalp setups. Scalp stops use the signal-bar extreme plus one tick.")
 tickerInput              = input.string("MES", title="Ticker", options=["MES", "MNQ"], group=groupCoreAlerts)
 alertOnBullSignals       = input.bool(true, title="Alert On Bull Signals", group=groupCoreAlerts)
 alertOnBearSignals       = input.bool(true, title="Alert On Bear Signals", group=groupCoreAlerts)
 requireValidTarget       = input.bool(true, title="Require Valid Target", group=groupCoreAlerts)
 minTargetRR              = input.float(1.0, title="Scalp Minimum Target R:R", minval=0.25, step=0.05, group=groupCoreAlerts, tooltip="Minimum required reward-to-risk for scalp targets. Default is 1.0R. The only exception is the existing HOD/LOD edge exception.")
 alertTradingWindow       = input.session("0930-1130", title="Alert Trading Window", group=groupCoreAlerts, tooltip="Only produces scalp alerts during this New York time window. Default is the first two hours of RTH.")
+allowPriorBarVolumeReversals = input.bool(true, title="Allow Prior-Bar Volume Reversals", group=groupCoreAlerts, tooltip="Allow the signal when the current bar meets price action pressure criteria and reverses the midpoint of a prior opposite-color high volume bar.")
 
 // 02. Setup Filters
-requireFboSwingSweep = input.bool(false, title="Require FBO Swing Sweep", group=groupSetupFilters, tooltip="When enabled, failed breakout scalp setups must sweep a prior tracked 5m swing. When disabled, failed breakout setups only need the normal level-break, signal, range-acceptance, risk, and target filters.")
 useLiquidityRetestModel = input.bool(true, "Use Liquidity Retest Model", group=groupSetupFilters, tooltip="Backtest-only alternate model for HV bars testing session liquidity in the extreme third of the signal bar. Uses level-retest entry and 1 ATR stop.")
 useNineEmaMomentumSetup = input.bool(true, title="Use 9 EMA Momentum Setup", group=groupSetupFilters, tooltip="Allows a no-level-required high-volume momentum continuation setup when the full signal bar is at least one tick beyond the rounded 9 EMA. Uses 50% retracement entry and signal-bar stop.")
 requirePriorBarBeyondNineEma = input.bool(true, title="Require Prior Bar Beyond 9 EMA", group=groupSetupFilters, tooltip="When enabled, the 9 EMA Momentum Setup requires the prior bar to also be at least one tick beyond the rounded 9 EMA in the trade direction.")
@@ -31,13 +31,10 @@ requireRecentStrongCloseForNineEma = input.bool(true, title="Require Recent Stro
 blockNineEmaSetupWhenTooFarFromEma = input.bool(true, title="Block 9 EMA Setup When Too Far From EMA", group=groupSetupFilters, tooltip="When enabled, blocks the 9 EMA Momentum Setup if the distance from the signal bar to the rounded 9 EMA is greater than the signal bar's total range.")
 skipFiveSameColorBarExtension = input.bool(true, title="Skip 5 Same-Color Bar Extension", group=groupSetupFilters, tooltip="Blocks long signals when the signal bar is the 5th consecutive bull bar or later, and blocks short signals when the signal bar is the 5th consecutive bear bar or later.")
 skipFiveBarExtension     = input.bool(false, title="Skip 5+ No-Pullback Extension - Legacy", group=groupSetupFilters)
-skipStrongMicrochannelExtension = input.bool(true, title="Skip 3+ Strong Microchannel Extension", group=groupSetupFilters)
+skipStrongMicrochannelExtension = input.bool(true, title="Skip Two Prior Strong-Close Extension", group=groupSetupFilters, tooltip="Blocks long signals after two prior strong bullish closes and blocks short signals after two prior strong bearish closes. This treats back-to-back strong closes as extension even if the sequence is not a strict microchannel.")
 minLevelEntryRetracement = input.float(0.20, title="Minimum Level Entry Retracement", minval=0.0, maxval=0.5, step=0.05, group=groupSetupFilters)
 requireDailyOpenRangeAcceptance = input.bool(true, title="Require Daily Open Range Acceptance", group=groupSetupFilters, tooltip="When enabled, signals touching the daily open must have enough of both the signal-bar range and candle body accepted beyond the daily open in the trade direction.")
 dailyOpenRangeAcceptancePct = input.float(0.50, title="Daily Open Range/Body Acceptance %", minval=0.0, maxval=1.0, step=0.05, group=groupSetupFilters, tooltip="Minimum percentage of both the full signal-bar range and candle body that must be beyond the daily open in the trade direction when the signal bar touches the daily open.")
-alertSetupSignals        = input.bool(true, title="Allow Setup Signals", group=groupSetupFilters)
-alertIgnitionSignals     = input.bool(true, title="Allow Ignition Signals", group=groupSetupFilters)
-alertStrongIgnitions     = input.bool(true, title="Allow Strong Ignitions", group=groupSetupFilters)
 
 // 03. Scalp Levels
 useAutoPrevDayHighLow            = input.bool(true, title="Use Auto PDH/PDL", group=groupScalpLevels)
@@ -94,6 +91,7 @@ atrLength                     = input(14, title="ATR Length", group=groupSignalE
 // 08. Display / Visuals
 showBullSignals              = input.bool(true, title="Show Bull Signals", group=groupDisplay, tooltip="Enable bullish high-volume signal markers.")
 showBearSignals              = input.bool(true, title="Show Bear Signals", group=groupDisplay, tooltip="Enable bearish high-volume signal markers.")
+hideSignalPlotsBeforeOpeningRangeCompletes = input.bool(true, title="Hide Signal Plots Before Opening Range Completes", group=groupDisplay, tooltip="Suppresses bullish/bearish price-action signal markers until the configured opening range has completed. This affects plotted markers only, not alert logic.")
 alertLabelMode               = input.string("Compact", title="Historical Alert Labels", options=["Off", "Marker Only", "Compact"], group=groupDisplay)
 showAlertSignalDetails       = input.bool(false, title="Show Alert Signal Details", group=groupDisplay)
 showSwingLevels              = input.bool(true, title="Show Converted Levels", group=groupDisplay, tooltip="Plots converted higher-timeframe levels used for scalp entries and targets.")
@@ -139,6 +137,8 @@ closeInUpperThird = barRange > 0 and close >= low + barRange * (2.0 / 3.0)
 closeInLowerThird = barRange > 0 and close <= low + barRange * (1.0 / 3.0)
 upperWick = high - bodyHigh
 lowerWick = bodyLow - low
+greenCandle = close >= open
+redCandle = close < open
 
 // ===================== Pressure Signal Helpers =====================
 f_safeRange(_high, _low) =>
@@ -700,16 +700,6 @@ var array<int> swingLowPivotBars = array.new_int(0)
 var array<int> swingLowDateKeys = array.new_int(0)
 var array<string> swingLowSessions = array.new_string(0)
 var array<bool> swingLowActive = array.new_bool(0)
-var array<float> fboSwingHighPrices = array.new_float()
-var array<int> fboSwingHighPivotBars = array.new_int()
-var array<int> fboSwingHighDateKeys = array.new_int()
-var array<string> fboSwingHighSessions = array.new_string()
-var array<bool> fboSwingHighCleared = array.new_bool()
-var array<float> fboSwingLowPrices = array.new_float()
-var array<int> fboSwingLowPivotBars = array.new_int()
-var array<int> fboSwingLowDateKeys = array.new_int()
-var array<string> fboSwingLowSessions = array.new_string()
-var array<bool> fboSwingLowCleared = array.new_bool()
 var array<float> rthSwingHistHighs = array.new_float()
 var array<float> rthSwingHistLows = array.new_float()
 var array<int> rthSwingHistBarIndexes = array.new_int()
@@ -1018,12 +1008,12 @@ if sourceLevelsEnabled
         // not intended to behave like historical series plots.
         f_addSwingDisplayLevel(sourcePrevMonthHigh, "PMoH", paEngineHighLevelColor, 4, 1)
         f_addSwingDisplayLevel(sourcePrevMonthLow, "PMoL", paEngineLowLevelColor, 4, 1)
-        f_addSwingDisplayLevel(sourceMonthOpen, "MO", paEngineOpenLevelColor, 5, 1)
+        f_addSwingDisplayLevel(sourceMonthOpen, "MO", paEngineOpenLevelColor, 3, 1)
         f_addSwingDisplayLevel(sourcePrevWeekHigh, "PWH", paEngineHighLevelColor, 3, 0)
         f_addSwingDisplayLevel(sourcePrevWeekLow, "PWL", paEngineLowLevelColor, 3, 0)
-        f_addSwingDisplayLevel(sourceWeekOpen, "WO", paEngineOpenLevelColor, 3, 0)
-        f_addSwingDisplayLevel(sourcePrevDayHigh, "PDH", paEngineHighLevelColor, 1, 0)
-        f_addSwingDisplayLevel(sourcePrevDayLow, "PDL", paEngineLowLevelColor, 1, 0)
+        f_addSwingDisplayLevel(sourceWeekOpen, "WO", paEngineOpenLevelColor, 2, 0)
+        f_addSwingDisplayLevel(sourcePrevDayHigh, "PDH", paEngineHighLevelColor, 2, 0)
+        f_addSwingDisplayLevel(sourcePrevDayLow, "PDL", paEngineLowLevelColor, 2, 0)
         int displayedGapCount = 0
         if maxDisplayedDailyGaps > 0 and sourceDailyGapCount > 0
             // Historical gaps use converted source boundaries. The current
@@ -1205,32 +1195,6 @@ if newPremarketSession or newScalpRTHSession
             array.remove(swingLowActive, pruneLowIndex)
         pruneLowIndex -= 1
 
-    int pruneFboHighIndex = array.size(fboSwingHighPrices) - 1
-    while pruneFboHighIndex >= 0
-        string highFboSession = array.get(fboSwingHighSessions, pruneFboHighIndex)
-        int highFboDateKey = array.get(fboSwingHighDateKeys, pruneFboHighIndex)
-        bool keepHighFbo = f_swingTargetSessionAllowed(highFboSession, highFboDateKey, nySessionDateKey, activeCurrentRTHDateKey, activePreviousRTHDateKey)
-        if not keepHighFbo
-            array.remove(fboSwingHighPrices, pruneFboHighIndex)
-            array.remove(fboSwingHighPivotBars, pruneFboHighIndex)
-            array.remove(fboSwingHighDateKeys, pruneFboHighIndex)
-            array.remove(fboSwingHighSessions, pruneFboHighIndex)
-            array.remove(fboSwingHighCleared, pruneFboHighIndex)
-        pruneFboHighIndex -= 1
-
-    int pruneFboLowIndex = array.size(fboSwingLowPrices) - 1
-    while pruneFboLowIndex >= 0
-        string lowFboSession = array.get(fboSwingLowSessions, pruneFboLowIndex)
-        int lowFboDateKey = array.get(fboSwingLowDateKeys, pruneFboLowIndex)
-        bool keepLowFbo = f_swingTargetSessionAllowed(lowFboSession, lowFboDateKey, nySessionDateKey, activeCurrentRTHDateKey, activePreviousRTHDateKey)
-        if not keepLowFbo
-            array.remove(fboSwingLowPrices, pruneFboLowIndex)
-            array.remove(fboSwingLowPivotBars, pruneFboLowIndex)
-            array.remove(fboSwingLowDateKeys, pruneFboLowIndex)
-            array.remove(fboSwingLowSessions, pruneFboLowIndex)
-            array.remove(fboSwingLowCleared, pruneFboLowIndex)
-        pruneFboLowIndex -= 1
-
 if barstate.isconfirmed
     int testHighIndex = 0
     while testHighIndex < array.size(swingHighPrices)
@@ -1249,24 +1213,6 @@ if barstate.isconfirmed
         if canInvalidateLowSwing and array.get(swingLowActive, testLowIndex) and bar_index > array.get(swingLowPivotBars, testLowIndex) and low <= array.get(swingLowPrices, testLowIndex)
             array.set(swingLowActive, testLowIndex, false)
         testLowIndex += 1
-
-    int clearFboHighIndex = 0
-    while clearFboHighIndex < array.size(fboSwingHighPrices)
-        string highFboSession = array.get(fboSwingHighSessions, clearFboHighIndex)
-        int highFboDateKey = array.get(fboSwingHighDateKeys, clearFboHighIndex)
-        bool canClearHighFbo = f_swingBreakCanInvalidate(allowRthSwingsBrokenPremarket, inPremarketSession, highFboSession, highFboDateKey, currentRTHDateKey)
-        if canClearHighFbo and not array.get(fboSwingHighCleared, clearFboHighIndex) and bar_index > array.get(fboSwingHighPivotBars, clearFboHighIndex) and low > array.get(fboSwingHighPrices, clearFboHighIndex)
-            array.set(fboSwingHighCleared, clearFboHighIndex, true)
-        clearFboHighIndex += 1
-
-    int clearFboLowIndex = 0
-    while clearFboLowIndex < array.size(fboSwingLowPrices)
-        string lowFboSession = array.get(fboSwingLowSessions, clearFboLowIndex)
-        int lowFboDateKey = array.get(fboSwingLowDateKeys, clearFboLowIndex)
-        bool canClearLowFbo = f_swingBreakCanInvalidate(allowRthSwingsBrokenPremarket, inPremarketSession, lowFboSession, lowFboDateKey, currentRTHDateKey)
-        if canClearLowFbo and not array.get(fboSwingLowCleared, clearFboLowIndex) and bar_index > array.get(fboSwingLowPivotBars, clearFboLowIndex) and high < array.get(fboSwingLowPrices, clearFboLowIndex)
-            array.set(fboSwingLowCleared, clearFboLowIndex, true)
-        clearFboLowIndex += 1
 
 if barstate.isconfirmed
     if allowRthSwingsBrokenPremarket
@@ -1304,12 +1250,6 @@ if barstate.isconfirmed
                         array.push(swingHighDateKeys, pmPivotDateKey)
                         array.push(swingHighSessions, "PM")
                         array.push(swingHighActive, true)
-                    if not f_hasPivotBar(fboSwingHighPivotBars, pmPivotBar)
-                        array.push(fboSwingHighPrices, pmPivotHigh)
-                        array.push(fboSwingHighPivotBars, pmPivotBar)
-                        array.push(fboSwingHighDateKeys, pmPivotDateKey)
-                        array.push(fboSwingHighSessions, "PM")
-                        array.push(fboSwingHighCleared, false)
 
                 if confirmedPmSwingLow
                     if not f_hasPivotBar(swingLowPivotBars, pmPivotBar)
@@ -1318,12 +1258,6 @@ if barstate.isconfirmed
                         array.push(swingLowDateKeys, pmPivotDateKey)
                         array.push(swingLowSessions, "PM")
                         array.push(swingLowActive, true)
-                    if not f_hasPivotBar(fboSwingLowPivotBars, pmPivotBar)
-                        array.push(fboSwingLowPrices, pmPivotLow)
-                        array.push(fboSwingLowPivotBars, pmPivotBar)
-                        array.push(fboSwingLowDateKeys, pmPivotDateKey)
-                        array.push(fboSwingLowSessions, "PM")
-                        array.push(fboSwingLowCleared, false)
 
         if inScalpRTHSession
             // Keep prior RTH bars so the first/second current-session RTH bars can confirm with RTH-only left bars.
@@ -1354,12 +1288,6 @@ if barstate.isconfirmed
                         array.push(swingHighDateKeys, rthPivotDateKey)
                         array.push(swingHighSessions, "RTH")
                         array.push(swingHighActive, true)
-                    if not f_hasPivotBar(fboSwingHighPivotBars, rthPivotBar)
-                        array.push(fboSwingHighPrices, rthPivotHigh)
-                        array.push(fboSwingHighPivotBars, rthPivotBar)
-                        array.push(fboSwingHighDateKeys, rthPivotDateKey)
-                        array.push(fboSwingHighSessions, "RTH")
-                        array.push(fboSwingHighCleared, false)
 
                 if confirmedRthSwingLow
                     if not f_hasPivotBar(swingLowPivotBars, rthPivotBar)
@@ -1368,12 +1296,6 @@ if barstate.isconfirmed
                         array.push(swingLowDateKeys, rthPivotDateKey)
                         array.push(swingLowSessions, "RTH")
                         array.push(swingLowActive, true)
-                    if not f_hasPivotBar(fboSwingLowPivotBars, rthPivotBar)
-                        array.push(fboSwingLowPrices, rthPivotLow)
-                        array.push(fboSwingLowPivotBars, rthPivotBar)
-                        array.push(fboSwingLowDateKeys, rthPivotDateKey)
-                        array.push(fboSwingLowSessions, "RTH")
-                        array.push(fboSwingLowCleared, false)
 
     else if bar_index >= 4
         bool confirmedSwingHigh = high[2] > high[1] and high[2] > high and high[2] > high[3] and high[2] > high[4]
@@ -1388,11 +1310,6 @@ if barstate.isconfirmed
             array.push(swingHighDateKeys, pivotDateKey)
             array.push(swingHighSessions, pivotSession)
             array.push(swingHighActive, true)
-            array.push(fboSwingHighPrices, high[2])
-            array.push(fboSwingHighPivotBars, bar_index - 2)
-            array.push(fboSwingHighDateKeys, pivotDateKey)
-            array.push(fboSwingHighSessions, pivotSession)
-            array.push(fboSwingHighCleared, false)
 
         if pivotSessionAllowed and confirmedSwingLow
             array.push(swingLowPrices, low[2])
@@ -1400,11 +1317,6 @@ if barstate.isconfirmed
             array.push(swingLowDateKeys, pivotDateKey)
             array.push(swingLowSessions, pivotSession)
             array.push(swingLowActive, true)
-            array.push(fboSwingLowPrices, low[2])
-            array.push(fboSwingLowPivotBars, bar_index - 2)
-            array.push(fboSwingLowDateKeys, pivotDateKey)
-            array.push(fboSwingLowSessions, pivotSession)
-            array.push(fboSwingLowCleared, false)
 
 while array.size(swingHighPrices) > maxTrackedSwingTargets
     array.shift(swingHighPrices)
@@ -1419,20 +1331,6 @@ while array.size(swingLowPrices) > maxTrackedSwingTargets
     array.shift(swingLowDateKeys)
     array.shift(swingLowSessions)
     array.shift(swingLowActive)
-
-while array.size(fboSwingHighPrices) > maxTrackedSwingTargets
-    array.shift(fboSwingHighPrices)
-    array.shift(fboSwingHighPivotBars)
-    array.shift(fboSwingHighDateKeys)
-    array.shift(fboSwingHighSessions)
-    array.shift(fboSwingHighCleared)
-
-while array.size(fboSwingLowPrices) > maxTrackedSwingTargets
-    array.shift(fboSwingLowPrices)
-    array.shift(fboSwingLowPivotBars)
-    array.shift(fboSwingLowDateKeys)
-    array.shift(fboSwingLowSessions)
-    array.shift(fboSwingLowCleared)
 
 // ===================== Pre-computed Conditions =====================
 sufficientVolumeAndVolatility = sufficientVolume and sufficientVolatility
@@ -1495,17 +1393,27 @@ bearSignalBase = sufficientVolumeAndVolatility and bearBarQuality
 bullSignalHighVol = bullSignalBase and isHighVolume
 bearSignalHighVol = bearSignalBase and isHighVolume
 
+priorBarMidpoint = (high[1] + low[1]) / 2.0
+priorBarHighVolume = not na(volume[2]) and volume[1] > volume[2]
+
+bullSignalPriorBarVolumeReversal = allowPriorBarVolumeReversals and bullSignalBase and greenCandle and redCandle[1] and priorBarHighVolume and close > priorBarMidpoint
+bearSignalPriorBarVolumeReversal = allowPriorBarVolumeReversals and bearSignalBase and redCandle and greenCandle[1] and priorBarHighVolume and close < priorBarMidpoint
+
+bullSignalFinal = bullSignalHighVol or bullSignalPriorBarVolumeReversal
+bearSignalFinal = bearSignalHighVol or bearSignalPriorBarVolumeReversal
+
 // ===================== Plotting =====================
-plotBullSignal = showBullSignals and bullSignalHighVol
-plotBearSignal = showBearSignals and bearSignalHighVol
+signalPlotOpeningRangePassed = openingRangeLevelsReady and not inOpeningRangeWindow
+plotBullSignal = showBullSignals and bullSignalFinal and (not hideSignalPlotsBeforeOpeningRangeCompletes or signalPlotOpeningRangePassed)
+plotBearSignal = showBearSignals and bearSignalFinal and (not hideSignalPlotsBeforeOpeningRangeCompletes or signalPlotOpeningRangePassed)
 
 // Confirmed signals close beyond the prior bar extreme and remain part of alert tier qualification.
 bullSignalConfirmed = close > high[1]
 bearSignalConfirmed = close < low[1]
 
 // ===================== Alert Signal Tier Logic =====================
-bullScalpSignalAllowed = bullSignalHighVol
-bearScalpSignalAllowed = bearSignalHighVol
+bullScalpSignalAllowed = bullSignalFinal
+bearScalpSignalAllowed = bearSignalFinal
 
 bullScalpSetupTier = bullScalpSignalAllowed and not bullSignalConfirmed
 bullScalpIgnitionTier = bullScalpSignalAllowed and bullSignalConfirmed and not isMostlyBody
@@ -1514,8 +1422,8 @@ bearScalpSetupTier = bearScalpSignalAllowed and not bearSignalConfirmed
 bearScalpIgnitionTier = bearScalpSignalAllowed and bearSignalConfirmed and not isMostlyBody
 bearScalpStrongIgnitionTier = bearScalpSignalAllowed and bearSignalConfirmed and isMostlyBody
 
-bullScalpTierAllowed = (alertSetupSignals and bullScalpSetupTier) or (alertIgnitionSignals and bullScalpIgnitionTier) or (alertStrongIgnitions and bullScalpStrongIgnitionTier)
-bearScalpTierAllowed = (alertSetupSignals and bearScalpSetupTier) or (alertIgnitionSignals and bearScalpIgnitionTier) or (alertStrongIgnitions and bearScalpStrongIgnitionTier)
+bullScalpTierAllowed = bullScalpSetupTier or bullScalpIgnitionTier or bullScalpStrongIgnitionTier
+bearScalpTierAllowed = bearScalpSetupTier or bearScalpIgnitionTier or bearScalpStrongIgnitionTier
 
 bullScalpSignalTierShort = (bullScalpStrongIgnitionTier or bullScalpIgnitionTier) ? "IGN" : bullScalpSetupTier ? "FBO" : "N/A"
 bearScalpSignalTierShort = (bearScalpStrongIgnitionTier or bearScalpIgnitionTier) ? "IGN" : bearScalpSetupTier ? "FBO" : "N/A"
@@ -1597,34 +1505,6 @@ if convertedHtfTradeLevelsEnabled and array.size(swingLevelPrices) > 0
             shortExpandedScalpLevelPriority := expandedEntryLevelPriority
             shortExpandedScalpLevelTouchedCurrent := expandedEntryLevelTouchedCurrent
             shortExpandedScalpLevelFound := true
-
-bool longScalpFboSweepQualified = false
-float longScalpFboSweepPrice = na
-if bullScalpSetupTier and array.size(fboSwingLowPrices) > 0
-    for fboSwingLowIndex = 0 to array.size(fboSwingLowPrices) - 1
-        float fboSwingLowPrice = array.get(fboSwingLowPrices, fboSwingLowIndex)
-        bool fboSwingLowPrior = bar_index > array.get(fboSwingLowPivotBars, fboSwingLowIndex)
-        string fboSwingLowSession = array.get(fboSwingLowSessions, fboSwingLowIndex)
-        int fboSwingLowDateKey = array.get(fboSwingLowDateKeys, fboSwingLowIndex)
-        bool fboSwingLowAllowed = f_swingTargetSessionAllowed(fboSwingLowSession, fboSwingLowDateKey, nySessionDateKey, activeCurrentRTHDateKey, activePreviousRTHDateKey)
-        bool fboSwingLowQualified = fboSwingLowAllowed and not array.get(fboSwingLowCleared, fboSwingLowIndex) and fboSwingLowPrior and scalpSignalLow <= fboSwingLowPrice and scalpSignalClose > fboSwingLowPrice
-        if fboSwingLowQualified and (na(longScalpFboSweepPrice) or fboSwingLowPrice < longScalpFboSweepPrice)
-            longScalpFboSweepQualified := true
-            longScalpFboSweepPrice := fboSwingLowPrice
-
-bool shortScalpFboSweepQualified = false
-float shortScalpFboSweepPrice = na
-if bearScalpSetupTier and array.size(fboSwingHighPrices) > 0
-    for fboSwingHighIndex = 0 to array.size(fboSwingHighPrices) - 1
-        float fboSwingHighPrice = array.get(fboSwingHighPrices, fboSwingHighIndex)
-        bool fboSwingHighPrior = bar_index > array.get(fboSwingHighPivotBars, fboSwingHighIndex)
-        string fboSwingHighSession = array.get(fboSwingHighSessions, fboSwingHighIndex)
-        int fboSwingHighDateKey = array.get(fboSwingHighDateKeys, fboSwingHighIndex)
-        bool fboSwingHighAllowed = f_swingTargetSessionAllowed(fboSwingHighSession, fboSwingHighDateKey, nySessionDateKey, activeCurrentRTHDateKey, activePreviousRTHDateKey)
-        bool fboSwingHighQualified = fboSwingHighAllowed and not array.get(fboSwingHighCleared, fboSwingHighIndex) and fboSwingHighPrior and scalpSignalHigh >= fboSwingHighPrice and scalpSignalClose < fboSwingHighPrice
-        if fboSwingHighQualified and (na(shortScalpFboSweepPrice) or fboSwingHighPrice > shortScalpFboSweepPrice)
-            shortScalpFboSweepQualified := true
-            shortScalpFboSweepPrice := fboSwingHighPrice
 
 [longGroup1AfterPDHPrice, longGroup1AfterPDHName, longGroup1AfterPDHPriority, longGroup1AfterPDHCurrent, longGroup1AfterPDHFound] = f_pickLongQualifiedLevel(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, "PDH", 4, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [longGroup1Price, longGroup1Name, longGroup1Priority, longGroup1Current, longGroup1Found] = f_pickLongQualifiedLevel(useDirectTradePrevDayLowLevel, effectivePrevDayLow, "PDL", 4, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBear, longGroup1AfterPDHPrice, longGroup1AfterPDHName, longGroup1AfterPDHPriority, longGroup1AfterPDHCurrent, longGroup1AfterPDHFound)
@@ -1814,8 +1694,8 @@ prior1StrongBear = f_isBearBar(open[1], close[1]) and bodyPct[1] >= 0.50 and clo
 prior2StrongBear = f_isBearBar(open[2], close[2]) and bodyPct[2] >= 0.50 and closeInLowerThird[2]
 longFiveBarExtension = longBarsWithoutPullbackBreak >= 5
 shortFiveBarExtension = shortBarsWithoutPullbackBreak >= 5
-longStrongMicrochannelExtension = longBarsWithoutPullbackBreak >= 3 and prior1StrongBull and prior2StrongBull
-shortStrongMicrochannelExtension = shortBarsWithoutPullbackBreak >= 3 and prior1StrongBear and prior2StrongBear
+longStrongMicrochannelExtension = prior1StrongBull and prior2StrongBull
+shortStrongMicrochannelExtension = prior1StrongBear and prior2StrongBear
 longFiveSameColorBarExtension =
      f_isBullBar(open, close) and
      f_isBullBar(open[1], close[1]) and
@@ -1839,11 +1719,9 @@ shortExtendedSetupBlocked =
      (skipFiveBarExtension and shortFiveBarExtension) or
      (skipStrongMicrochannelExtension and shortStrongMicrochannelExtension)
 
-longFboSwingSweepFilterPassed = not requireFboSwingSweep or longScalpFboSweepQualified
-shortFboSwingSweepFilterPassed = not requireFboSwingSweep or shortScalpFboSweepQualified
-longFboLevelSetupQualified = longLevelBreakSetup and bullScalpSetupTier and alertSetupSignals and longFboSwingSweepFilterPassed
-longIgnitionLevelSetupQualified = longLevelBreakSetup and bullScalpIgnitionTier and alertIgnitionSignals
-longStrongIgnitionLevelSetupQualified = longLevelBreakSetup and bullScalpStrongIgnitionTier and alertStrongIgnitions
+longFboLevelSetupQualified = longLevelBreakSetup and bullScalpSetupTier
+longIgnitionLevelSetupQualified = longLevelBreakSetup and bullScalpIgnitionTier
+longStrongIgnitionLevelSetupQualified = longLevelBreakSetup and bullScalpStrongIgnitionTier
 // Prior bar must use roundedNineEma[1], not current roundedNineEma, so the prior bar is checked against its own EMA value.
 longPriorBarBeyondNineEma = not requirePriorBarBeyondNineEma or (not na(roundedNineEma[1]) and low[1] >= roundedNineEma[1] + scalpTickSize)
 shortPriorBarBeyondNineEma = not requirePriorBarBeyondNineEma or (not na(roundedNineEma[1]) and high[1] <= roundedNineEma[1] - scalpTickSize)
@@ -1866,13 +1744,13 @@ longNineEmaMomentumSetup =
      longRecentStrongCloseForNineEma and
      longNineEmaDistanceNotTooExtended and
      longNineEmaNoSignalBarLevelTouched
-longNineEmaMomentumSetupQualified = longNineEmaMomentumSetup and alertStrongIgnitions
+longNineEmaMomentumSetupQualified = longNineEmaMomentumSetup
 longLevelScalpSetupQualified = longFboLevelSetupQualified or longIgnitionLevelSetupQualified or longStrongIgnitionLevelSetupQualified
 longScalpSetupQualified = longLevelScalpSetupQualified or longNineEmaMomentumSetupQualified
 
-shortFboLevelSetupQualified = shortLevelBreakSetup and bearScalpSetupTier and alertSetupSignals and shortFboSwingSweepFilterPassed
-shortIgnitionLevelSetupQualified = shortLevelBreakSetup and bearScalpIgnitionTier and alertIgnitionSignals
-shortStrongIgnitionLevelSetupQualified = shortLevelBreakSetup and bearScalpStrongIgnitionTier and alertStrongIgnitions
+shortFboLevelSetupQualified = shortLevelBreakSetup and bearScalpSetupTier
+shortIgnitionLevelSetupQualified = shortLevelBreakSetup and bearScalpIgnitionTier
+shortStrongIgnitionLevelSetupQualified = shortLevelBreakSetup and bearScalpStrongIgnitionTier
 shortNineEmaMomentumSetup =
      useNineEmaMomentumSetup and
      bearSignalHighVol and
@@ -1885,7 +1763,7 @@ shortNineEmaMomentumSetup =
      shortRecentStrongCloseForNineEma and
      shortNineEmaDistanceNotTooExtended and
      shortNineEmaNoSignalBarLevelTouched
-shortNineEmaMomentumSetupQualified = shortNineEmaMomentumSetup and alertStrongIgnitions
+shortNineEmaMomentumSetupQualified = shortNineEmaMomentumSetup
 shortLevelScalpSetupQualified = shortFboLevelSetupQualified or shortIgnitionLevelSetupQualified or shortStrongIgnitionLevelSetupQualified
 shortScalpSetupQualified = shortLevelScalpSetupQualified or shortNineEmaMomentumSetupQualified
 longNineEmaMomentumActive = longNineEmaMomentumSetupQualified and not longLevelScalpSetupQualified
@@ -2237,8 +2115,8 @@ shortTargetTypeText = f_abbrevLevelName(shortTargetType)
 // LRT is a priority override model, not an optional fallback. If its level/bar
 // conditions are met, these gates validate only the LRT entry/stop/target/size.
 // A failed LRT final validation produces no alert for that signal.
-longScalpTierFilterPassed = longNineEmaMomentumActive ? alertStrongIgnitions : bullScalpTierAllowed
-shortScalpTierFilterPassed = shortNineEmaMomentumActive ? alertStrongIgnitions : bearScalpTierAllowed
+longScalpTierFilterPassed = longNineEmaMomentumActive ? true : bullScalpTierAllowed
+shortScalpTierFilterPassed = shortNineEmaMomentumActive ? true : bearScalpTierAllowed
 bullScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and inAlertTradingWindow and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBullSignals and longOpeningRangeFilterPassed and longOpeningRangeMarketStatePassed and longScalpTierFilterPassed and longScalpSetupQualified and not longExtendedSetupBlocked and longDailyOpenRangeAcceptancePassed and longRiskValid and longTargetFilterPassed
 bullAlertLabelTitle = longLiquidityRetestActive ? "LONG LRT SCALP" : longNineEmaMomentumActive ? "LONG 9EMA SCALP" : "LONG SCALP"
 
@@ -2382,15 +2260,15 @@ plot(showOpeningRange ? openingRangeDisplayLow : na, "15m Opening Range Low", co
 pdhPlot = showAutoScalpLevels and showRawFuturesPrevDayLevels and inScalpRTHSession and effectivePrevDayHigh > 0 ? effectivePrevDayHigh : na
 pdlPlot = showAutoScalpLevels and showRawFuturesPrevDayLevels and inScalpRTHSession and effectivePrevDayLow > 0 ? effectivePrevDayLow : na
 
-plot(pdhPlot, "Auto/Effective PDH", color=majorHighLevelColor, linewidth=1, style=plot.style_linebr)
-plot(pdlPlot, "Auto/Effective PDL", color=majorLowLevelColor, linewidth=1, style=plot.style_linebr)
+plot(pdhPlot, "Auto/Effective PDH", color=majorHighLevelColor, linewidth=2, style=plot.style_linebr)
+plot(pdlPlot, "Auto/Effective PDL", color=majorLowLevelColor, linewidth=2, style=plot.style_linebr)
 plot(showAutoScalpLevels and effectiveDailyOpen > 0 ? effectiveDailyOpen : na, "Raw/Effective OP", color=openLevelColor, linewidth=1, style=plot.style_linebr)
 plot(premarketDisplayHigh, "Premarket High", color=premarketLevelColor, linewidth=1, style=plot.style_linebr)
 plot(premarketDisplayLow, "Premarket Low", color=premarketLevelColor, linewidth=1, style=plot.style_linebr)
 
 // Signals
-plotshape(plotBullSignal, title="Bullish High-Volume Signal", style=shape.triangleup, size=size.small, location=location.belowbar, color=color.lime)
-plotshape(plotBearSignal, title="Bearish High-Volume Signal", style=shape.triangledown, size=size.small, location=location.abovebar, color=color.red)
+plotshape(plotBullSignal, title="Bullish Signal", style=shape.triangleup, size=size.small, location=location.belowbar, color=color.lime)
+plotshape(plotBearSignal, title="Bearish Signal", style=shape.triangledown, size=size.small, location=location.abovebar, color=color.red)
 
 // ===================== Scalp Status Table =====================
 f_addScalpStatusRow(table _statusTable, int _row, string _label, string _value, color _valueColor) =>
