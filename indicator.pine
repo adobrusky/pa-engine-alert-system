@@ -2132,16 +2132,41 @@ showCompactAlertLabels = alertLabelMode == "Compact"
 f_buildMarkerChartLabel(_direction, _compactSignalText, _selectedLevelName) =>
     showAlertSignalDetails ? _direction + "\n" + _compactSignalText + " | " + f_abbrevLevelName(_selectedLevelName) : _direction
 
-f_buildCompactChartLabel(_direction, _compactSignalText, _selectedLevelName, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _contracts) =>
+f_buildCompactChartLabel(_direction, _compactSignalText, _selectedLevelName, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _contracts, _managementText) =>
     _direction + "\n" +
      _compactSignalText + " | " + f_abbrevLevelName(_selectedLevelName) + "\n" +
      "E " + f_priceText(_entryPrice) + "\n" +
      "S " + f_priceText(_stopPrice) + "\n" +
      "T " + f_priceText(_targetPrice) + " " + f_abbrevLevelName(_targetType) + "\n" +
+     _managementText + "\n" +
      str.tostring(_contracts) + "ct | " + f_rrText(_targetRR)
 
 f_addAlertChartLabel(_price, _text, _style, _color) =>
     label.new(bar_index, _price, _text, style=_style, textcolor=color.white, color=_color, size=showCompactAlertLabels ? size.small : size.tiny)
+
+f_buildManagementText(_oneRPrice, _twoRPrice, _targetRR, _contracts) =>
+    string mgmtText = "1R " + f_priceText(_oneRPrice)
+    bool showTwoR = not na(_targetRR) and _targetRR >= 2.0 and not na(_twoRPrice)
+    bool canTrim = not na(_contracts) and _contracts > 1
+
+    if showTwoR
+        mgmtText := mgmtText + " | 2R " + f_priceText(_twoRPrice)
+
+    if canTrim
+        if showTwoR
+            int trim1R = _contracts == 2 ? 1 : math.max(1, int(math.floor(_contracts / 3.0)))
+            int trim2R = _contracts >= 3 ? math.max(1, int(math.floor(_contracts / 3.0))) : 0
+            int maxTrimTotal = _contracts - 1
+            if trim1R + trim2R > maxTrimTotal
+                trim2R := math.max(0, maxTrimTotal - trim1R)
+            mgmtText := mgmtText + "\nTrim " + str.tostring(trim1R) + " @1R"
+            if trim2R > 0
+                mgmtText := mgmtText + " | " + str.tostring(trim2R) + " @2R"
+        else
+            int trimAtOneR = math.max(1, int(math.floor(_contracts * 0.50)))
+            mgmtText := mgmtText + "\nTrim " + str.tostring(trimAtOneR) + " @1R"
+
+    mgmtText
 
 alertDirectionTitle = effectiveBullScalpAlert ? bullAlertLabelTitle : effectiveBearScalpAlert ? bearAlertLabelTitle : ""
 alertCompactSignalText = effectiveBullScalpAlert ? (longLiquidityRetestActive ? "LRT" : longNineEmaMomentumActive ? "9EMA" : bullCompactSignalText) : effectiveBearScalpAlert ? (shortLiquidityRetestActive ? "LRT" : shortNineEmaMomentumActive ? "9EMA" : bearCompactSignalText) : ""
@@ -2156,13 +2181,21 @@ alertContracts = effectiveBullScalpAlert ? longContracts : effectiveBearScalpAle
 alertLabelPrice = effectiveBullScalpAlert ? low : effectiveBearScalpAlert ? high : na
 alertLabelStyle = effectiveBullScalpAlert ? label.style_label_up : label.style_label_down
 alertLabelColor = effectiveBullScalpAlert ? color.new(color.lime, 0) : color.new(color.red, 0)
+alertIsLong = effectiveBullScalpAlert
+alertIsShort = effectiveBearScalpAlert
+alertIsLrt = alertIsLong ? longLiquidityRetestActive : alertIsShort ? shortLiquidityRetestActive : false
+alertManagementRiskPoints = alertIsLong ? (alertIsLrt ? alertEntryPrice - alertStopPrice : alertEntryPrice - scalpSignalLow) : alertIsShort ? (alertIsLrt ? alertStopPrice - alertEntryPrice : scalpSignalHigh - alertEntryPrice) : na
+alertManagementRiskValid = not na(alertManagementRiskPoints) and alertManagementRiskPoints > 0
+alertOneRPrice = alertIsLong and alertManagementRiskValid ? alertEntryPrice + alertManagementRiskPoints : alertIsShort and alertManagementRiskValid ? alertEntryPrice - alertManagementRiskPoints : na
+alertTwoRPrice = alertIsLong and alertManagementRiskValid ? alertEntryPrice + alertManagementRiskPoints * 2.0 : alertIsShort and alertManagementRiskValid ? alertEntryPrice - alertManagementRiskPoints * 2.0 : na
+alertManagementText = f_buildManagementText(alertOneRPrice, alertTwoRPrice, alertTargetRR, alertContracts)
 
 if showHistoricalAlertLabels and (effectiveBullScalpAlert or effectiveBearScalpAlert)
-    string chartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName, alertEntryPrice, alertStopPrice, alertTargetPrice, alertTargetType, alertTargetRR, alertContracts) : f_buildMarkerChartLabel(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName)
+    string chartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName, alertEntryPrice, alertStopPrice, alertTargetPrice, alertTargetType, alertTargetRR, alertContracts, alertManagementText) : f_buildMarkerChartLabel(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName)
     f_addAlertChartLabel(alertLabelPrice, chartLabelText, alertLabelStyle, alertLabelColor)
 
 // ===================== Alert Message =====================
-f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _selectedLevelName, _openingRangeText, _entryType, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _contracts) =>
+f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _selectedLevelName, _openingRangeText, _entryType, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _contracts, _managementText) =>
     "PA ENGINE " + _directionTitle + "\n" +
      _compactSignalText + " | " + f_abbrevLevelName(_selectedLevelName) + "\n" +
      "Opening Range: " + _openingRangeText + "\n" +
@@ -2170,6 +2203,7 @@ f_buildScalpAlertMessage(_directionTitle, _compactSignalText, _selectedLevelName
      "E " + f_priceText(_entryPrice) + " " + f_abbrevLevelName(_entryType) + "\n" +
      "S " + f_priceText(_stopPrice) + "\n" +
      "T " + f_priceText(_targetPrice) + " " + f_abbrevLevelName(_targetType) + "\n" +
+     _managementText + "\n" +
      str.tostring(_contracts) + "ct | " + f_rrText(_targetRR)
 
 // ===================== Latest Alert Cancellation Tracker =====================
@@ -2193,7 +2227,7 @@ f_buildLatestScalpCancellationAlertMessage(_direction, _reason, _entryPrice, _ta
      "ID " + str.tostring(_signalId)
 
 if effectiveBullScalpAlert or effectiveBearScalpAlert
-    alert(f_buildScalpAlertMessage(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName, openingRangeAlertText, alertEntryType, alertEntryPrice, alertStopPrice, alertTargetPrice, alertTargetType, alertTargetRR, alertContracts), alert.freq_once_per_bar_close)
+    alert(f_buildScalpAlertMessage(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName, openingRangeAlertText, alertEntryType, alertEntryPrice, alertStopPrice, alertTargetPrice, alertTargetType, alertTargetRR, alertContracts, alertManagementText), alert.freq_once_per_bar_close)
 
 bool newEffectiveScalpAlert = effectiveBullScalpAlert or effectiveBearScalpAlert
 
