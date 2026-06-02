@@ -29,6 +29,7 @@ useNineEmaMomentumSetup = input.bool(true, title="Use 9 EMA Momentum Setup", gro
 requirePriorBarBeyondNineEma = input.bool(true, title="Require Prior Bar Beyond 9 EMA", group=groupSetupFilters, tooltip="When enabled, the 9 EMA Momentum Setup requires the prior bar to also be at least one tick beyond the rounded 9 EMA in the trade direction.")
 requireRecentStrongCloseForNineEma = input.bool(true, title="Require Recent Strong Close For 9 EMA Setup", group=groupSetupFilters, tooltip="When enabled, the 9 EMA Momentum Setup requires either the prior bar or the bar two bars back to close in the upper third for longs, or in the lower third for shorts.")
 blockNineEmaSetupWhenTooFarFromEma = input.bool(true, title="Block 9 EMA Setup When Too Far From EMA", group=groupSetupFilters, tooltip="When enabled, blocks the 9 EMA Momentum Setup if the distance from the signal bar to the rounded 9 EMA is greater than the signal bar's total range.")
+nineEmaMaxDistanceBarRangeMultiplier = input.float(0.50, title="9 EMA Max Distance As Bar Range", minval=0.0, maxval=2.0, step=0.05, group=groupSetupFilters, tooltip="Maximum allowed distance between the signal bar and the rounded 9 EMA for 9 EMA Momentum Setups, expressed as a multiple of the signal bar's range. Default 0.50 means the signal bar must be within half of its own range from the EMA.")
 skipFiveSameColorBarExtension = input.bool(true, title="Skip 5 Same-Color Bar Extension", group=groupSetupFilters, tooltip="Blocks long signals when the signal bar is the 5th consecutive bull bar or later, and blocks short signals when the signal bar is the 5th consecutive bear bar or later.")
 skipFiveBarExtension     = input.bool(false, title="Skip 5+ No-Pullback Extension - Legacy", group=groupSetupFilters)
 skipStrongMicrochannelExtension = input.bool(true, title="Skip Two Prior Strong-Close Extension", group=groupSetupFilters, tooltip="Blocks long signals after two prior strong bullish closes and blocks short signals after two prior strong bearish closes. This treats back-to-back strong closes as extension even if the sequence is not a strict microchannel.")
@@ -1730,8 +1731,8 @@ shortRecentStrongCloseForNineEma = not requireRecentStrongCloseForNineEma or clo
 // Blocks 9 EMA continuation setups only when the signal bar is more than one full bar range away from its rounded EMA.
 longNineEmaDistanceFromEma = low - roundedNineEma
 shortNineEmaDistanceFromEma = roundedNineEma - high
-longNineEmaDistanceNotTooExtended = not blockNineEmaSetupWhenTooFarFromEma or (barRange > 0 and not na(roundedNineEma) and longNineEmaDistanceFromEma <= barRange)
-shortNineEmaDistanceNotTooExtended = not blockNineEmaSetupWhenTooFarFromEma or (barRange > 0 and not na(roundedNineEma) and shortNineEmaDistanceFromEma <= barRange)
+longNineEmaDistanceNotTooExtended = not blockNineEmaSetupWhenTooFarFromEma or (barRange > 0 and not na(roundedNineEma) and longNineEmaDistanceFromEma <= barRange * nineEmaMaxDistanceBarRangeMultiplier)
+shortNineEmaDistanceNotTooExtended = not blockNineEmaSetupWhenTooFarFromEma or (barRange > 0 and not na(roundedNineEma) and shortNineEmaDistanceFromEma <= barRange * nineEmaMaxDistanceBarRangeMultiplier)
 longNineEmaMomentumSetup =
      useNineEmaMomentumSetup and
      bullSignalHighVol and
@@ -2103,6 +2104,12 @@ longTargetValid = not na(longTargetPrice) and longTargetType != "N/A"
 shortTargetValid = not na(shortTargetPrice) and shortTargetType != "N/A"
 longTargetFilterPassed = longLiquidityRetestActive ? longLiquidityRetestTargetValid : (not requireValidTarget or longTargetValid)
 shortTargetFilterPassed = shortLiquidityRetestActive ? shortLiquidityRetestTargetValid : (not requireValidTarget or shortTargetValid)
+longSelectedTargetIsLevel = str.startswith(longTargetType, "Level ")
+shortSelectedTargetIsLevel = str.startswith(shortTargetType, "Level ")
+longSelectedTargetTouchedPriorBar = longSelectedTargetIsLevel and not na(longTargetPrice) and not na(low[1]) and not na(high[1]) and longTargetPrice >= low[1] and longTargetPrice <= high[1]
+shortSelectedTargetTouchedPriorBar = shortSelectedTargetIsLevel and not na(shortTargetPrice) and not na(low[1]) and not na(high[1]) and shortTargetPrice >= low[1] and shortTargetPrice <= high[1]
+longTargetNotRecentlyTouched = not longSelectedTargetTouchedPriorBar
+shortTargetNotRecentlyTouched = not shortSelectedTargetTouchedPriorBar
 
 longSelectedLevelText = f_abbrevLevelName(longSelectedLevelName)
 shortSelectedLevelText = f_abbrevLevelName(shortSelectedLevelName)
@@ -2117,10 +2124,10 @@ shortTargetTypeText = f_abbrevLevelName(shortTargetType)
 // A failed LRT final validation produces no alert for that signal.
 longScalpTierFilterPassed = longNineEmaMomentumActive ? true : bullScalpTierAllowed
 shortScalpTierFilterPassed = shortNineEmaMomentumActive ? true : bearScalpTierAllowed
-bullScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and inAlertTradingWindow and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBullSignals and longOpeningRangeFilterPassed and longOpeningRangeMarketStatePassed and longScalpTierFilterPassed and longScalpSetupQualified and not longExtendedSetupBlocked and longDailyOpenRangeAcceptancePassed and longRiskValid and longTargetFilterPassed
+bullScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and inAlertTradingWindow and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBullSignals and longOpeningRangeFilterPassed and longOpeningRangeMarketStatePassed and longScalpTierFilterPassed and longScalpSetupQualified and not longExtendedSetupBlocked and longDailyOpenRangeAcceptancePassed and longRiskValid and longTargetFilterPassed and longTargetNotRecentlyTouched
 bullAlertLabelTitle = longLiquidityRetestActive ? "LONG LRT SCALP" : longNineEmaMomentumActive ? "LONG 9EMA SCALP" : "LONG SCALP"
 
-bearScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and inAlertTradingWindow and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBearSignals and shortOpeningRangeFilterPassed and shortOpeningRangeMarketStatePassed and shortScalpTierFilterPassed and shortScalpSetupQualified and not shortExtendedSetupBlocked and shortDailyOpenRangeAcceptancePassed and shortRiskValid and shortTargetFilterPassed
+bearScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and inAlertTradingWindow and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBearSignals and shortOpeningRangeFilterPassed and shortOpeningRangeMarketStatePassed and shortScalpTierFilterPassed and shortScalpSetupQualified and not shortExtendedSetupBlocked and shortDailyOpenRangeAcceptancePassed and shortRiskValid and shortTargetFilterPassed and shortTargetNotRecentlyTouched
 bearAlertLabelTitle = shortLiquidityRetestActive ? "SHORT LRT SCALP" : shortNineEmaMomentumActive ? "SHORT 9EMA SCALP" : "SHORT SCALP"
 
 effectiveBullScalpAlert = bullScalpAlert
