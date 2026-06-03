@@ -1137,13 +1137,19 @@ if barstate.isconfirmed or barstate.islast
 var float autoOpeningRangeHigh = na
 var float autoOpeningRangeLow = na
 var bool openingRangeComplete = false
-var bool openingRangeOutsideCloseSeen = false
+var int openingRangeBias = 0
+var bool openingRangeHasBrokenOutOnce = false
+var bool openingRangeHighAcceptedAbove = false
+var bool openingRangeLowAcceptedBelow = false
 
 if newScalpRTHSession
     autoOpeningRangeHigh := na
     autoOpeningRangeLow := na
     openingRangeComplete := false
-    openingRangeOutsideCloseSeen := false
+    openingRangeBias := 0
+    openingRangeHasBrokenOutOnce := false
+    openingRangeHighAcceptedAbove := false
+    openingRangeLowAcceptedBelow := false
 
 if inOpeningRangeWindow
     autoOpeningRangeHigh := na(autoOpeningRangeHigh) ? high : math.max(autoOpeningRangeHigh, high)
@@ -1160,10 +1166,28 @@ openingRangeLevelsReady = openingRangeReady and (openingRangeComplete or (useMan
 openingRangeDisplayHigh = inScalpRTHSession and openingRangeLevelsReady ? openingRangeHigh : na
 openingRangeDisplayLow = inScalpRTHSession and openingRangeLevelsReady ? openingRangeLow : na
 
-if openingRangeLevelsReady and barstate.isconfirmed and inScalpRTHSession and not inOpeningRangeWindow and (close > openingRangeHigh or close < openingRangeLow)
-    openingRangeOutsideCloseSeen := true
+if openingRangeLevelsReady and barstate.isconfirmed and inScalpRTHSession and not inOpeningRangeWindow
+    if close > openingRangeHigh
+        openingRangeBias := 1
+        openingRangeHasBrokenOutOnce := true
+    else if close < openingRangeLow
+        openingRangeBias := -1
+        openingRangeHasBrokenOutOnce := true
+    else if openingRangeHasBrokenOutOnce and high < openingRangeHigh and low > openingRangeLow
+        openingRangeBias := 0
+    if low > openingRangeHigh
+        openingRangeHighAcceptedAbove := true
+    if high < openingRangeLow
+        openingRangeLowAcceptedBelow := true
 
 openingRangeStatus = not openingRangeLevelsReady ? "Waiting" : "Complete"
+openingRangeBiasText =
+     not openingRangeLevelsReady ? "Waiting" :
+     openingRangeBias == 1 ? "Bullish" :
+     openingRangeBias == -1 ? "Bearish" :
+     openingRangeHasBrokenOutOnce ? "Neutral" :
+     "Pre-Breakout"
+openingRangeNeutralAfterBreakout = openingRangeHasBrokenOutOnce and openingRangeBias == 0
 
 // ===================== Untested 5m Swing Target Tracking =====================
 int activeCurrentRTHDateKey = inScalpRTHSession ? currentRTHDateKey : na
@@ -1544,13 +1568,13 @@ bool shortNonOpeningRangeEntryLevelQualified = shortExpandedScalpLevelFound or s
 bool longOpeningRangeHighOnly = longOpeningRangeHighQualified and not longOpeningRangeLowQualified and not longNonOpeningRangeEntryLevelQualified
 bool longOpeningRangeLowOnly = longOpeningRangeLowQualified and not longOpeningRangeHighQualified and not longNonOpeningRangeEntryLevelQualified
 bool longOpeningRangeLowPlusAnotherLevel = longOpeningRangeLowQualified and (longOpeningRangeHighQualified or longNonOpeningRangeEntryLevelQualified)
+bool longOpeningRangeLowFadeAllowed = longOpeningRangeLowPlusAnotherLevel and not openingRangeLowAcceptedBelow
 bool shortOpeningRangeLowOnly = shortOpeningRangeLowQualified and not shortOpeningRangeHighQualified and not shortNonOpeningRangeEntryLevelQualified
 bool shortOpeningRangeHighOnly = shortOpeningRangeHighQualified and not shortOpeningRangeLowQualified and not shortNonOpeningRangeEntryLevelQualified
 bool shortOpeningRangeHighPlusAnotherLevel = shortOpeningRangeHighQualified and (shortOpeningRangeLowQualified or shortNonOpeningRangeEntryLevelQualified)
+bool shortOpeningRangeHighFadeAllowed = shortOpeningRangeHighPlusAnotherLevel and not openingRangeHighAcceptedAbove
 longOpeningRangeFilterPassed = not longOpeningRangeLowOnly
 shortOpeningRangeFilterPassed = not shortOpeningRangeHighOnly
-longOpeningRangeMarketStatePassed = openingRangeOutsideCloseSeen or longOpeningRangeLowPlusAnotherLevel
-shortOpeningRangeMarketStatePassed = openingRangeOutsideCloseSeen or shortOpeningRangeHighPlusAnotherLevel
 
 [longBestAfterExpandedPrice, longBestAfterExpandedName, longBestAfterExpandedPriority, longBestAfterExpandedCurrent, longBestAfterExpandedFound] = f_pickLongEntryCandidate(longExpandedScalpLevelPrice, longExpandedScalpLevelName, longExpandedScalpLevelPriority, longExpandedScalpLevelTouchedCurrent, longExpandedScalpLevelFound, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [longBestAfterGroup1Price, longBestAfterGroup1Name, longBestAfterGroup1Priority, longBestAfterGroup1Current, longBestAfterGroup1Found] = f_pickLongEntryCandidate(longGroup1Price, longGroup1Name, longGroup1Priority, longGroup1Current, longGroup1Found, longBestAfterExpandedPrice, longBestAfterExpandedName, longBestAfterExpandedPriority, longBestAfterExpandedCurrent, longBestAfterExpandedFound)
@@ -1767,6 +1791,34 @@ shortNineEmaMomentumSetup =
 shortNineEmaMomentumSetupQualified = shortNineEmaMomentumSetup
 shortLevelScalpSetupQualified = shortFboLevelSetupQualified or shortIgnitionLevelSetupQualified or shortStrongIgnitionLevelSetupQualified
 shortScalpSetupQualified = shortLevelScalpSetupQualified or shortNineEmaMomentumSetupQualified
+longOpeningRangeCounterBiasReversal =
+     openingRangeLevelsReady and
+     scalpSignalClose < openingRangeLow and
+     longLevelScalpSetupQualified and
+     longNonOpeningRangeEntryLevelQualified and
+     not longOpeningRangeLowTouchedForSignal and
+     priorBarBear and
+     not na(barRange[1]) and
+     barRange > barRange[1]
+shortOpeningRangeCounterBiasReversal =
+     openingRangeLevelsReady and
+     scalpSignalClose > openingRangeHigh and
+     shortLevelScalpSetupQualified and
+     shortNonOpeningRangeEntryLevelQualified and
+     not shortOpeningRangeHighTouchedForSignal and
+     priorBarBull and
+     not na(barRange[1]) and
+     barRange > barRange[1]
+longOpeningRangeMarketStatePassed =
+     openingRangeBias == 1 or
+     openingRangeNeutralAfterBreakout or
+     longOpeningRangeLowFadeAllowed or
+     longOpeningRangeCounterBiasReversal
+shortOpeningRangeMarketStatePassed =
+     openingRangeBias == -1 or
+     openingRangeNeutralAfterBreakout or
+     shortOpeningRangeHighFadeAllowed or
+     shortOpeningRangeCounterBiasReversal
 longNineEmaMomentumActive = longNineEmaMomentumSetupQualified and not longLevelScalpSetupQualified
 shortNineEmaMomentumActive = shortNineEmaMomentumSetupQualified and not shortLevelScalpSetupQualified
 
@@ -1975,30 +2027,46 @@ bool shortPremarketLowInSetup = usePremarketLowLevel and f_validSourcePrice(prem
 bool shortOpeningRangeHigh15mInSetup = useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady and f_validSourcePrice(openingRangeHigh15m) and f_levelTouched(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh15m, scalpSignalLow, scalpSignalHigh) and scalpSignalClose < openingRangeHigh15m
 bool shortOpeningRangeLow15mInSetup = useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady and f_validSourcePrice(openingRangeLow15m) and f_levelTouched(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow15m, scalpSignalLow, scalpSignalHigh) and scalpSignalClose < openingRangeLow15m
 
-bool longPremarketHighLrtQualifies = longPremarketHighInSetup and premarketHigh <= longLiquidityRetestLowerThirdMax
-bool longPremarketLowLrtQualifies = longPremarketLowInSetup and premarketLow <= longLiquidityRetestLowerThirdMax
-bool longOpeningRangeHigh15mLrtQualifies = longOpeningRangeHigh15mInSetup and openingRangeHigh15m <= longLiquidityRetestLowerThirdMax
-bool longOpeningRangeLow15mLrtQualifies = longOpeningRangeLow15mInSetup and openingRangeLow15m <= longLiquidityRetestLowerThirdMax
+bool longPremarketHighExtremeThirdOk = longPremarketHighInSetup and premarketHigh <= longLiquidityRetestLowerThirdMax
+bool longPremarketHighBodyCrosses = open < premarketHigh and close > premarketHigh
+bool longPremarketHighLrtQualifies = longPremarketHighExtremeThirdOk and longPremarketHighBodyCrosses
+bool longPremarketLowExtremeThirdOk = longPremarketLowInSetup and premarketLow <= longLiquidityRetestLowerThirdMax
+bool longPremarketLowBodyCrosses = open < premarketLow and close > premarketLow
+bool longPremarketLowLrtQualifies = longPremarketLowExtremeThirdOk and longPremarketLowBodyCrosses
+bool longOpeningRangeHigh15mExtremeThirdOk = longOpeningRangeHigh15mInSetup and openingRangeHigh15m <= longLiquidityRetestLowerThirdMax
+bool longOpeningRangeHigh15mBodyCrosses = open < openingRangeHigh15m and close > openingRangeHigh15m
+bool longOpeningRangeHigh15mLrtQualifies = longOpeningRangeHigh15mExtremeThirdOk and longOpeningRangeHigh15mBodyCrosses
+bool longOpeningRangeLow15mExtremeThirdOk = longOpeningRangeLow15mInSetup and openingRangeLow15m <= longLiquidityRetestLowerThirdMax
+bool longOpeningRangeLow15mBodyCrosses = open < openingRangeLow15m and close > openingRangeLow15m
+bool longOpeningRangeLow15mLrtQualifies = longOpeningRangeLow15mExtremeThirdOk and longOpeningRangeLow15mBodyCrosses
 
-bool shortPremarketHighLrtQualifies = shortPremarketHighInSetup and premarketHigh >= shortLiquidityRetestUpperThirdMin
-bool shortPremarketLowLrtQualifies = shortPremarketLowInSetup and premarketLow >= shortLiquidityRetestUpperThirdMin
-bool shortOpeningRangeHigh15mLrtQualifies = shortOpeningRangeHigh15mInSetup and openingRangeHigh15m >= shortLiquidityRetestUpperThirdMin
-bool shortOpeningRangeLow15mLrtQualifies = shortOpeningRangeLow15mInSetup and openingRangeLow15m >= shortLiquidityRetestUpperThirdMin
+bool shortPremarketHighExtremeThirdOk = shortPremarketHighInSetup and premarketHigh >= shortLiquidityRetestUpperThirdMin
+bool shortPremarketHighBodyCrosses = open > premarketHigh and close < premarketHigh
+bool shortPremarketHighLrtQualifies = shortPremarketHighExtremeThirdOk and shortPremarketHighBodyCrosses
+bool shortPremarketLowExtremeThirdOk = shortPremarketLowInSetup and premarketLow >= shortLiquidityRetestUpperThirdMin
+bool shortPremarketLowBodyCrosses = open > premarketLow and close < premarketLow
+bool shortPremarketLowLrtQualifies = shortPremarketLowExtremeThirdOk and shortPremarketLowBodyCrosses
+bool shortOpeningRangeHigh15mExtremeThirdOk = shortOpeningRangeHigh15mInSetup and openingRangeHigh15m >= shortLiquidityRetestUpperThirdMin
+bool shortOpeningRangeHigh15mBodyCrosses = open > openingRangeHigh15m and close < openingRangeHigh15m
+bool shortOpeningRangeHigh15mLrtQualifies = shortOpeningRangeHigh15mExtremeThirdOk and shortOpeningRangeHigh15mBodyCrosses
+bool shortOpeningRangeLow15mExtremeThirdOk = shortOpeningRangeLow15mInSetup and openingRangeLow15m >= shortLiquidityRetestUpperThirdMin
+bool shortOpeningRangeLow15mBodyCrosses = open > openingRangeLow15m and close < openingRangeLow15m
+bool shortOpeningRangeLow15mLrtQualifies = shortOpeningRangeLow15mExtremeThirdOk and shortOpeningRangeLow15mBodyCrosses
 bool longAnySessionLiquidityLevelTouched = longPremarketHighInSetup or longPremarketLowInSetup or longOpeningRangeHigh15mInSetup or longOpeningRangeLow15mInSetup
 bool shortAnySessionLiquidityLevelTouched = shortPremarketHighInSetup or shortPremarketLowInSetup or shortOpeningRangeHigh15mInSetup or shortOpeningRangeLow15mInSetup
 // LRT is only valid if every touched session-liquidity level is in the correct extreme third. One qualifying OR/PM level cannot override another touched OR/PM level that is too far from the entry zone.
 bool longAllTouchedSessionLiquidityLevelsInLowerThird =
-     (not longPremarketHighInSetup or longPremarketHighLrtQualifies) and
-     (not longPremarketLowInSetup or longPremarketLowLrtQualifies) and
-     (not longOpeningRangeHigh15mInSetup or longOpeningRangeHigh15mLrtQualifies) and
-     (not longOpeningRangeLow15mInSetup or longOpeningRangeLow15mLrtQualifies)
+     (not longPremarketHighInSetup or longPremarketHighExtremeThirdOk) and
+     (not longPremarketLowInSetup or longPremarketLowExtremeThirdOk) and
+     (not longOpeningRangeHigh15mInSetup or longOpeningRangeHigh15mExtremeThirdOk) and
+     (not longOpeningRangeLow15mInSetup or longOpeningRangeLow15mExtremeThirdOk)
 bool shortAllTouchedSessionLiquidityLevelsInUpperThird =
-     (not shortPremarketHighInSetup or shortPremarketHighLrtQualifies) and
-     (not shortPremarketLowInSetup or shortPremarketLowLrtQualifies) and
-     (not shortOpeningRangeHigh15mInSetup or shortOpeningRangeHigh15mLrtQualifies) and
-     (not shortOpeningRangeLow15mInSetup or shortOpeningRangeLow15mLrtQualifies)
-bool longLrtLevelInExtremeThird = longPremarketHighLrtQualifies or longPremarketLowLrtQualifies or longOpeningRangeHigh15mLrtQualifies or longOpeningRangeLow15mLrtQualifies
-bool shortLrtLevelInExtremeThird = shortPremarketHighLrtQualifies or shortPremarketLowLrtQualifies or shortOpeningRangeHigh15mLrtQualifies or shortOpeningRangeLow15mLrtQualifies
+     (not shortPremarketHighInSetup or shortPremarketHighExtremeThirdOk) and
+     (not shortPremarketLowInSetup or shortPremarketLowExtremeThirdOk) and
+     (not shortOpeningRangeHigh15mInSetup or shortOpeningRangeHigh15mExtremeThirdOk) and
+     (not shortOpeningRangeLow15mInSetup or shortOpeningRangeLow15mExtremeThirdOk)
+bool longAnyBodyCrossedLrtLevel = longPremarketHighLrtQualifies or longPremarketLowLrtQualifies or longOpeningRangeHigh15mLrtQualifies or longOpeningRangeLow15mLrtQualifies
+bool shortAnyBodyCrossedLrtLevel = shortPremarketHighLrtQualifies or shortPremarketLowLrtQualifies or shortOpeningRangeHigh15mLrtQualifies or shortOpeningRangeLow15mLrtQualifies
 
 float longLiquidityRetestEntry = na
 longLiquidityRetestEntry := longPremarketHighLrtQualifies ? premarketHigh : longLiquidityRetestEntry
@@ -2034,8 +2102,8 @@ shortLiquidityRetestTouchedNonEligibleLevel := shortLiquidityRetestTouchedNonEli
 
 bool longLrtBlockedByNonSessionLiquidity = longLiquidityRetestTouchedNonEligibleLevel
 bool shortLrtBlockedByNonSessionLiquidity = shortLiquidityRetestTouchedNonEligibleLevel
-bool longLrtCandidate = useLiquidityRetestModel and longLevelScalpSetupQualified and bullSignalHighVol and longAnySessionLiquidityLevelTouched and longLrtLevelInExtremeThird and longAllTouchedSessionLiquidityLevelsInLowerThird and not longLrtBlockedByNonSessionLiquidity and not na(liquidityRetestAtrValue) and liquidityRetestAtrValue > 0
-bool shortLrtCandidate = useLiquidityRetestModel and shortLevelScalpSetupQualified and bearSignalHighVol and shortAnySessionLiquidityLevelTouched and shortLrtLevelInExtremeThird and shortAllTouchedSessionLiquidityLevelsInUpperThird and not shortLrtBlockedByNonSessionLiquidity and not na(liquidityRetestAtrValue) and liquidityRetestAtrValue > 0
+bool longLrtCandidate = useLiquidityRetestModel and longLevelScalpSetupQualified and bullSignalHighVol and longAnySessionLiquidityLevelTouched and longAnyBodyCrossedLrtLevel and longAllTouchedSessionLiquidityLevelsInLowerThird and not longLrtBlockedByNonSessionLiquidity and not na(liquidityRetestAtrValue) and liquidityRetestAtrValue > 0
+bool shortLrtCandidate = useLiquidityRetestModel and shortLevelScalpSetupQualified and bearSignalHighVol and shortAnySessionLiquidityLevelTouched and shortAnyBodyCrossedLrtLevel and shortAllTouchedSessionLiquidityLevelsInUpperThird and not shortLrtBlockedByNonSessionLiquidity and not na(liquidityRetestAtrValue) and liquidityRetestAtrValue > 0
 bool longLiquidityRetestSetupQualified = longLrtCandidate
 bool shortLiquidityRetestSetupQualified = shortLrtCandidate
 
@@ -2325,4 +2393,7 @@ if barstate.islast
         alertSetupsTableText = alertScalpSetups ? "Scalp" : "Off"
         int scalpStatusRow = 0
         scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Opening Range", openingRangeStatus, statusNeutralColor)
+        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "OR Bias", openingRangeBiasText, statusNeutralColor)
+        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORH Accepted", openingRangeHighAcceptedAbove ? "Yes" : "No", statusNeutralColor)
+        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORL Accepted", openingRangeLowAcceptedBelow ? "Yes" : "No", statusNeutralColor)
         scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Converted Source", convertedLevelSourceSymbol, statusNeutralColor)
