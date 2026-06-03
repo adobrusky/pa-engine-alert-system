@@ -2085,20 +2085,20 @@ string shortLiquidityRetestLevelName = shortPremarketHighLrtQualifies and premar
 
 bool longLiquidityRetestTouchedNonEligibleLevel = false
 bool shortLiquidityRetestTouchedNonEligibleLevel = false
-// LRT should only consider PMH/PML/ORH/ORL. Any other touched/cleared trade level blocks LRT.
+// LRT is anchored by PMH/PML/ORH/ORL. Other touched/cleared trade levels only block LRT when they are outside the correct LRT extreme third.
 if convertedHtfTradeLevelsEnabled and array.size(swingLevelPrices) > 0
     for liquidityRetestLevelIndex = 0 to array.size(swingLevelPrices) - 1
         float liquidityRetestLevelPrice = array.get(swingLevelPrices, liquidityRetestLevelIndex)
         bool liquidityRetestConvertedLevelActive = array.get(swingLevelAllowedForEntry, liquidityRetestLevelIndex) or array.get(swingLevelCloseBeyondRequired, liquidityRetestLevelIndex)
-        longLiquidityRetestTouchedNonEligibleLevel := longLiquidityRetestTouchedNonEligibleLevel or f_longLevelTouchedAndCleared(liquidityRetestConvertedLevelActive, liquidityRetestLevelPrice, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
-        shortLiquidityRetestTouchedNonEligibleLevel := shortLiquidityRetestTouchedNonEligibleLevel or f_shortLevelTouchedAndCleared(liquidityRetestConvertedLevelActive, liquidityRetestLevelPrice, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+        longLiquidityRetestTouchedNonEligibleLevel := longLiquidityRetestTouchedNonEligibleLevel or (f_longLevelTouchedAndCleared(liquidityRetestConvertedLevelActive, liquidityRetestLevelPrice, scalpSignalLow, scalpSignalHigh, scalpSignalClose) and liquidityRetestLevelPrice > longLiquidityRetestLowerThirdMax)
+        shortLiquidityRetestTouchedNonEligibleLevel := shortLiquidityRetestTouchedNonEligibleLevel or (f_shortLevelTouchedAndCleared(liquidityRetestConvertedLevelActive, liquidityRetestLevelPrice, scalpSignalLow, scalpSignalHigh, scalpSignalClose) and liquidityRetestLevelPrice < shortLiquidityRetestUpperThirdMin)
 
-longLiquidityRetestTouchedNonEligibleLevel := longLiquidityRetestTouchedNonEligibleLevel or f_longLevelTouchedAndCleared(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
-longLiquidityRetestTouchedNonEligibleLevel := longLiquidityRetestTouchedNonEligibleLevel or f_longLevelTouchedAndCleared(useDirectTradePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
-longLiquidityRetestTouchedNonEligibleLevel := longLiquidityRetestTouchedNonEligibleLevel or f_longLevelTouchedAndCleared(activeTradeDailyOpenValid, activeTradeDailyOpen, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
-shortLiquidityRetestTouchedNonEligibleLevel := shortLiquidityRetestTouchedNonEligibleLevel or f_shortLevelTouchedAndCleared(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
-shortLiquidityRetestTouchedNonEligibleLevel := shortLiquidityRetestTouchedNonEligibleLevel or f_shortLevelTouchedAndCleared(useDirectTradePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
-shortLiquidityRetestTouchedNonEligibleLevel := shortLiquidityRetestTouchedNonEligibleLevel or f_shortLevelTouchedAndCleared(activeTradeDailyOpenValid, activeTradeDailyOpen, scalpSignalLow, scalpSignalHigh, scalpSignalClose)
+longLiquidityRetestTouchedNonEligibleLevel := longLiquidityRetestTouchedNonEligibleLevel or (f_longLevelTouchedAndCleared(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose) and effectivePrevDayHigh > longLiquidityRetestLowerThirdMax)
+longLiquidityRetestTouchedNonEligibleLevel := longLiquidityRetestTouchedNonEligibleLevel or (f_longLevelTouchedAndCleared(useDirectTradePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose) and effectivePrevDayLow > longLiquidityRetestLowerThirdMax)
+longLiquidityRetestTouchedNonEligibleLevel := longLiquidityRetestTouchedNonEligibleLevel or (f_longLevelTouchedAndCleared(activeTradeDailyOpenValid, activeTradeDailyOpen, scalpSignalLow, scalpSignalHigh, scalpSignalClose) and activeTradeDailyOpen > longLiquidityRetestLowerThirdMax)
+shortLiquidityRetestTouchedNonEligibleLevel := shortLiquidityRetestTouchedNonEligibleLevel or (f_shortLevelTouchedAndCleared(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh, scalpSignalClose) and effectivePrevDayHigh < shortLiquidityRetestUpperThirdMin)
+shortLiquidityRetestTouchedNonEligibleLevel := shortLiquidityRetestTouchedNonEligibleLevel or (f_shortLevelTouchedAndCleared(useDirectTradePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh, scalpSignalClose) and effectivePrevDayLow < shortLiquidityRetestUpperThirdMin)
+shortLiquidityRetestTouchedNonEligibleLevel := shortLiquidityRetestTouchedNonEligibleLevel or (f_shortLevelTouchedAndCleared(activeTradeDailyOpenValid, activeTradeDailyOpen, scalpSignalLow, scalpSignalHigh, scalpSignalClose) and activeTradeDailyOpen < shortLiquidityRetestUpperThirdMin)
 
 bool longLrtBlockedByNonSessionLiquidity = longLiquidityRetestTouchedNonEligibleLevel
 bool shortLrtBlockedByNonSessionLiquidity = shortLiquidityRetestTouchedNonEligibleLevel
