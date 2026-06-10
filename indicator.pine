@@ -1801,6 +1801,7 @@ shortScalpSetupQualified = shortLevelScalpSetupQualified or shortNineEmaMomentum
 longOpeningRangeCounterBiasReversal =
      openingRangeLevelsReady and
      scalpSignalClose < openingRangeLow and
+     bullSignalHighVol and
      longLevelScalpSetupQualified and
      longNonOpeningRangeEntryLevelQualified and
      not longOpeningRangeLowTouchedForSignal and
@@ -1810,6 +1811,7 @@ longOpeningRangeCounterBiasReversal =
 shortOpeningRangeCounterBiasReversal =
      openingRangeLevelsReady and
      scalpSignalClose > openingRangeHigh and
+     bearSignalHighVol and
      shortLevelScalpSetupQualified and
      shortNonOpeningRangeEntryLevelQualified and
      not shortOpeningRangeHighTouchedForSignal and
