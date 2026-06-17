@@ -26,11 +26,13 @@ allowPriorBarVolumeReversals = input.bool(true, title="Allow Prior-Bar Volume Re
 // 02. Setup Filters
 useNineEmaMomentumSetup = input.bool(true, title="Use 9 EMA Momentum Setup", group=groupSetupFilters, tooltip="Allows a no-level-required high-volume momentum continuation setup when the full signal bar is at least one tick beyond the rounded 9 EMA. Uses 50% retracement entry and signal-bar stop.")
 useNineEmaReclaimContinuationSetup = input.bool(true, title="Use 9 EMA Reclaim Continuation Setup", group=groupSetupFilters, tooltip="Optional research setup. Allows a high-volume trend-continuation signal when the bar touches the rounded 9 EMA, closes back beyond it with a strong mostly-body close, and the Opening Range bias is aligned.")
+useNineEmaLowVolumePullbackSetup = input.bool(false, title="Use 9 EMA Low-Volume Pullback Setup", group=groupSetupFilters, tooltip="Research/backtest setup. Allows a trend-aligned low-volume pullback into/near the 9 EMA to trigger without requiring signal-bar high volume. Disabled by default.")
 requirePriorBarBeyondNineEma = input.bool(true, title="Require Prior Bar Beyond 9 EMA", group=groupSetupFilters, tooltip="When enabled, the 9 EMA Momentum Setup requires the prior bar to also be at least one tick beyond the rounded 9 EMA in the trade direction.")
 requireRecentStrongCloseForNineEma = input.bool(true, title="Require Recent Strong Close For 9 EMA Setup", group=groupSetupFilters, tooltip="When enabled, the 9 EMA Momentum Setup requires either the prior bar or the bar two bars back to close in the upper third for longs, or in the lower third for shorts.")
 blockNineEmaSetupWhenTooFarFromEma = input.bool(true, title="Block 9 EMA Setup When Too Far From EMA", group=groupSetupFilters, tooltip="When enabled, blocks the 9 EMA Momentum Setup if the distance from the signal bar to the rounded 9 EMA is greater than the signal bar's total range.")
 nineEmaMaxDistanceBarRangeMultiplier = input.float(0.50, title="9 EMA Max Distance As Bar Range", minval=0.0, maxval=2.0, step=0.05, group=groupSetupFilters, tooltip="Maximum allowed distance between the signal bar and the rounded 9 EMA for 9 EMA Momentum Setups, expressed as a multiple of the signal bar's range. Default 0.50 means the signal bar must be within half of its own range from the EMA.")
 nineEmaPriorLaunchMaxDistanceBarRangeMultiplier = input.float(1.00, title="9 EMA Prior Launch Max Distance As Bar Range", minval=0.0, maxval=2.0, step=0.05, group=groupSetupFilters, tooltip="For 9 EMA two-bar impulse setups, maximum allowed distance between the prior launch bar and its own rounded 9 EMA, expressed as a multiple of the prior bar's range. Default 1.00 means the prior strong launch bar can be within one full prior-bar range of the EMA.")
+nineEmaLowVolumePullbackMaxDistanceBarRangeMultiplier = input.float(0.5, title="9 EMA Low-Volume Pullback Max Distance As Bar Range", minval=0.0, maxval=2.0, step=0.05, group=groupSetupFilters, tooltip="Maximum allowed distance between the low-volume pullback signal bar and the rounded 9 EMA, expressed as a multiple of the signal bar's range. Default 1.00.")
 skipFiveSameColorBarExtension = input.bool(false, title="Skip 5 Same-Color Bar Extension", group=groupSetupFilters, tooltip="Blocks long signals when the signal bar is the 5th consecutive bull bar or later, and blocks short signals when the signal bar is the 5th consecutive bear bar or later.")
 skipFiveBarExtension     = input.bool(false, title="Skip 5+ No-Pullback Extension - Legacy", group=groupSetupFilters)
 skipStrongMicrochannelExtension = input.bool(false, title="Skip Two Prior Strong-Close Extension", group=groupSetupFilters, tooltip="Blocks long signals after two prior strong bullish closes and blocks short signals after two prior strong bearish closes. This treats back-to-back strong closes as extension even if the sequence is not a strict microchannel.")
@@ -122,6 +124,8 @@ alertLatestScalpCancellation = input.bool(true, "Alert Latest Alert Cancellation
 showLatestScalpCancellationLabels = input.bool(true, "Show Latest Alert Cancellation Labels", group=groupLatestAlertTracker)
 cancelLatestOnTargetBeforeEntry = input.bool(true, "Cancel If Target Hit Before Entry", group=groupLatestAlertTracker)
 cancelLatestOnMeasuredMoveBeforeEntry = input.bool(true, "Cancel If Measured Move Hit Before Entry", group=groupLatestAlertTracker)
+cancelLatestOnAgeBeforeEntry = input.bool(true, "Cancel If Entry Not Hit After Max Bars", group=groupLatestAlertTracker)
+latestScalpMaxBarsAfterSignal = input.int(5, "Latest Alert Max Bars After Signal", minval=1, maxval=20, group=groupLatestAlertTracker, tooltip="Cancels the latest tracked scalp alert if the entry has not been touched after this many completed bars after the signal bar. Default 5.")
 
 scalpPointValue = tickerInput == "MES" ? 5.0 : 2.0
 scalpTickSize   = 0.25
@@ -2161,15 +2165,91 @@ shortPriorBarStrongNineEmaLaunch =
      shortPriorBarNearNineEma and
      high[1] <= roundedNineEma[1] - scalpTickSize
 
+longNineEmaTwoBarImpulseDistanceException = longPriorBarStrongNineEmaLaunch and closeInUpperFourth
+shortNineEmaTwoBarImpulseDistanceException = shortPriorBarStrongNineEmaLaunch and closeInLowerFourth
+
 longNineEmaDistanceNotTooExtended =
      not blockNineEmaSetupWhenTooFarFromEma or
      longSignalBarNearNineEma or
-     longPriorBarStrongNineEmaLaunch
+     longNineEmaTwoBarImpulseDistanceException
 
 shortNineEmaDistanceNotTooExtended =
      not blockNineEmaSetupWhenTooFarFromEma or
      shortSignalBarNearNineEma or
-     shortPriorBarStrongNineEmaLaunch
+     shortNineEmaTwoBarImpulseDistanceException
+
+priorPullbackRange = high[1] - low[1]
+priorPullbackDoji = bodyPct[1] <= 0.25
+
+priorCloseAboveLowerThird =
+     priorPullbackRange > 0 and
+     close[1] > low[1] + priorPullbackRange * (1.0 / 3.0)
+
+priorCloseBelowUpperThird =
+     priorPullbackRange > 0 and
+     close[1] < low[1] + priorPullbackRange * (2.0 / 3.0)
+
+longLowVolumePriorPullback =
+     (f_isBearBar(open[1], close[1]) or priorPullbackDoji) and
+     not na(volume[2]) and
+     volume[1] < volume[2] and
+     priorCloseAboveLowerThird
+
+shortLowVolumePriorPullback =
+     (f_isBullBar(open[1], close[1]) or priorPullbackDoji) and
+     not na(volume[2]) and
+     volume[1] < volume[2] and
+     priorCloseBelowUpperThird
+
+longLowVolumeSignalPaOk =
+     sufficientVolatility and
+     f_isBullBar(open, close) and
+     closeInUpperThird and
+     (isBodyThreshold or isLowerWickThreshold)
+
+shortLowVolumeSignalPaOk =
+     sufficientVolatility and
+     f_isBearBar(open, close) and
+     closeInLowerThird and
+     (isBodyThreshold or isUpperWickThreshold)
+
+longLowVolumePullbackNearNineEma =
+     barRange > 0 and
+     not na(roundedNineEma) and
+     math.max(low - roundedNineEma, 0.0) <= barRange * nineEmaLowVolumePullbackMaxDistanceBarRangeMultiplier
+
+shortLowVolumePullbackNearNineEma =
+     barRange > 0 and
+     not na(roundedNineEma) and
+     math.max(roundedNineEma - high, 0.0) <= barRange * nineEmaLowVolumePullbackMaxDistanceBarRangeMultiplier
+
+longLowVolumePullbackTrendContext =
+     openingRangeLevelsReady and
+     openingRangeBias == 1 and
+     not na(roundedNineEma) and
+     not na(roundedNineEma[1]) and
+     roundedNineEma > roundedNineEma[1] and
+     close > roundedNineEma and
+     close[1] > roundedNineEma[1]
+
+shortLowVolumePullbackTrendContext =
+     openingRangeLevelsReady and
+     openingRangeBias == -1 and
+     not na(roundedNineEma) and
+     not na(roundedNineEma[1]) and
+     roundedNineEma < roundedNineEma[1] and
+     close < roundedNineEma and
+     close[1] < roundedNineEma[1]
+
+longLowVolumePullbackHtfRetestStatePassed =
+     not requireHtfContinuationState or
+     ((not longPreviousDayLowQualified or longPreviousDayLowPriorClosePassed) and
+      (not longPreviousWeekLowQualified or longPreviousWeekLowPriorClosePassed))
+
+shortLowVolumePullbackHtfRetestStatePassed =
+     not requireHtfContinuationState or
+     ((not shortPreviousDayHighQualified or shortPreviousDayHighPriorClosePassed) and
+      (not shortPreviousWeekHighQualified or shortPreviousWeekHighPriorClosePassed))
 
 longNineEmaMomentumSetup =
      useNineEmaMomentumSetup and
@@ -2199,8 +2279,17 @@ longNineEmaReclaimContinuationSetup =
      closeInUpperFourth and
      isTwoThirdsBody
 longNineEmaReclaimContinuationSetupQualified = longNineEmaReclaimContinuationSetup
+longNineEmaLowVolumePullbackSetup =
+     useNineEmaLowVolumePullbackSetup and
+     longLowVolumePullbackTrendContext and
+     longLowVolumePriorPullback and
+     longLowVolumeSignalPaOk and
+     longLowVolumePullbackNearNineEma and
+     longAllTouchedLevelsClosedBeyond and
+     longLowVolumePullbackHtfRetestStatePassed
+longNineEmaLowVolumePullbackSetupQualified = longNineEmaLowVolumePullbackSetup
 longLevelScalpSetupQualified = longFboLevelSetupQualified or longIgnitionLevelSetupQualified or longStrongIgnitionLevelSetupQualified
-longScalpSetupQualified = longLevelScalpSetupQualified or longNineEmaMomentumSetupQualified or longNineEmaReclaimContinuationSetupQualified
+longScalpSetupQualified = longLevelScalpSetupQualified or longNineEmaMomentumSetupQualified or longNineEmaReclaimContinuationSetupQualified or longNineEmaLowVolumePullbackSetupQualified
 
 shortFboLevelSetupQualified = shortLevelBreakSetup and bearScalpSetupTier
 shortIgnitionLevelSetupQualified = shortLevelBreakSetup and bearScalpIgnitionTier
@@ -2233,8 +2322,17 @@ shortNineEmaReclaimContinuationSetup =
      closeInLowerFourth and
      isTwoThirdsBody
 shortNineEmaReclaimContinuationSetupQualified = shortNineEmaReclaimContinuationSetup
+shortNineEmaLowVolumePullbackSetup =
+     useNineEmaLowVolumePullbackSetup and
+     shortLowVolumePullbackTrendContext and
+     shortLowVolumePriorPullback and
+     shortLowVolumeSignalPaOk and
+     shortLowVolumePullbackNearNineEma and
+     shortAllTouchedLevelsClosedBeyond and
+     shortLowVolumePullbackHtfRetestStatePassed
+shortNineEmaLowVolumePullbackSetupQualified = shortNineEmaLowVolumePullbackSetup
 shortLevelScalpSetupQualified = shortFboLevelSetupQualified or shortIgnitionLevelSetupQualified or shortStrongIgnitionLevelSetupQualified
-shortScalpSetupQualified = shortLevelScalpSetupQualified or shortNineEmaMomentumSetupQualified or shortNineEmaReclaimContinuationSetupQualified
+shortScalpSetupQualified = shortLevelScalpSetupQualified or shortNineEmaMomentumSetupQualified or shortNineEmaReclaimContinuationSetupQualified or shortNineEmaLowVolumePullbackSetupQualified
 longStrongHtfReversalException =
      openingRangeLevelsReady and
      bullSignalHighVol and
@@ -2279,11 +2377,14 @@ longNineEmaMomentumActive = longNineEmaMomentumSetupQualified and not longLevelS
 shortNineEmaMomentumActive = shortNineEmaMomentumSetupQualified and not shortLevelScalpSetupQualified
 longNineEmaReclaimContinuationActive = longNineEmaReclaimContinuationSetupQualified and not longLevelScalpSetupQualified and not longNineEmaMomentumSetupQualified
 shortNineEmaReclaimContinuationActive = shortNineEmaReclaimContinuationSetupQualified and not shortLevelScalpSetupQualified and not shortNineEmaMomentumSetupQualified
+longNineEmaLowVolumePullbackActive = longNineEmaLowVolumePullbackSetupQualified and not longLevelScalpSetupQualified and not longNineEmaMomentumSetupQualified and not longNineEmaReclaimContinuationSetupQualified
+shortNineEmaLowVolumePullbackActive = shortNineEmaLowVolumePullbackSetupQualified and not shortLevelScalpSetupQualified and not shortNineEmaMomentumSetupQualified and not shortNineEmaReclaimContinuationSetupQualified
 longOpeningRangeFadeActive = longOpeningRangeLowFadeRequired and longOpeningRangeLowFadeAllowed
 shortOpeningRangeFadeActive = shortOpeningRangeHighFadeRequired and shortOpeningRangeHighFadeAllowed
 longCompactSignalText =
      longNineEmaMomentumActive ? "9EMA" :
      longNineEmaReclaimContinuationActive ? "9EMA RCLM" :
+     longNineEmaLowVolumePullbackActive ? "9EMA LV" :
      longOpeningRangeFadeActive and longStrongHtfReversalException ? "ORF HTF REV" :
      longOpeningRangeFadeActive ? "ORF" :
      longStrongHtfReversalException ? "HTF REV" :
@@ -2291,6 +2392,7 @@ longCompactSignalText =
 shortCompactSignalText =
      shortNineEmaMomentumActive ? "9EMA" :
      shortNineEmaReclaimContinuationActive ? "9EMA RCLM" :
+     shortNineEmaLowVolumePullbackActive ? "9EMA LV" :
      shortOpeningRangeFadeActive and shortStrongHtfReversalException ? "ORF HTF REV" :
      shortOpeningRangeFadeActive ? "ORF" :
      shortStrongHtfReversalException ? "HTF REV" :
@@ -2303,8 +2405,8 @@ openingRangeAlertText =
      "OR Pre"
 
 // ===================== Scalp Entry / Stop / Risk Logic =====================
-longAnyNineEmaSetupActive = longNineEmaMomentumActive or longNineEmaReclaimContinuationActive
-shortAnyNineEmaSetupActive = shortNineEmaMomentumActive or shortNineEmaReclaimContinuationActive
+longAnyNineEmaSetupActive = longNineEmaMomentumActive or longNineEmaReclaimContinuationActive or longNineEmaLowVolumePullbackActive
+shortAnyNineEmaSetupActive = shortNineEmaMomentumActive or shortNineEmaReclaimContinuationActive or shortNineEmaLowVolumePullbackActive
 longUsePriorityLevel = not longAnyNineEmaSetupActive and longLevelEntryRequired and longLevelEntryRetracementOk
 shortUsePriorityLevel = not shortAnyNineEmaSetupActive and shortLevelEntryRequired and shortLevelEntryRetracementOk
 longEntryType = longAnyNineEmaSetupActive ? "50%" : longUsePriorityLevel ? longSelectedLevelName : "50%"
@@ -2735,11 +2837,15 @@ if longNineEmaMomentumActive
     longSelectedLevelName := "9 EMA"
 else if longNineEmaReclaimContinuationActive
     longSelectedLevelName := "9 EMA Reclaim"
+else if longNineEmaLowVolumePullbackActive
+    longSelectedLevelName := "9 EMA Low Vol"
 
 if shortNineEmaMomentumActive
     shortSelectedLevelName := "9 EMA"
 else if shortNineEmaReclaimContinuationActive
     shortSelectedLevelName := "9 EMA Reclaim"
+else if shortNineEmaLowVolumePullbackActive
+    shortSelectedLevelName := "9 EMA Low Vol"
 
 longSelectedLevelIsHtfContinuationHigh = f_isPreviousDayHighLevel(longSelectedLevelName) or f_isPreviousWeekHighLevel(longSelectedLevelName)
 shortSelectedLevelIsHtfContinuationLow = f_isPreviousDayLowLevel(shortSelectedLevelName) or f_isPreviousWeekLowLevel(shortSelectedLevelName)
@@ -2776,10 +2882,10 @@ shortTargetTypeText = f_targetDisplayText(shortTargetType, shortTargetPromotionB
 longScalpTierFilterPassed = longAnyNineEmaSetupActive ? true : bullScalpTierAllowed
 shortScalpTierFilterPassed = shortAnyNineEmaSetupActive ? true : bearScalpTierAllowed
 bullScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and inAlertTradingWindow and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBullSignals and longOpeningRangeFiltersPassed and longScalpTierFilterPassed and longScalpSetupQualified and not longExtendedSetupBlocked and not longOppositePressureBlocked and longHtfContinuationStatePassed and longHtfSupportLowStatePassed and longDailyOpenRangeAcceptancePassed and longFiveMinuteSwingAcceptancePassed and longOneHourSwingAcceptancePassed and longOneHourSwingBlockerPassed and longRiskValid and longTargetFilterPassed and longTargetNotRecentlyTouched
-bullAlertLabelTitle = longNineEmaMomentumActive ? "LONG 9EMA SCALP" : longNineEmaReclaimContinuationActive ? "LONG 9EMA RCLM SCALP" : "LONG SCALP"
+bullAlertLabelTitle = longNineEmaMomentumActive ? "LONG 9EMA SCALP" : longNineEmaReclaimContinuationActive ? "LONG 9EMA RCLM SCALP" : longNineEmaLowVolumePullbackActive ? "LONG 9EMA LV SCALP" : "LONG SCALP"
 
 bearScalpAlert = alertScalpSetups and barstate.isconfirmed and inScalpRTHSession and inAlertTradingWindow and openingRangeLevelsReady and not inOpeningRangeWindow and alertOnBearSignals and shortOpeningRangeFiltersPassed and shortScalpTierFilterPassed and shortScalpSetupQualified and not shortExtendedSetupBlocked and not shortOppositePressureBlocked and shortHtfContinuationStatePassed and shortHtfResistanceHighStatePassed and shortDailyOpenRangeAcceptancePassed and shortFiveMinuteSwingAcceptancePassed and shortOneHourSwingAcceptancePassed and shortOneHourSwingBlockerPassed and shortRiskValid and shortTargetFilterPassed and shortTargetNotRecentlyTouched
-bearAlertLabelTitle = shortNineEmaMomentumActive ? "SHORT 9EMA SCALP" : shortNineEmaReclaimContinuationActive ? "SHORT 9EMA RCLM SCALP" : "SHORT SCALP"
+bearAlertLabelTitle = shortNineEmaMomentumActive ? "SHORT 9EMA SCALP" : shortNineEmaReclaimContinuationActive ? "SHORT 9EMA RCLM SCALP" : shortNineEmaLowVolumePullbackActive ? "SHORT 9EMA LV SCALP" : "SHORT SCALP"
 
 effectiveBullScalpAlert = bullScalpAlert
 effectiveBearScalpAlert = not effectiveBullScalpAlert and bearScalpAlert
@@ -2935,10 +3041,12 @@ else
         bool latestTargetIsLod = latestScalpTargetType == "LOD"
         bool latestMeasuredMoveCancellationEligible = latestLongAlert ? latestTargetIsHod : latestShortAlert ? latestTargetIsLod : false
         bool latestMeasuredMoveHit = cancelLatestOnMeasuredMoveBeforeEntry and latestMeasuredMoveCancellationEligible and not na(latestScalpMeasuredMove) and (latestLongAlert ? high >= latestScalpMeasuredMove : latestShortAlert ? low <= latestScalpMeasuredMove : false)
-        bool latestCancellationHit = latestMeasuredMoveHit or latestTargetHit
+        int latestBarsAfterSignal = bar_index - latestScalpSignalBar
+        bool latestAgeExpired = cancelLatestOnAgeBeforeEntry and latestBarsAfterSignal >= latestScalpMaxBarsAfterSignal
+        bool latestTargetOrMeasuredMoveCancellationHit = latestMeasuredMoveHit or latestTargetHit
 
         // Historical OHLC bars cannot prove intrabar sequence; if entry and cancellation both print on the same bar, cancellation wins.
-        if latestCancellationHit
+        if latestTargetOrMeasuredMoveCancellationHit
             string latestCancellationReason = latestMeasuredMoveHit ? "MM BEFORE ENTRY" : "TGT BEFORE ENTRY"
             string latestCancellationLabelText = (latestLongAlert ? "CXL L\n" : "CXL S\n") + (latestMeasuredMoveHit ? "MM" : "TGT")
             if showLatestScalpCancellationLabels
@@ -2947,6 +3055,14 @@ else
                 alert(f_buildLatestScalpCancellationAlertMessage(latestScalpDirection, latestCancellationReason, latestScalpEntry, latestScalpTarget, latestScalpMeasuredMove, latestScalpTargetType, latestScalpAlertId), alert.freq_once_per_bar)
             latestScalpAlertActive := false
         else if latestEntryTouched
+            latestScalpAlertActive := false
+        else if latestAgeExpired
+            string latestCancellationReason = "AGE EXPIRED"
+            string latestCancellationLabelText = (latestLongAlert ? "CXL L\n" : "CXL S\n") + "AGE"
+            if showLatestScalpCancellationLabels
+                label.new(bar_index, latestLongAlert ? high : low, latestCancellationLabelText, style=latestLongAlert ? label.style_label_down : label.style_label_up, textcolor=color.black, color=latestScalpCancellationLabelColor, size=size.tiny)
+            if alertLatestScalpCancellation
+                alert(f_buildLatestScalpCancellationAlertMessage(latestScalpDirection, latestCancellationReason, latestScalpEntry, latestScalpTarget, latestScalpMeasuredMove, latestScalpTargetType, latestScalpAlertId), alert.freq_once_per_bar)
             latestScalpAlertActive := false
 
 plot(showOpeningRange ? openingRangeDisplayHigh : na, "15m Opening Range High", color=openingRangeHighColor, linewidth=1, style=plot.style_linebr)
