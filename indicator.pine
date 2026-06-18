@@ -26,7 +26,7 @@ allowPriorBarVolumeReversals = input.bool(true, title="Allow Prior-Bar Volume Re
 // 02. Setup Filters
 useNineEmaMomentumSetup = input.bool(true, title="Use 9 EMA Momentum Setup", group=groupSetupFilters, tooltip="Allows a no-level-required high-volume momentum continuation setup when the full signal bar is at least one tick beyond the rounded 9 EMA. Uses 50% retracement entry and signal-bar stop.")
 useNineEmaReclaimContinuationSetup = input.bool(true, title="Use 9 EMA Reclaim Continuation Setup", group=groupSetupFilters, tooltip="Optional research setup. Allows a high-volume trend-continuation signal when the bar touches the rounded 9 EMA, closes back beyond it with a strong mostly-body close, and the Opening Range bias is aligned.")
-useNineEmaLowVolumePullbackSetup = input.bool(false, title="Use 9 EMA Low-Volume Pullback Setup", group=groupSetupFilters, tooltip="Research/backtest setup. Allows a trend-aligned low-volume pullback into/near the 9 EMA to trigger without requiring signal-bar high volume. Disabled by default.")
+useNineEmaLowVolumePullbackSetup = input.bool(true, title="Use 9 EMA Low-Volume Pullback Setup", group=groupSetupFilters, tooltip="Research/backtest setup. Allows a trend-aligned low-volume pullback into/near the 9 EMA to trigger without requiring signal-bar high volume. Disabled by default.")
 requirePriorBarBeyondNineEma = input.bool(true, title="Require Prior Bar Beyond 9 EMA", group=groupSetupFilters, tooltip="When enabled, the 9 EMA Momentum Setup requires the prior bar to also be at least one tick beyond the rounded 9 EMA in the trade direction.")
 requireRecentStrongCloseForNineEma = input.bool(true, title="Require Recent Strong Close For 9 EMA Setup", group=groupSetupFilters, tooltip="When enabled, the 9 EMA Momentum Setup requires either the prior bar or the bar two bars back to close in the upper third for longs, or in the lower third for shorts.")
 blockNineEmaSetupWhenTooFarFromEma = input.bool(true, title="Block 9 EMA Setup When Too Far From EMA", group=groupSetupFilters, tooltip="When enabled, blocks the 9 EMA Momentum Setup if the distance from the signal bar to the rounded 9 EMA is greater than the signal bar's total range.")
@@ -36,6 +36,8 @@ nineEmaLowVolumePullbackMaxDistanceBarRangeMultiplier = input.float(0.5, title="
 skipFiveSameColorBarExtension = input.bool(false, title="Skip 5 Same-Color Bar Extension", group=groupSetupFilters, tooltip="Blocks long signals when the signal bar is the 5th consecutive bull bar or later, and blocks short signals when the signal bar is the 5th consecutive bear bar or later.")
 skipFiveBarExtension     = input.bool(false, title="Skip 5+ No-Pullback Extension - Legacy", group=groupSetupFilters)
 skipStrongMicrochannelExtension = input.bool(false, title="Skip Two Prior Strong-Close Extension", group=groupSetupFilters, tooltip="Blocks long signals after two prior strong bullish closes and blocks short signals after two prior strong bearish closes. This treats back-to-back strong closes as extension even if the sequence is not a strict microchannel.")
+skipDojiContainingPriorTwoBars = input.bool(true, title="Skip Doji Containing Prior Two Bars", group=groupSetupFilters, tooltip="Blocks scalp alerts when the signal bar is a doji/indecision bar and fully contains the prior two bars' ranges, indicating chop/compression.")
+dojiContainingPriorTwoBarsMaxBodyPct = input.float(0.15, title="Doji Containment Max Body %", minval=0.05, maxval=0.30, step=0.01, group=groupSetupFilters, tooltip="Maximum signal-bar body percentage used to define a doji for the doji containment chop filter.")
 skipOppositeFiveBarPressureUnlessStrongReversal = input.bool(true, title="Skip Opposite 5-Bar Pressure Unless Strong Reversal", group=groupSetupFilters, tooltip="Blocks longs after sustained prior bear pressure and shorts after sustained prior bull pressure, unless the setup is a strong HTF reversal exception.")
 oppositePressureLookbackBars = input.int(5, title="Opposite Pressure Lookback Bars", minval=3, maxval=10, group=groupSetupFilters)
 oppositePressureMinBars = input.int(4, title="Opposite Pressure Minimum Bars", minval=2, maxval=10, group=groupSetupFilters)
@@ -111,7 +113,7 @@ allowRthSwingsBrokenPremarket  = input.bool(true, title="Allow Prior RTH 5m Swin
 // 07. Signal Engine Tuning
 maxLookback                   = input.int(20, title="Pressure: Max Lookback", group=groupSignalEngine, minval=3, tooltip="Maximum number of bars to scan backward when finding prior up/down legs for fallback midpoint checks.")
 pressureBodyWickThreshold     = input.float(0.40, title="Pressure: Body/Wick Range Threshold", group=groupSignalEngine, minval=0.05, maxval=0.95, step=0.05, tooltip="Minimum fraction of the full bar range required for body or wick qualification in pressure bar quality checks (default 40%).")
-strongCloseThresholdPct       = input.float(0.33, title="Strong Close Threshold %", minval=0.05, maxval=0.50, step=0.01, group=groupSignalEngine, tooltip="Defines upper/lower strong-close zones as a fraction of bar range. Default 0.33 means upper/lower third.")
+strongCloseThresholdPct       = input.float(0.40, title="Strong Close Threshold %", minval=0.05, maxval=0.50, step=0.01, group=groupSignalEngine, tooltip="Defines upper/lower strong-close zones as a fraction of bar range. Default 0.33 means upper/lower third.")
 acceptableVolumeThreshold     = input(0.33, title="Acceptable Volume Threshold", group=groupSignalEngine, tooltip="Set the minimum volume threshold as a multiple of the volume average (e.g., 0.33x volume average). Bars with volume below this threshold will not display indications.")
 volumeMetricLength            = input.int(50, title="Volume SMA Length", group=groupSignalEngine, minval=10, maxval=500, tooltip="Set the length for the volume SMA calculation.")
 acceptableVolatilityThreshold = input(0.33, title="Acceptable Volatility Threshold", group=groupSignalEngine, tooltip="Set the minimum volatility threshold as a multiple of the ATR (e.g., 0.5x ATR). Bars with volatility below this threshold will not display indications.")
@@ -1306,8 +1308,7 @@ var float autoOpeningRangeLow = na
 var bool openingRangeComplete = false
 var int openingRangeBias = 0
 var bool openingRangeHasBrokenOutOnce = false
-var bool openingRangeHighAcceptedAbove = false
-var bool openingRangeLowAcceptedBelow = false
+var int openingRangeLastTwoCloseBreakoutDirection = 0
 var int openingRangeConsecutiveClosesAboveHigh = 0
 var int openingRangeConsecutiveClosesBelowHigh = 0
 var int openingRangeConsecutiveClosesAboveLow = 0
@@ -1319,8 +1320,7 @@ if newScalpRTHSession
     openingRangeComplete := false
     openingRangeBias := 0
     openingRangeHasBrokenOutOnce := false
-    openingRangeHighAcceptedAbove := false
-    openingRangeLowAcceptedBelow := false
+    openingRangeLastTwoCloseBreakoutDirection := 0
     openingRangeConsecutiveClosesAboveHigh := 0
     openingRangeConsecutiveClosesBelowHigh := 0
     openingRangeConsecutiveClosesAboveLow := 0
@@ -1352,6 +1352,11 @@ if openingRangeLevelsReady and barstate.isconfirmed and inScalpRTHSession and no
     bool twoClosesAboveLow = openingRangeConsecutiveClosesAboveLow >= 2
     bool twoClosesBelowLow = openingRangeConsecutiveClosesBelowLow >= 2
 
+    if twoClosesAboveHigh
+        openingRangeLastTwoCloseBreakoutDirection := 1
+    if twoClosesBelowLow
+        openingRangeLastTwoCloseBreakoutDirection := -1
+
     if openingRangeBias == 0
         if twoClosesAboveHigh
             openingRangeBias := 1
@@ -1371,10 +1376,6 @@ if openingRangeLevelsReady and barstate.isconfirmed and inScalpRTHSession and no
             openingRangeHasBrokenOutOnce := true
         else if twoClosesAboveLow
             openingRangeBias := 0
-    if low > openingRangeHigh
-        openingRangeHighAcceptedAbove := true
-    if high < openingRangeLow
-        openingRangeLowAcceptedBelow := true
 
 openingRangeStatus = not openingRangeLevelsReady ? "Waiting" : "Complete"
 openingRangeBiasText =
@@ -1384,6 +1385,11 @@ openingRangeBiasText =
      openingRangeHasBrokenOutOnce ? "Neutral" :
      "Pre-Breakout"
 openingRangeNeutralAfterBreakout = openingRangeHasBrokenOutOnce and openingRangeBias == 0
+openingRangePreBreakout = openingRangeLevelsReady and not openingRangeHasBrokenOutOnce
+openingRangeLastTwoCloseBreakoutText =
+     openingRangeLastTwoCloseBreakoutDirection == 1 ? "Bullish" :
+     openingRangeLastTwoCloseBreakoutDirection == -1 ? "Bearish" :
+     "None"
 
 // ===================== Untested 5m Swing Target Tracking =====================
 int activeCurrentRTHDateKey = inScalpRTHSession ? currentRTHDateKey : na
@@ -1969,7 +1975,7 @@ longDailyOpenConfluenceQualified = longGroup2Found
 shortDailyOpenConfluenceQualified = shortGroup2Found
 
 // ORH is valid by itself for longs, and ORL is valid by itself for shorts.
-// Counter-direction OR fades require non-OR confluence and are blocked after full acceptance beyond the fade level.
+// Counter-direction OR fades require non-OR confluence and are only available before the first two-close OR breakout.
 bool longOpeningRangeHighTouchedForSignal = f_levelTouched(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh) or f_levelTouchedByPriorBar(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, low[1], high[1], priorBarBear)
 bool longOpeningRangeLowTouchedForSignal = f_levelTouched(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, scalpSignalLow, scalpSignalHigh) or f_levelTouchedByPriorBar(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, low[1], high[1], priorBarBear)
 bool shortOpeningRangeHighTouchedForSignal = f_levelTouched(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, scalpSignalLow, scalpSignalHigh) or f_levelTouchedByPriorBar(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, low[1], high[1], priorBarBull)
@@ -1981,27 +1987,43 @@ bool shortOpeningRangeLowQualified = shortOpeningRangeLowTouchedForSignal and sc
 bool longNonOpeningRangeEntryLevelQualified = longExpandedScalpLevelFound or longGroup1Found or longGroup3Found or longDailyOpenConfluenceQualified
 bool shortNonOpeningRangeEntryLevelQualified = shortExpandedScalpLevelFound or shortGroup1Found or shortGroup3Found or shortDailyOpenConfluenceQualified
 bool longOpeningRangeLowFadeRequired = longOpeningRangeLowQualified and not longOpeningRangeHighQualified
+bool longPostBreakoutDailyOpenReclaim =
+     openingRangeLevelsReady and
+     openingRangeLastTwoCloseBreakoutDirection == 1 and
+     (openingRangeBias == 1 or openingRangeNeutralAfterBreakout) and
+     activeTradeDailyOpenValid and
+     activeDailyOpenTouchedCurrent and
+     scalpSignalClose > activeTradeDailyOpen and
+     bullSignalHighVol and
+     longHasNonDailyOpenQualifiedEntryLevel
 bool longOpeningRangeLowFadeAllowed =
+     openingRangePreBreakout and
      longOpeningRangeLowQualified and
      bullSignalHighVol and
-     longNonOpeningRangeEntryLevelQualified and
-     not openingRangeLowAcceptedBelow and
-     (not requireOpeningRangeFadePreBreakoutOnly or not openingRangeHasBrokenOutOnce)
+     longNonOpeningRangeEntryLevelQualified
 bool shortOpeningRangeHighFadeRequired = shortOpeningRangeHighQualified and not shortOpeningRangeLowQualified
+bool shortPostBreakoutDailyOpenRejection =
+     openingRangeLevelsReady and
+     openingRangeLastTwoCloseBreakoutDirection == -1 and
+     (openingRangeBias == -1 or openingRangeNeutralAfterBreakout) and
+     activeTradeDailyOpenValid and
+     activeDailyOpenTouchedCurrent and
+     scalpSignalClose < activeTradeDailyOpen and
+     bearSignalHighVol and
+     shortHasNonDailyOpenQualifiedEntryLevel
 bool shortOpeningRangeHighFadeAllowed =
+     openingRangePreBreakout and
      shortOpeningRangeHighQualified and
      bearSignalHighVol and
-     shortNonOpeningRangeEntryLevelQualified and
-     not openingRangeHighAcceptedAbove and
-     (not requireOpeningRangeFadePreBreakoutOnly or not openingRangeHasBrokenOutOnce)
+     shortNonOpeningRangeEntryLevelQualified
 bool longOpeningRangePriorClosePassed =
      (not longOpeningRangeHighQualified or openingRangeBias == 1 or close[1] > openingRangeHigh) and
-     (not longOpeningRangeLowQualified or longOpeningRangeLowFadeAllowed or close[1] > openingRangeLow)
+     (not longOpeningRangeLowQualified or longOpeningRangeLowFadeAllowed or longPostBreakoutDailyOpenReclaim or close[1] > openingRangeLow)
 bool shortOpeningRangePriorClosePassed =
-     (not shortOpeningRangeHighQualified or shortOpeningRangeHighFadeAllowed or close[1] < openingRangeHigh) and
+     (not shortOpeningRangeHighQualified or shortOpeningRangeHighFadeAllowed or shortPostBreakoutDailyOpenRejection or close[1] < openingRangeHigh) and
      (not shortOpeningRangeLowQualified or openingRangeBias == -1 or close[1] < openingRangeLow)
-longOpeningRangeFilterPassed = not longOpeningRangeLowFadeRequired or longOpeningRangeLowFadeAllowed
-shortOpeningRangeFilterPassed = not shortOpeningRangeHighFadeRequired or shortOpeningRangeHighFadeAllowed
+longOpeningRangeFilterPassed = not longOpeningRangeLowFadeRequired or longOpeningRangeLowFadeAllowed or longPostBreakoutDailyOpenReclaim
+shortOpeningRangeFilterPassed = not shortOpeningRangeHighFadeRequired or shortOpeningRangeHighFadeAllowed or shortPostBreakoutDailyOpenRejection
 
 [longBestAfterExpandedPrice, longBestAfterExpandedName, longBestAfterExpandedPriority, longBestAfterExpandedCurrent, longBestAfterExpandedFound] = f_pickLongEntryCandidate(longExpandedScalpLevelPrice, longExpandedScalpLevelName, longExpandedScalpLevelPriority, longExpandedScalpLevelTouchedCurrent, longExpandedScalpLevelFound, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [longBestAfterGroup1Price, longBestAfterGroup1Name, longBestAfterGroup1Priority, longBestAfterGroup1Current, longBestAfterGroup1Found] = f_pickLongEntryCandidate(longGroup1Price, longGroup1Name, longGroup1Priority, longGroup1Current, longGroup1Found, longBestAfterExpandedPrice, longBestAfterExpandedName, longBestAfterExpandedPriority, longBestAfterExpandedCurrent, longBestAfterExpandedFound)
@@ -2162,6 +2184,28 @@ shortFiveSameColorBarExtension =
      f_isBearBar(open[4], close[4])
 longOppositeFiveBarPressure = f_priorBearPressureCount(oppositePressureLookbackBars, oppositePressureMinBodyPct) >= oppositePressureMinBars
 shortOppositeFiveBarPressure = f_priorBullPressureCount(oppositePressureLookbackBars, oppositePressureMinBodyPct) >= oppositePressureMinBars
+signalBarDojiForContainmentFilter =
+     barRange > 0 and
+     bodyPct <= dojiContainingPriorTwoBarsMaxBodyPct
+priorOneBodyInsideSignalBar =
+     not na(bodyHigh[1]) and
+     not na(bodyLow[1]) and
+     bodyHigh[1] <= high and
+     bodyLow[1] >= low
+
+priorTwoBodyInsideSignalBar =
+     not na(bodyHigh[2]) and
+     not na(bodyLow[2]) and
+     bodyHigh[2] <= high and
+     bodyLow[2] >= low
+
+dojiContainingPriorTwoBars =
+     skipDojiContainingPriorTwoBars and
+     signalBarDojiForContainmentFilter and
+     priorOneBodyInsideSignalBar and
+     priorTwoBodyInsideSignalBar
+longDojiContainmentFilterPassed = not dojiContainingPriorTwoBars
+shortDojiContainmentFilterPassed = not dojiContainingPriorTwoBars
 longExtendedSetup = longFiveBarExtension or longStrongMicrochannelExtension
 shortExtendedSetup = shortFiveBarExtension or shortStrongMicrochannelExtension
 longExtendedSetupBlocked =
@@ -2427,21 +2471,19 @@ shortOppositePressureBlocked =
 longOpeningRangeMarketStatePassed =
      openingRangeBias == 1 or
      openingRangeNeutralAfterBreakout or
-     longOpeningRangeLowFadeAllowed
+     longOpeningRangeLowFadeAllowed or
+     longPostBreakoutDailyOpenReclaim
 shortOpeningRangeMarketStatePassed =
      openingRangeBias == -1 or
      openingRangeNeutralAfterBreakout or
-     shortOpeningRangeHighFadeAllowed
-longOpeningRangeAcceptedBeyondFadeBlockerPassed = not longOpeningRangeLowFadeRequired or not openingRangeLowAcceptedBelow
-shortOpeningRangeAcceptedBeyondFadeBlockerPassed = not shortOpeningRangeHighFadeRequired or not openingRangeHighAcceptedAbove
+     shortOpeningRangeHighFadeAllowed or
+     shortPostBreakoutDailyOpenRejection
 longOpeningRangeFiltersPassed =
-     longOpeningRangeAcceptedBeyondFadeBlockerPassed and
-     (longStrongHtfReversalException or
-      (longOpeningRangeFilterPassed and longOpeningRangePriorClosePassed and longOpeningRangeMarketStatePassed))
+     longStrongHtfReversalException or
+     (longOpeningRangeFilterPassed and longOpeningRangePriorClosePassed and longOpeningRangeMarketStatePassed)
 shortOpeningRangeFiltersPassed =
-     shortOpeningRangeAcceptedBeyondFadeBlockerPassed and
-     (shortStrongHtfReversalException or
-      (shortOpeningRangeFilterPassed and shortOpeningRangePriorClosePassed and shortOpeningRangeMarketStatePassed))
+     shortStrongHtfReversalException or
+     (shortOpeningRangeFilterPassed and shortOpeningRangePriorClosePassed and shortOpeningRangeMarketStatePassed)
 longNineEmaMomentumActive = longNineEmaMomentumSetupQualified and not longLevelScalpSetupQualified
 shortNineEmaMomentumActive = shortNineEmaMomentumSetupQualified and not shortLevelScalpSetupQualified
 longNineEmaReclaimContinuationActive = longNineEmaReclaimContinuationSetupQualified and not longLevelScalpSetupQualified and not longNineEmaMomentumSetupQualified
@@ -2991,6 +3033,7 @@ bullScalpAlert =
      longScalpTierFilterPassed and
      longScalpSetupQualified and
      not longExtendedSetupBlocked and
+     longDojiContainmentFilterPassed and
      not longOppositePressureBlocked and
      longHtfContinuationStatePassed and
      longHtfSupportLowStatePassed and
@@ -3016,6 +3059,7 @@ bearScalpAlert =
      shortScalpTierFilterPassed and
      shortScalpSetupQualified and
      not shortExtendedSetupBlocked and
+     shortDojiContainmentFilterPassed and
      not shortOppositePressureBlocked and
      shortHtfContinuationStatePassed and
      shortHtfResistanceHighStatePassed and
@@ -3236,6 +3280,5 @@ if barstate.islast
         int scalpStatusRow = 0
         scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Opening Range", openingRangeStatus, statusNeutralColor)
         scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "OR Bias", openingRangeBiasText, statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORH Accepted", openingRangeHighAcceptedAbove ? "Yes" : "No", statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "ORL Accepted", openingRangeLowAcceptedBelow ? "Yes" : "No", statusNeutralColor)
+        scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "OR Last 2C Break", openingRangeLastTwoCloseBreakoutText, statusNeutralColor)
         scalpStatusRow := f_addScalpStatusRow(scalpStatusTable, scalpStatusRow, "Converted Source", convertedLevelSourceSymbol, statusNeutralColor)
