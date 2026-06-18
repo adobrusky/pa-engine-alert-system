@@ -2705,10 +2705,12 @@ f_isPromotionCandidateTargetType(string _targetType) =>
     bool excludedTarget = normalized == "HOD" or normalized == "LOD" or normalized == "5m Swing" or normalized == "1H Swing"
     structuralLevel and not excludedTarget
 
-f_longTargetPromotionCandidateOk(bool _candidateAllowed, float _candidatePrice, string _candidateType, int _candidatePriority, float _baseTargetPrice, int _baseTargetPriority, string _entryType, float _entryPrice, float _riskPoints, float _promotionAtr) =>
+f_longTargetPromotionCandidateOk(bool _candidateAllowed, float _candidatePrice, string _candidateType, int _candidatePriority, float _baseTargetPrice, string _baseTargetType, int _baseTargetPriority, string _entryType, float _entryPrice, float _riskPoints, float _promotionAtr) =>
     float candidateDistance = _candidatePrice - _baseTargetPrice
     float candidateRR = f_targetRRLong(_candidatePrice, _entryPrice, _riskPoints)
-    _candidateAllowed and
+    bool baseIsHodEdge = _baseTargetType == "HOD"
+    bool candidateRRPositive = not na(candidateRR) and candidateRR > 0
+    bool sharedCandidateOk = _candidateAllowed and
      f_isPromotionCandidateTargetType(_candidateType) and
      f_validSourcePrice(_candidatePrice) and
      f_validSourcePrice(_baseTargetPrice) and
@@ -2716,14 +2718,18 @@ f_longTargetPromotionCandidateOk(bool _candidateAllowed, float _candidatePrice, 
      not na(_promotionAtr) and
      _promotionAtr > 0 and
      candidateDistance <= _promotionAtr * targetPromotionAtrMult and
-     not na(candidateRR) and
-     candidateRR <= maxPromotedTargetRR and
-     f_longTargetQualifies(_candidatePrice, _candidateType, _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh)
+     candidateRRPositive and
+     candidateRR <= maxPromotedTargetRR
+    bool normalCandidateOk = not baseIsHodEdge and f_longTargetQualifies(_candidatePrice, _candidateType, _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh)
+    bool hodEdgeCandidateOk = baseIsHodEdge
+    sharedCandidateOk and (normalCandidateOk or hodEdgeCandidateOk)
 
-f_shortTargetPromotionCandidateOk(bool _candidateAllowed, float _candidatePrice, string _candidateType, int _candidatePriority, float _baseTargetPrice, int _baseTargetPriority, string _entryType, float _entryPrice, float _riskPoints, float _promotionAtr) =>
+f_shortTargetPromotionCandidateOk(bool _candidateAllowed, float _candidatePrice, string _candidateType, int _candidatePriority, float _baseTargetPrice, string _baseTargetType, int _baseTargetPriority, string _entryType, float _entryPrice, float _riskPoints, float _promotionAtr) =>
     float candidateDistance = _baseTargetPrice - _candidatePrice
     float candidateRR = f_targetRRShort(_candidatePrice, _entryPrice, _riskPoints)
-    _candidateAllowed and
+    bool baseIsLodEdge = _baseTargetType == "LOD"
+    bool candidateRRPositive = not na(candidateRR) and candidateRR > 0
+    bool sharedCandidateOk = _candidateAllowed and
      f_isPromotionCandidateTargetType(_candidateType) and
      f_validSourcePrice(_candidatePrice) and
      f_validSourcePrice(_baseTargetPrice) and
@@ -2731,9 +2737,11 @@ f_shortTargetPromotionCandidateOk(bool _candidateAllowed, float _candidatePrice,
      not na(_promotionAtr) and
      _promotionAtr > 0 and
      candidateDistance <= _promotionAtr * targetPromotionAtrMult and
-     not na(candidateRR) and
-     candidateRR <= maxPromotedTargetRR and
-     f_shortTargetQualifies(_candidatePrice, _candidateType, _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow)
+     candidateRRPositive and
+     candidateRR <= maxPromotedTargetRR
+    bool normalCandidateOk = not baseIsLodEdge and f_shortTargetQualifies(_candidatePrice, _candidateType, _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow)
+    bool lodEdgeCandidateOk = baseIsLodEdge
+    sharedCandidateOk and (normalCandidateOk or lodEdgeCandidateOk)
 
 f_longTargetPromotionCandidateBetter(float _candidatePrice, int _candidatePriority, float _baseTargetPrice, float _bestPrice, int _bestPriority) =>
     float candidateDistance = _candidatePrice - _baseTargetPrice
@@ -2766,49 +2774,49 @@ f_promoteLongScalpTarget(bool _promotionAllowed, float _baseTargetPrice, string 
                 string promotionLevelType = "Level " + array.get(swingLevelNames, promotionLevelIndex)
                 int promotionLevelPriority = array.get(swingLevelPriority, promotionLevelIndex)
                 bool promotionLevelAllowed = array.get(swingLevelAllowedForTarget, promotionLevelIndex)
-                bool promotionLevelOk = f_longTargetPromotionCandidateOk(promotionLevelAllowed, promotionLevelPrice, promotionLevelType, promotionLevelPriority, _baseTargetPrice, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
+                bool promotionLevelOk = f_longTargetPromotionCandidateOk(promotionLevelAllowed, promotionLevelPrice, promotionLevelType, promotionLevelPriority, _baseTargetPrice, _baseTargetType, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
                 if promotionLevelOk and f_longTargetPromotionCandidateBetter(promotionLevelPrice, promotionLevelPriority, _baseTargetPrice, promotedTargetPrice, promotedTargetPriority)
                     promotedTargetPrice := promotionLevelPrice
                     promotedTargetType := promotionLevelType
                     promotedTargetPriority := promotionLevelPriority
 
-        bool directPdhOk = f_longTargetPromotionCandidateOk(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, "Level PDH", 4, _baseTargetPrice, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
+        bool directPdhOk = f_longTargetPromotionCandidateOk(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, "Level PDH", 4, _baseTargetPrice, _baseTargetType, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
         if directPdhOk and f_longTargetPromotionCandidateBetter(effectivePrevDayHigh, 4, _baseTargetPrice, promotedTargetPrice, promotedTargetPriority)
             promotedTargetPrice := effectivePrevDayHigh
             promotedTargetType := "Level PDH"
             promotedTargetPriority := 4
 
-        bool directPdlOk = f_longTargetPromotionCandidateOk(useDirectTradePrevDayLowLevel, effectivePrevDayLow, "Level PDL", 4, _baseTargetPrice, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
+        bool directPdlOk = f_longTargetPromotionCandidateOk(useDirectTradePrevDayLowLevel, effectivePrevDayLow, "Level PDL", 4, _baseTargetPrice, _baseTargetType, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
         if directPdlOk and f_longTargetPromotionCandidateBetter(effectivePrevDayLow, 4, _baseTargetPrice, promotedTargetPrice, promotedTargetPriority)
             promotedTargetPrice := effectivePrevDayLow
             promotedTargetType := "Level PDL"
             promotedTargetPriority := 4
 
-        bool dailyOpenOk = f_longTargetPromotionCandidateOk(activeTradeDailyOpenValid, activeTradeDailyOpen, "Level OP", 6, _baseTargetPrice, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
+        bool dailyOpenOk = f_longTargetPromotionCandidateOk(activeTradeDailyOpenValid, activeTradeDailyOpen, "Level OP", 6, _baseTargetPrice, _baseTargetType, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
         if dailyOpenOk and f_longTargetPromotionCandidateBetter(activeTradeDailyOpen, 6, _baseTargetPrice, promotedTargetPrice, promotedTargetPriority)
             promotedTargetPrice := activeTradeDailyOpen
             promotedTargetType := "Level OP"
             promotedTargetPriority := 6
 
-        bool pmhOk = f_longTargetPromotionCandidateOk(usePremarketHighLevel, effectivePremarketHigh, "Level PMH", 7, _baseTargetPrice, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
+        bool pmhOk = f_longTargetPromotionCandidateOk(usePremarketHighLevel, effectivePremarketHigh, "Level PMH", 7, _baseTargetPrice, _baseTargetType, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
         if pmhOk and f_longTargetPromotionCandidateBetter(effectivePremarketHigh, 7, _baseTargetPrice, promotedTargetPrice, promotedTargetPriority)
             promotedTargetPrice := effectivePremarketHigh
             promotedTargetType := "Level PMH"
             promotedTargetPriority := 7
 
-        bool pmlOk = f_longTargetPromotionCandidateOk(usePremarketLowLevel, effectivePremarketLow, "Level PML", 7, _baseTargetPrice, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
+        bool pmlOk = f_longTargetPromotionCandidateOk(usePremarketLowLevel, effectivePremarketLow, "Level PML", 7, _baseTargetPrice, _baseTargetType, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
         if pmlOk and f_longTargetPromotionCandidateBetter(effectivePremarketLow, 7, _baseTargetPrice, promotedTargetPrice, promotedTargetPriority)
             promotedTargetPrice := effectivePremarketLow
             promotedTargetType := "Level PML"
             promotedTargetPriority := 7
 
-        bool orhOk = f_longTargetPromotionCandidateOk(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, "Level ORH", 8, _baseTargetPrice, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
+        bool orhOk = f_longTargetPromotionCandidateOk(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, "Level ORH", 8, _baseTargetPrice, _baseTargetType, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
         if orhOk and f_longTargetPromotionCandidateBetter(openingRangeHigh, 8, _baseTargetPrice, promotedTargetPrice, promotedTargetPriority)
             promotedTargetPrice := openingRangeHigh
             promotedTargetType := "Level ORH"
             promotedTargetPriority := 8
 
-        bool orlOk = f_longTargetPromotionCandidateOk(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, "Level ORL", 8, _baseTargetPrice, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
+        bool orlOk = f_longTargetPromotionCandidateOk(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, "Level ORL", 8, _baseTargetPrice, _baseTargetType, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
         if orlOk and f_longTargetPromotionCandidateBetter(openingRangeLow, 8, _baseTargetPrice, promotedTargetPrice, promotedTargetPriority)
             promotedTargetPrice := openingRangeLow
             promotedTargetType := "Level ORL"
@@ -2842,49 +2850,49 @@ f_promoteShortScalpTarget(bool _promotionAllowed, float _baseTargetPrice, string
                 string promotionLevelType = "Level " + array.get(swingLevelNames, promotionLevelIndex)
                 int promotionLevelPriority = array.get(swingLevelPriority, promotionLevelIndex)
                 bool promotionLevelAllowed = array.get(swingLevelAllowedForTarget, promotionLevelIndex)
-                bool promotionLevelOk = f_shortTargetPromotionCandidateOk(promotionLevelAllowed, promotionLevelPrice, promotionLevelType, promotionLevelPriority, _baseTargetPrice, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
+                bool promotionLevelOk = f_shortTargetPromotionCandidateOk(promotionLevelAllowed, promotionLevelPrice, promotionLevelType, promotionLevelPriority, _baseTargetPrice, _baseTargetType, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
                 if promotionLevelOk and f_shortTargetPromotionCandidateBetter(promotionLevelPrice, promotionLevelPriority, _baseTargetPrice, promotedTargetPrice, promotedTargetPriority)
                     promotedTargetPrice := promotionLevelPrice
                     promotedTargetType := promotionLevelType
                     promotedTargetPriority := promotionLevelPriority
 
-        bool directPdhOk = f_shortTargetPromotionCandidateOk(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, "Level PDH", 4, _baseTargetPrice, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
+        bool directPdhOk = f_shortTargetPromotionCandidateOk(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, "Level PDH", 4, _baseTargetPrice, _baseTargetType, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
         if directPdhOk and f_shortTargetPromotionCandidateBetter(effectivePrevDayHigh, 4, _baseTargetPrice, promotedTargetPrice, promotedTargetPriority)
             promotedTargetPrice := effectivePrevDayHigh
             promotedTargetType := "Level PDH"
             promotedTargetPriority := 4
 
-        bool directPdlOk = f_shortTargetPromotionCandidateOk(useDirectTradePrevDayLowLevel, effectivePrevDayLow, "Level PDL", 4, _baseTargetPrice, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
+        bool directPdlOk = f_shortTargetPromotionCandidateOk(useDirectTradePrevDayLowLevel, effectivePrevDayLow, "Level PDL", 4, _baseTargetPrice, _baseTargetType, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
         if directPdlOk and f_shortTargetPromotionCandidateBetter(effectivePrevDayLow, 4, _baseTargetPrice, promotedTargetPrice, promotedTargetPriority)
             promotedTargetPrice := effectivePrevDayLow
             promotedTargetType := "Level PDL"
             promotedTargetPriority := 4
 
-        bool dailyOpenOk = f_shortTargetPromotionCandidateOk(activeTradeDailyOpenValid, activeTradeDailyOpen, "Level OP", 6, _baseTargetPrice, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
+        bool dailyOpenOk = f_shortTargetPromotionCandidateOk(activeTradeDailyOpenValid, activeTradeDailyOpen, "Level OP", 6, _baseTargetPrice, _baseTargetType, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
         if dailyOpenOk and f_shortTargetPromotionCandidateBetter(activeTradeDailyOpen, 6, _baseTargetPrice, promotedTargetPrice, promotedTargetPriority)
             promotedTargetPrice := activeTradeDailyOpen
             promotedTargetType := "Level OP"
             promotedTargetPriority := 6
 
-        bool pmhOk = f_shortTargetPromotionCandidateOk(usePremarketHighLevel, effectivePremarketHigh, "Level PMH", 7, _baseTargetPrice, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
+        bool pmhOk = f_shortTargetPromotionCandidateOk(usePremarketHighLevel, effectivePremarketHigh, "Level PMH", 7, _baseTargetPrice, _baseTargetType, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
         if pmhOk and f_shortTargetPromotionCandidateBetter(effectivePremarketHigh, 7, _baseTargetPrice, promotedTargetPrice, promotedTargetPriority)
             promotedTargetPrice := effectivePremarketHigh
             promotedTargetType := "Level PMH"
             promotedTargetPriority := 7
 
-        bool pmlOk = f_shortTargetPromotionCandidateOk(usePremarketLowLevel, effectivePremarketLow, "Level PML", 7, _baseTargetPrice, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
+        bool pmlOk = f_shortTargetPromotionCandidateOk(usePremarketLowLevel, effectivePremarketLow, "Level PML", 7, _baseTargetPrice, _baseTargetType, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
         if pmlOk and f_shortTargetPromotionCandidateBetter(effectivePremarketLow, 7, _baseTargetPrice, promotedTargetPrice, promotedTargetPriority)
             promotedTargetPrice := effectivePremarketLow
             promotedTargetType := "Level PML"
             promotedTargetPriority := 7
 
-        bool orhOk = f_shortTargetPromotionCandidateOk(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, "Level ORH", 8, _baseTargetPrice, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
+        bool orhOk = f_shortTargetPromotionCandidateOk(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, "Level ORH", 8, _baseTargetPrice, _baseTargetType, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
         if orhOk and f_shortTargetPromotionCandidateBetter(openingRangeHigh, 8, _baseTargetPrice, promotedTargetPrice, promotedTargetPriority)
             promotedTargetPrice := openingRangeHigh
             promotedTargetType := "Level ORH"
             promotedTargetPriority := 8
 
-        bool orlOk = f_shortTargetPromotionCandidateOk(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, "Level ORL", 8, _baseTargetPrice, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
+        bool orlOk = f_shortTargetPromotionCandidateOk(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, "Level ORL", 8, _baseTargetPrice, _baseTargetType, _baseTargetPriority, _entryType, _entryPrice, _riskPoints, _promotionAtr)
         if orlOk and f_shortTargetPromotionCandidateBetter(openingRangeLow, 8, _baseTargetPrice, promotedTargetPrice, promotedTargetPriority)
             promotedTargetPrice := openingRangeLow
             promotedTargetType := "Level ORL"
@@ -2948,8 +2956,10 @@ longFinalTargetMeetsMinRR = not na(longTargetRR) and longTargetRR >= minTargetRR
 shortFinalTargetMeetsMinRR = not na(shortTargetRR) and shortTargetRR >= minTargetRR
 longFinalTargetIsUnpromotedHodEdge = longTargetPromotionBaseType == "N/A" and f_longHodEdgeQualifies(longTargetPrice, longTargetType, longEntryType, scalpSignalHigh, longEntryPrice, longRiskPoints, currentRTHHigh)
 shortFinalTargetIsUnpromotedLodEdge = shortTargetPromotionBaseType == "N/A" and f_shortLodEdgeQualifies(shortTargetPrice, shortTargetType, shortEntryType, scalpSignalLow, shortEntryPrice, shortRiskPoints, currentRTHLow)
-longTargetValid = not na(longTargetPrice) and longTargetType != "N/A" and (longFinalTargetMeetsMinRR or longFinalTargetIsUnpromotedHodEdge)
-shortTargetValid = not na(shortTargetPrice) and shortTargetType != "N/A" and (shortFinalTargetMeetsMinRR or shortFinalTargetIsUnpromotedLodEdge)
+longFinalTargetIsPromotedHodEdge = longTargetPromotionBaseType == "HOD" and f_isPromotionCandidateTargetType(longTargetType) and not na(longTargetRR) and longTargetRR > 0
+shortFinalTargetIsPromotedLodEdge = shortTargetPromotionBaseType == "LOD" and f_isPromotionCandidateTargetType(shortTargetType) and not na(shortTargetRR) and shortTargetRR > 0
+longTargetValid = not na(longTargetPrice) and longTargetType != "N/A" and (longFinalTargetMeetsMinRR or longFinalTargetIsUnpromotedHodEdge or longFinalTargetIsPromotedHodEdge)
+shortTargetValid = not na(shortTargetPrice) and shortTargetType != "N/A" and (shortFinalTargetMeetsMinRR or shortFinalTargetIsUnpromotedLodEdge or shortFinalTargetIsPromotedLodEdge)
 longTargetFilterPassed = not requireValidTarget or longTargetValid
 shortTargetFilterPassed = not requireValidTarget or shortTargetValid
 longSelectedTargetIsLevel = str.startswith(longTargetType, "Level ")
