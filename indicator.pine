@@ -91,6 +91,13 @@ showOpeningRange                 = input.bool(true, title="Show Opening Range", 
 useManualOpeningRangeFallback    = input.bool(false, title="Use Manual Opening Range Fallback", group=groupOpeningRange)
 manualOpeningRangeHigh           = input.float(0.0, title="Manual Opening Range High", step=0.25, group=groupOpeningRange)
 manualOpeningRangeLow            = input.float(0.0, title="Manual Opening Range Low", step=0.25, group=groupOpeningRange)
+openingRangeBiasCloseCountMode   = input.string(
+     "State-Scoped",
+     title="OR Bias Close Count Mode",
+     options=["Consecutive", "State-Scoped"],
+     group=groupOpeningRange,
+     tooltip="Controls how OR bias counts closes beyond OR levels. Consecutive requires back-to-back closes. State-Scoped counts closes within the current OR bias state and resets counts only when the OR bias state changes."
+)
 
 // 05. Risk / Position Sizing
 maxRiskDollars      = input.float(500.0, title="Max Risk Dollars", minval=0.0, step=10.0, group=groupRisk)
@@ -1342,40 +1349,96 @@ openingRangeDisplayHigh = inScalpRTHSession and openingRangeLevelsReady ? openin
 openingRangeDisplayLow = inScalpRTHSession and openingRangeLevelsReady ? openingRangeLow : na
 
 if openingRangeLevelsReady and barstate.isconfirmed and inScalpRTHSession and not inOpeningRangeWindow
-    openingRangeConsecutiveClosesAboveHigh := close > openingRangeHigh ? openingRangeConsecutiveClosesAboveHigh + 1 : 0
-    openingRangeConsecutiveClosesBelowHigh := close < openingRangeHigh ? openingRangeConsecutiveClosesBelowHigh + 1 : 0
-    openingRangeConsecutiveClosesAboveLow := close > openingRangeLow ? openingRangeConsecutiveClosesAboveLow + 1 : 0
-    openingRangeConsecutiveClosesBelowLow := close < openingRangeLow ? openingRangeConsecutiveClosesBelowLow + 1 : 0
+    bool useStateScopedOrCloseCounts = openingRangeBiasCloseCountMode == "State-Scoped"
 
-    bool twoClosesAboveHigh = openingRangeConsecutiveClosesAboveHigh >= 2
-    bool twoClosesBelowHigh = openingRangeConsecutiveClosesBelowHigh >= 2
-    bool twoClosesAboveLow = openingRangeConsecutiveClosesAboveLow >= 2
-    bool twoClosesBelowLow = openingRangeConsecutiveClosesBelowLow >= 2
+    if not useStateScopedOrCloseCounts
+        openingRangeConsecutiveClosesAboveHigh := close > openingRangeHigh ? openingRangeConsecutiveClosesAboveHigh + 1 : 0
+        openingRangeConsecutiveClosesBelowHigh := close < openingRangeHigh ? openingRangeConsecutiveClosesBelowHigh + 1 : 0
+        openingRangeConsecutiveClosesAboveLow := close > openingRangeLow ? openingRangeConsecutiveClosesAboveLow + 1 : 0
+        openingRangeConsecutiveClosesBelowLow := close < openingRangeLow ? openingRangeConsecutiveClosesBelowLow + 1 : 0
 
-    if twoClosesAboveHigh
-        openingRangeLastTwoCloseBreakoutDirection := 1
-    if twoClosesBelowLow
-        openingRangeLastTwoCloseBreakoutDirection := -1
+        bool twoClosesAboveHigh = openingRangeConsecutiveClosesAboveHigh >= 2
+        bool twoClosesBelowHigh = openingRangeConsecutiveClosesBelowHigh >= 2
+        bool twoClosesAboveLow = openingRangeConsecutiveClosesAboveLow >= 2
+        bool twoClosesBelowLow = openingRangeConsecutiveClosesBelowLow >= 2
 
-    if openingRangeBias == 0
         if twoClosesAboveHigh
-            openingRangeBias := 1
-            openingRangeHasBrokenOutOnce := true
-        else if twoClosesBelowLow
-            openingRangeBias := -1
-            openingRangeHasBrokenOutOnce := true
-    else if openingRangeBias == 1
+            openingRangeLastTwoCloseBreakoutDirection := 1
         if twoClosesBelowLow
-            openingRangeBias := -1
-            openingRangeHasBrokenOutOnce := true
-        else if twoClosesBelowHigh
-            openingRangeBias := 0
-    else if openingRangeBias == -1
-        if twoClosesAboveHigh
-            openingRangeBias := 1
-            openingRangeHasBrokenOutOnce := true
-        else if twoClosesAboveLow
-            openingRangeBias := 0
+            openingRangeLastTwoCloseBreakoutDirection := -1
+
+        if openingRangeBias == 0
+            if twoClosesAboveHigh
+                openingRangeBias := 1
+                openingRangeHasBrokenOutOnce := true
+            else if twoClosesBelowLow
+                openingRangeBias := -1
+                openingRangeHasBrokenOutOnce := true
+        else if openingRangeBias == 1
+            if twoClosesBelowLow
+                openingRangeBias := -1
+                openingRangeHasBrokenOutOnce := true
+            else if twoClosesBelowHigh
+                openingRangeBias := 0
+        else if openingRangeBias == -1
+            if twoClosesAboveHigh
+                openingRangeBias := 1
+                openingRangeHasBrokenOutOnce := true
+            else if twoClosesAboveLow
+                openingRangeBias := 0
+    else
+        int openingRangeBiasBeforeUpdate = openingRangeBias
+        bool openingRangeHadBrokenOutBeforeUpdate = openingRangeHasBrokenOutOnce
+        bool openingRangeWasPreBreakoutBeforeUpdate = openingRangeBiasBeforeUpdate == 0 and not openingRangeHadBrokenOutBeforeUpdate
+        bool openingRangeWasNeutralAfterBreakoutBeforeUpdate = openingRangeBiasBeforeUpdate == 0 and openingRangeHadBrokenOutBeforeUpdate
+        bool openingRangeWasBullishBeforeUpdate = openingRangeBiasBeforeUpdate == 1
+        bool openingRangeWasBearishBeforeUpdate = openingRangeBiasBeforeUpdate == -1
+
+        if openingRangeWasPreBreakoutBeforeUpdate or openingRangeWasNeutralAfterBreakoutBeforeUpdate
+            openingRangeConsecutiveClosesAboveHigh := openingRangeConsecutiveClosesAboveHigh + (close > openingRangeHigh ? 1 : 0)
+            openingRangeConsecutiveClosesBelowLow := openingRangeConsecutiveClosesBelowLow + (close < openingRangeLow ? 1 : 0)
+        else if openingRangeWasBullishBeforeUpdate
+            openingRangeConsecutiveClosesBelowHigh := openingRangeConsecutiveClosesBelowHigh + (close < openingRangeHigh ? 1 : 0)
+            openingRangeConsecutiveClosesBelowLow := openingRangeConsecutiveClosesBelowLow + (close < openingRangeLow ? 1 : 0)
+        else if openingRangeWasBearishBeforeUpdate
+            openingRangeConsecutiveClosesAboveLow := openingRangeConsecutiveClosesAboveLow + (close > openingRangeLow ? 1 : 0)
+            openingRangeConsecutiveClosesAboveHigh := openingRangeConsecutiveClosesAboveHigh + (close > openingRangeHigh ? 1 : 0)
+
+        bool twoClosesAboveHigh = openingRangeConsecutiveClosesAboveHigh >= 2
+        bool twoClosesBelowHigh = openingRangeConsecutiveClosesBelowHigh >= 2
+        bool twoClosesAboveLow = openingRangeConsecutiveClosesAboveLow >= 2
+        bool twoClosesBelowLow = openingRangeConsecutiveClosesBelowLow >= 2
+
+        if openingRangeWasPreBreakoutBeforeUpdate or openingRangeWasNeutralAfterBreakoutBeforeUpdate
+            if twoClosesAboveHigh
+                openingRangeBias := 1
+                openingRangeHasBrokenOutOnce := true
+                openingRangeLastTwoCloseBreakoutDirection := 1
+            else if twoClosesBelowLow
+                openingRangeBias := -1
+                openingRangeHasBrokenOutOnce := true
+                openingRangeLastTwoCloseBreakoutDirection := -1
+        else if openingRangeWasBullishBeforeUpdate
+            if twoClosesBelowLow
+                openingRangeBias := -1
+                openingRangeHasBrokenOutOnce := true
+                openingRangeLastTwoCloseBreakoutDirection := -1
+            else if twoClosesBelowHigh
+                openingRangeBias := 0
+        else if openingRangeWasBearishBeforeUpdate
+            if twoClosesAboveHigh
+                openingRangeBias := 1
+                openingRangeHasBrokenOutOnce := true
+                openingRangeLastTwoCloseBreakoutDirection := 1
+            else if twoClosesAboveLow
+                openingRangeBias := 0
+
+        bool openingRangeStateChanged = openingRangeBias != openingRangeBiasBeforeUpdate
+        if openingRangeStateChanged
+            openingRangeConsecutiveClosesAboveHigh := 0
+            openingRangeConsecutiveClosesBelowHigh := 0
+            openingRangeConsecutiveClosesAboveLow := 0
+            openingRangeConsecutiveClosesBelowLow := 0
 
 openingRangeStatus = not openingRangeLevelsReady ? "Waiting" : "Complete"
 openingRangeBiasText =
