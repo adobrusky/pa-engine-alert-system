@@ -2369,6 +2369,14 @@ shortLowVolumePriorPullback =
      volume[1] < volume[2] and
      priorCloseBelowUpperThird
 
+longLowVolumeActualPullback =
+     (not na(low[1]) and low < low[1]) or
+     (not na(low[1]) and not na(low[2]) and low[1] < low[2])
+
+shortLowVolumeActualPullback =
+     (not na(high[1]) and high > high[1]) or
+     (not na(high[1]) and not na(high[2]) and high[1] > high[2])
+
 longLowVolumeSignalPaOk =
      sufficientVolatility and
      f_isBullBar(open, close) and
@@ -2451,6 +2459,7 @@ longNineEmaLowVolumePullbackSetup =
      useNineEmaLowVolumePullbackSetup and
      longLowVolumePullbackTrendContext and
      longLowVolumePriorPullback and
+     longLowVolumeActualPullback and
      longLowVolumeSignalPaOk and
      longLowVolumePullbackNearNineEma and
      longAllTouchedLevelsClosedBeyond and
@@ -2494,6 +2503,7 @@ shortNineEmaLowVolumePullbackSetup =
      useNineEmaLowVolumePullbackSetup and
      shortLowVolumePullbackTrendContext and
      shortLowVolumePriorPullback and
+     shortLowVolumeActualPullback and
      shortLowVolumeSignalPaOk and
      shortLowVolumePullbackNearNineEma and
      shortAllTouchedLevelsClosedBeyond and
