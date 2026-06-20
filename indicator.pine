@@ -120,7 +120,7 @@ allowRthSwingsBrokenPremarket  = input.bool(true, title="Allow Prior RTH 5m Swin
 // 07. Signal Engine Tuning
 maxLookback                   = input.int(20, title="Pressure: Max Lookback", group=groupSignalEngine, minval=3, tooltip="Maximum number of bars to scan backward when finding prior up/down legs for fallback midpoint checks.")
 pressureBodyWickThreshold     = input.float(0.40, title="Pressure: Body/Wick Range Threshold", group=groupSignalEngine, minval=0.05, maxval=0.95, step=0.05, tooltip="Minimum fraction of the full bar range required for body or wick qualification in pressure bar quality checks (default 40%).")
-strongCloseThresholdPct       = input.float(0.40, title="Strong Close Threshold %", minval=0.05, maxval=0.50, step=0.01, group=groupSignalEngine, tooltip="Defines upper/lower strong-close zones as a fraction of bar range. Default 0.33 means upper/lower third.")
+strongCloseThresholdPct       = input.float(0.33, title="Strong Close Threshold %", minval=0.05, maxval=0.50, step=0.01, group=groupSignalEngine, tooltip="Defines upper/lower strong-close zones as a fraction of bar range. Default 0.33 means upper/lower third.")
 acceptableVolumeThreshold     = input(0.33, title="Acceptable Volume Threshold", group=groupSignalEngine, tooltip="Set the minimum volume threshold as a multiple of the volume average (e.g., 0.33x volume average). Bars with volume below this threshold will not display indications.")
 volumeMetricLength            = input.int(50, title="Volume SMA Length", group=groupSignalEngine, minval=10, maxval=500, tooltip="Set the length for the volume SMA calculation.")
 acceptableVolatilityThreshold = input(0.33, title="Acceptable Volatility Threshold", group=groupSignalEngine, tooltip="Set the minimum volatility threshold as a multiple of the ATR (e.g., 0.5x ATR). Bars with volatility below this threshold will not display indications.")
@@ -131,7 +131,7 @@ showBullSignals              = input.bool(true, title="Show Bull Signals", group
 showBearSignals              = input.bool(true, title="Show Bear Signals", group=groupDisplay, tooltip="Enable bearish high-volume signal markers.")
 hideSignalPlotsBeforeOpeningRangeCompletes = input.bool(true, title="Hide Signal Plots Before Opening Range Completes", group=groupDisplay, tooltip="Suppresses bullish/bearish price-action signal markers until the configured opening range has completed. This affects plotted markers only, not alert logic.")
 alertLabelMode               = input.string("Compact", title="Historical Alert Labels", options=["Off", "Marker Only", "Compact"], group=groupDisplay)
-showAlertSignalDetails       = input.bool(false, title="Show Alert Signal Details", group=groupDisplay)
+showCurrentBarAlertDebugTable = input.bool(false, title="Show Current-Bar Alert Debug Table", group=groupDisplay, tooltip="Debug-only table showing current/latest bar pass/fail states for all final scalp alert conditions.")
 showSwingLevels              = input.bool(true, title="Show Converted Levels", group=groupDisplay, tooltip="Plots converted higher-timeframe levels used for scalp entries and targets.")
 showSwingLevelLabels         = input.bool(false, title="Show Converted Level Labels", group=groupDisplay)
 maxDisplayedDailyGaps        = input.int(20, title="Max Displayed Daily Gaps", minval=0, maxval=100, group=groupDisplay)
@@ -608,17 +608,28 @@ f_isBullBar(_open, _close) =>
 f_isBearBar(_open, _close) =>
     not na(_open) and not na(_close) and _close < _open
 
-f_priorBearPressureCount(int _lookback, float _minBodyPct) =>
-    int count = 0
+// Opposite pressure is sustained only when the lookback contains enough
+// opposite-color meaningful bars and zero meaningful same-direction
+// interruption bars. Doji/neutral bars are allowed.
+f_priorBearPressureUninterrupted(int _lookback, int _minBars, float _minBodyPct) =>
+    int bearCount = 0
+    int bullInterruptionCount = 0
     for pressureIndex = 1 to _lookback
-        count += f_isBearBar(open[pressureIndex], close[pressureIndex]) and bodyPct[pressureIndex] >= _minBodyPct ? 1 : 0
-    count
+        bool meaningfulBear = f_isBearBar(open[pressureIndex], close[pressureIndex]) and bodyPct[pressureIndex] >= _minBodyPct
+        bool meaningfulBull = f_isBullBar(open[pressureIndex], close[pressureIndex]) and bodyPct[pressureIndex] >= _minBodyPct
+        bearCount += meaningfulBear ? 1 : 0
+        bullInterruptionCount += meaningfulBull ? 1 : 0
+    bearCount >= _minBars and bullInterruptionCount == 0
 
-f_priorBullPressureCount(int _lookback, float _minBodyPct) =>
-    int count = 0
+f_priorBullPressureUninterrupted(int _lookback, int _minBars, float _minBodyPct) =>
+    int bullCount = 0
+    int bearInterruptionCount = 0
     for pressureIndex = 1 to _lookback
-        count += f_isBullBar(open[pressureIndex], close[pressureIndex]) and bodyPct[pressureIndex] >= _minBodyPct ? 1 : 0
-    count
+        bool meaningfulBull = f_isBullBar(open[pressureIndex], close[pressureIndex]) and bodyPct[pressureIndex] >= _minBodyPct
+        bool meaningfulBear = f_isBearBar(open[pressureIndex], close[pressureIndex]) and bodyPct[pressureIndex] >= _minBodyPct
+        bullCount += meaningfulBull ? 1 : 0
+        bearInterruptionCount += meaningfulBear ? 1 : 0
+    bullCount >= _minBars and bearInterruptionCount == 0
 
 f_pickLongQualifiedLevel(bool _enabled, float _levelPrice, string _levelName, int _levelPriority, float _signalLow, float _signalHigh, float _signalClose, float _priorLow, float _priorHigh, bool _priorBear, float _bestPrice, string _bestName, int _bestPriority, bool _bestCurrentTouched, bool _found) =>
     float nextPrice = _bestPrice
@@ -2079,12 +2090,21 @@ bool shortOpeningRangeHighFadeAllowed =
      shortOpeningRangeHighQualified and
      bearSignalHighVol and
      shortNonOpeningRangeEntryLevelQualified
+// Allows OR boundary re-breaks without an immediate prior close beyond the boundary
+// only when the current OR state is already biased in that direction or neutral
+// after a confirmed 2-close breakout in that same direction.
+bool longOpeningRangePriorBreakDirectionPassed =
+     openingRangeBias == 1 or
+     (openingRangeNeutralAfterBreakout and openingRangeLastTwoCloseBreakoutDirection == 1)
+bool shortOpeningRangePriorBreakDirectionPassed =
+     openingRangeBias == -1 or
+     (openingRangeNeutralAfterBreakout and openingRangeLastTwoCloseBreakoutDirection == -1)
 bool longOpeningRangePriorClosePassed =
-     (not longOpeningRangeHighQualified or openingRangeBias == 1 or close[1] > openingRangeHigh) and
+     (not longOpeningRangeHighQualified or longOpeningRangePriorBreakDirectionPassed or close[1] > openingRangeHigh) and
      (not longOpeningRangeLowQualified or longOpeningRangeLowFadeAllowed or longPostBreakoutDailyOpenReclaim or close[1] > openingRangeLow)
 bool shortOpeningRangePriorClosePassed =
      (not shortOpeningRangeHighQualified or shortOpeningRangeHighFadeAllowed or shortPostBreakoutDailyOpenRejection or close[1] < openingRangeHigh) and
-     (not shortOpeningRangeLowQualified or openingRangeBias == -1 or close[1] < openingRangeLow)
+     (not shortOpeningRangeLowQualified or shortOpeningRangePriorBreakDirectionPassed or close[1] < openingRangeLow)
 longOpeningRangeFilterPassed = not longOpeningRangeLowFadeRequired or longOpeningRangeLowFadeAllowed or longPostBreakoutDailyOpenReclaim
 shortOpeningRangeFilterPassed = not shortOpeningRangeHighFadeRequired or shortOpeningRangeHighFadeAllowed or shortPostBreakoutDailyOpenRejection
 
@@ -2245,8 +2265,8 @@ shortFiveSameColorBarExtension =
      f_isBearBar(open[2], close[2]) and
      f_isBearBar(open[3], close[3]) and
      f_isBearBar(open[4], close[4])
-longOppositeFiveBarPressure = f_priorBearPressureCount(oppositePressureLookbackBars, oppositePressureMinBodyPct) >= oppositePressureMinBars
-shortOppositeFiveBarPressure = f_priorBullPressureCount(oppositePressureLookbackBars, oppositePressureMinBodyPct) >= oppositePressureMinBars
+longOppositeFiveBarPressure = f_priorBearPressureUninterrupted(oppositePressureLookbackBars, oppositePressureMinBars, oppositePressureMinBodyPct)
+shortOppositeFiveBarPressure = f_priorBullPressureUninterrupted(oppositePressureLookbackBars, oppositePressureMinBars, oppositePressureMinBodyPct)
 signalBarDojiForContainmentFilter =
      barRange > 0 and
      bodyPct <= dojiContainingPriorTwoBarsMaxBodyPct
@@ -3149,11 +3169,124 @@ bearAlertLabelTitle = shortNineEmaMomentumActive ? "SHORT 9EMA SCALP" : shortNin
 effectiveBullScalpAlert = bullScalpAlert
 effectiveBearScalpAlert = not effectiveBullScalpAlert and bearScalpAlert
 
+// ===================== Current-Bar Alert Debug Table =====================
+f_debugBoolText(bool _value) =>
+    _value ? "TRUE" : "FALSE"
+
+f_debugBoolColor(bool _value) =>
+    _value ? color.lime : color.red
+
+f_addDebugHeaderRow(table _table, int _row) =>
+    color headerBg = color.rgb(35, 35, 35)
+    table.cell(_table, 0, _row, "Condition", text_color=color.white, bgcolor=headerBg, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(_table, 1, _row, "Long", text_color=color.white, bgcolor=headerBg, text_size=size.tiny, text_halign=text.align_center)
+    table.cell(_table, 2, _row, "Short", text_color=color.white, bgcolor=headerBg, text_size=size.tiny, text_halign=text.align_center)
+    _row + 1
+
+f_addDebugSectionRow(table _table, int _row, string _label) =>
+    color sectionBg = color.rgb(55, 55, 55)
+    table.cell(_table, 0, _row, _label, text_color=color.rgb(230, 230, 230), bgcolor=sectionBg, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(_table, 1, _row, "", text_color=color.rgb(230, 230, 230), bgcolor=sectionBg, text_size=size.tiny, text_halign=text.align_center)
+    table.cell(_table, 2, _row, "", text_color=color.rgb(230, 230, 230), bgcolor=sectionBg, text_size=size.tiny, text_halign=text.align_center)
+    _row + 1
+
+f_addDebugBoolRow(table _table, int _row, string _label, bool _longValue, bool _shortValue) =>
+    color labelBg = color.new(color.black, 80)
+    table.cell(_table, 0, _row, _label, text_color=color.rgb(190, 190, 190), bgcolor=labelBg, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(_table, 1, _row, f_debugBoolText(_longValue), text_color=f_debugBoolColor(_longValue), bgcolor=labelBg, text_size=size.tiny, text_halign=text.align_center)
+    table.cell(_table, 2, _row, f_debugBoolText(_shortValue), text_color=f_debugBoolColor(_shortValue), bgcolor=labelBg, text_size=size.tiny, text_halign=text.align_center)
+    _row + 1
+
+f_addDebugValueRow(table _table, int _row, string _label, string _longText, string _shortText) =>
+    color labelBg = color.new(color.black, 80)
+    table.cell(_table, 0, _row, _label, text_color=color.rgb(190, 190, 190), bgcolor=labelBg, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(_table, 1, _row, _longText, text_color=color.rgb(230, 230, 230), bgcolor=labelBg, text_size=size.tiny, text_halign=text.align_center)
+    table.cell(_table, 2, _row, _shortText, text_color=color.rgb(230, 230, 230), bgcolor=labelBg, text_size=size.tiny, text_halign=text.align_center)
+    _row + 1
+
+var table currentBarAlertDebugTable = table.new(position.top_right, 3, 100, bgcolor=color.new(color.black, 85), border_width=0)
+if barstate.islast
+    table.clear(currentBarAlertDebugTable, 0, 0, 2, 99)
+    if showCurrentBarAlertDebugTable
+        int debugRow = 0
+        debugRow := f_addDebugHeaderRow(currentBarAlertDebugTable, debugRow)
+        debugRow := f_addDebugSectionRow(currentBarAlertDebugTable, debugRow, "Final Alert Chain")
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "alertScalpSetups", alertScalpSetups, alertScalpSetups)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "barstate.isconfirmed", barstate.isconfirmed, barstate.isconfirmed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "inScalpRTHSession", inScalpRTHSession, inScalpRTHSession)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "inAlertTradingWindow", inAlertTradingWindow, inAlertTradingWindow)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "openingRangeLevelsReady", openingRangeLevelsReady, openingRangeLevelsReady)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "not inOpeningRangeWindow", not inOpeningRangeWindow, not inOpeningRangeWindow)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "alertOnBullSignals / alertOnBearSignals", alertOnBullSignals, alertOnBearSignals)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longOpeningRangeFiltersPassed / shortOpeningRangeFiltersPassed", longOpeningRangeFiltersPassed, shortOpeningRangeFiltersPassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longScalpTierFilterPassed / shortScalpTierFilterPassed", longScalpTierFilterPassed, shortScalpTierFilterPassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longScalpSetupQualified / shortScalpSetupQualified", longScalpSetupQualified, shortScalpSetupQualified)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "not longExtendedSetupBlocked / not shortExtendedSetupBlocked", not longExtendedSetupBlocked, not shortExtendedSetupBlocked)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longDojiContainmentFilterPassed / shortDojiContainmentFilterPassed", longDojiContainmentFilterPassed, shortDojiContainmentFilterPassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "not longOppositePressureBlocked / not shortOppositePressureBlocked", not longOppositePressureBlocked, not shortOppositePressureBlocked)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longHtfContinuationStatePassed / shortHtfContinuationStatePassed", longHtfContinuationStatePassed, shortHtfContinuationStatePassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longHtfSupportLowStatePassed / shortHtfResistanceHighStatePassed", longHtfSupportLowStatePassed, shortHtfResistanceHighStatePassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longDailyOpenRangeAcceptancePassed / shortDailyOpenRangeAcceptancePassed", longDailyOpenRangeAcceptancePassed, shortDailyOpenRangeAcceptancePassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longFiveMinuteSwingAcceptancePassed / shortFiveMinuteSwingAcceptancePassed", longFiveMinuteSwingAcceptancePassed, shortFiveMinuteSwingAcceptancePassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longOneHourSwingAcceptancePassed / shortOneHourSwingAcceptancePassed", longOneHourSwingAcceptancePassed, shortOneHourSwingAcceptancePassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longOneHourSwingBlockerPassed / shortOneHourSwingBlockerPassed", longOneHourSwingBlockerPassed, shortOneHourSwingBlockerPassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longRiskValid / shortRiskValid", longRiskValid, shortRiskValid)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longTargetFilterPassed / shortTargetFilterPassed", longTargetFilterPassed, shortTargetFilterPassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longTargetNotRecentlyTouched / shortTargetNotRecentlyTouched", longTargetNotRecentlyTouched, shortTargetNotRecentlyTouched)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longEntryPriceOverlapPassed / shortEntryPriceOverlapPassed", longEntryPriceOverlapPassed, shortEntryPriceOverlapPassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "bullScalpAlert / bearScalpAlert", bullScalpAlert, bearScalpAlert)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "effectiveBullScalpAlert / effectiveBearScalpAlert", effectiveBullScalpAlert, effectiveBearScalpAlert)
+
+        debugRow := f_addDebugSectionRow(currentBarAlertDebugTable, debugRow, "Signal / Setup Detail")
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "bullSignalFinal / bearSignalFinal", bullSignalFinal, bearSignalFinal)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "bullSignalHighVol / bearSignalHighVol", bullSignalHighVol, bearSignalHighVol)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "bullSignalPriorBarVolumeReversal / bearSignalPriorBarVolumeReversal", bullSignalPriorBarVolumeReversal, bearSignalPriorBarVolumeReversal)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "bullSignalConfirmed / bearSignalConfirmed", bullSignalConfirmed, bearSignalConfirmed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "bullScalpTierAllowed / bearScalpTierAllowed", bullScalpTierAllowed, bearScalpTierAllowed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longOppositeFiveBarPressure / shortOppositeFiveBarPressure", longOppositeFiveBarPressure, shortOppositeFiveBarPressure)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longLevelScalpSetupQualified / shortLevelScalpSetupQualified", longLevelScalpSetupQualified, shortLevelScalpSetupQualified)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longLevelBreakSetup / shortLevelBreakSetup", longLevelBreakSetup, shortLevelBreakSetup)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longSelectedLevelCloseAcceptancePassed / shortSelectedLevelCloseAcceptancePassed", longSelectedLevelCloseAcceptancePassed, shortSelectedLevelCloseAcceptancePassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longAllTouchedLevelsClosedBeyond / shortAllTouchedLevelsClosedBeyond", longAllTouchedLevelsClosedBeyond, shortAllTouchedLevelsClosedBeyond)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longAllCurrentTouchedLevelsRetracementOk / shortAllCurrentTouchedLevelsRetracementOk", longAllCurrentTouchedLevelsRetracementOk, shortAllCurrentTouchedLevelsRetracementOk)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longLevelEntryRetracementOk / shortLevelEntryRetracementOk", longLevelEntryRetracementOk, shortLevelEntryRetracementOk)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longNineEmaMomentumSetupQualified / shortNineEmaMomentumSetupQualified", longNineEmaMomentumSetupQualified, shortNineEmaMomentumSetupQualified)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longNineEmaReclaimContinuationSetupQualified / shortNineEmaReclaimContinuationSetupQualified", longNineEmaReclaimContinuationSetupQualified, shortNineEmaReclaimContinuationSetupQualified)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longNineEmaLowVolumePullbackSetupQualified / shortNineEmaLowVolumePullbackSetupQualified", longNineEmaLowVolumePullbackSetupQualified, shortNineEmaLowVolumePullbackSetupQualified)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longOpeningRangeFiltersPassed / shortOpeningRangeFiltersPassed", longOpeningRangeFiltersPassed, shortOpeningRangeFiltersPassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longOpeningRangePriorBreakDirectionPassed / shortOpeningRangePriorBreakDirectionPassed", longOpeningRangePriorBreakDirectionPassed, shortOpeningRangePriorBreakDirectionPassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longOpeningRangePriorClosePassed / shortOpeningRangePriorClosePassed", longOpeningRangePriorClosePassed, shortOpeningRangePriorClosePassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longOpeningRangeMarketStatePassed / shortOpeningRangeMarketStatePassed", longOpeningRangeMarketStatePassed, shortOpeningRangeMarketStatePassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longOpeningRangeFilterPassed / shortOpeningRangeFilterPassed", longOpeningRangeFilterPassed, shortOpeningRangeFilterPassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longOpeningRangeLowFadeAllowed / shortOpeningRangeHighFadeAllowed", longOpeningRangeLowFadeAllowed, shortOpeningRangeHighFadeAllowed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longPostBreakoutDailyOpenReclaim / shortPostBreakoutDailyOpenRejection", longPostBreakoutDailyOpenReclaim, shortPostBreakoutDailyOpenRejection)
+
+        debugRow := f_addDebugSectionRow(currentBarAlertDebugTable, debugRow, "Prior-Bar Volume Reversal Detail")
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "allowPriorBarVolumeReversals", allowPriorBarVolumeReversals, allowPriorBarVolumeReversals)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "bullSignalPriorBarVolumeReversal / bearSignalPriorBarVolumeReversal", bullSignalPriorBarVolumeReversal, bearSignalPriorBarVolumeReversal)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "bullSignalBase / bearSignalBase", bullSignalBase, bearSignalBase)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "greenCandle / redCandle", greenCandle, redCandle)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "redCandle[1] / greenCandle[1]", redCandle[1], greenCandle[1])
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "priorBarHighVolume", priorBarHighVolume, priorBarHighVolume)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "priorTwoBarsNetBearish / priorTwoBarsNetBullish", priorTwoBarsNetBearish, priorTwoBarsNetBullish)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "close > priorBarMidpoint / close < priorBarMidpoint", not na(priorBarMidpoint) and close > priorBarMidpoint, not na(priorBarMidpoint) and close < priorBarMidpoint)
+
+        debugRow := f_addDebugSectionRow(currentBarAlertDebugTable, debugRow, "Context Values")
+        debugRow := f_addDebugValueRow(currentBarAlertDebugTable, debugRow, "OR Status", openingRangeStatus, openingRangeStatus)
+        debugRow := f_addDebugValueRow(currentBarAlertDebugTable, debugRow, "OR Bias", openingRangeBiasText, openingRangeBiasText)
+        debugRow := f_addDebugValueRow(currentBarAlertDebugTable, debugRow, "OR Last 2-Close Direction", str.tostring(openingRangeLastTwoCloseBreakoutDirection), str.tostring(openingRangeLastTwoCloseBreakoutDirection))
+        debugRow := f_addDebugValueRow(currentBarAlertDebugTable, debugRow, "OR Last 2-Close Breakout", openingRangeLastTwoCloseBreakoutText, openingRangeLastTwoCloseBreakoutText)
+        debugRow := f_addDebugValueRow(currentBarAlertDebugTable, debugRow, "Selected Level", longSelectedLevelText, shortSelectedLevelText)
+        debugRow := f_addDebugValueRow(currentBarAlertDebugTable, debugRow, "Entry", f_priceText(longEntryPrice), f_priceText(shortEntryPrice))
+        debugRow := f_addDebugValueRow(currentBarAlertDebugTable, debugRow, "Target", f_priceText(longTargetPrice) + " " + longTargetTypeText, f_priceText(shortTargetPrice) + " " + shortTargetTypeText)
+        debugRow := f_addDebugValueRow(currentBarAlertDebugTable, debugRow, "RR", f_rrText(longTargetRR), f_rrText(shortTargetRR))
+        debugRow := f_addDebugValueRow(currentBarAlertDebugTable, debugRow, "Contracts", str.tostring(longContracts), str.tostring(shortContracts))
+
 showHistoricalAlertLabels = alertLabelMode != "Off"
 showCompactAlertLabels = alertLabelMode == "Compact"
 
-f_buildMarkerChartLabel(_direction, _compactSignalText, _selectedLevelName) =>
-    showAlertSignalDetails ? _direction + "\n" + _compactSignalText + " | " + f_abbrevLevelName(_selectedLevelName) : _direction
+f_buildMarkerChartLabel(_direction) =>
+    _direction
 
 f_buildCompactChartLabel(_direction, _compactSignalText, _selectedLevelName, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _contracts, _managementText) =>
     _direction + "\n" +
@@ -3214,7 +3347,7 @@ alertTwoRPrice = alertIsLong and alertManagementRiskValid ? alertEntryPrice + al
 alertManagementText = newEffectiveScalpAlert ? f_buildManagementText(alertOneRPrice, alertTwoRPrice, alertTargetRR, alertContracts) : ""
 
 if showHistoricalAlertLabels and newEffectiveScalpAlert
-    string chartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName, alertEntryPrice, alertStopPrice, alertTargetPrice, alertTargetType, alertTargetRR, alertContracts, alertManagementText) : f_buildMarkerChartLabel(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName)
+    string chartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName, alertEntryPrice, alertStopPrice, alertTargetPrice, alertTargetType, alertTargetRR, alertContracts, alertManagementText) : f_buildMarkerChartLabel(alertDirectionTitle)
     f_addAlertChartLabel(alertLabelPrice, chartLabelText, alertLabelStyle, alertLabelColor)
 
 // ===================== Alert Message =====================
