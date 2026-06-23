@@ -36,6 +36,10 @@ nineEmaLowVolumePullbackMaxDistanceBarRangeMultiplier = input.float(0.5, title="
 skipFiveSameColorBarExtension = input.bool(false, title="Skip 5 Same-Color Bar Extension", group=groupSetupFilters, tooltip="Blocks long signals when the signal bar is the 5th consecutive bull bar or later, and blocks short signals when the signal bar is the 5th consecutive bear bar or later.")
 skipFiveBarExtension     = input.bool(false, title="Skip 5+ No-Pullback Extension - Legacy", group=groupSetupFilters)
 skipStrongMicrochannelExtension = input.bool(false, title="Skip Two Prior Strong-Close Extension", group=groupSetupFilters, tooltip="Blocks long signals after two prior strong bullish closes and blocks short signals after two prior strong bearish closes. This treats back-to-back strong closes as extension even if the sequence is not a strict microchannel.")
+skipExtremeTargetMicrochannel = input.bool(true, title="Skip Extreme Target Microchannel", group=groupSetupFilters, tooltip="Blocks HOD/LOD or 5m swing equal HOD/LOD targets when price has moved in a 6+ bar no-pullback microchannel.")
+extremeTargetMicrochannelBars = input.int(6, title="Extreme Target Microchannel Bars", minval=5, maxval=10, group=groupSetupFilters)
+skipLevelSetupCloseDegradation = input.bool(true, title="Skip Level Setup Close Degradation", group=groupSetupFilters, tooltip="Blocks level setups when the prior same-direction mostly-body bar closed stronger than the signal bar.")
+levelDegradationPriorBodyPct = input.float(0.50, title="Level Degradation Prior Body %", minval=0.25, maxval=0.90, step=0.05, group=groupSetupFilters)
 skipDojiContainingPriorTwoBars = input.bool(true, title="Skip Doji Containing Prior Two Bars", group=groupSetupFilters, tooltip="Blocks scalp alerts when the signal bar is a doji/indecision bar and fully contains the prior two bars' ranges, indicating chop/compression.")
 dojiContainingPriorTwoBarsMaxBodyPct = input.float(0.15, title="Doji Containment Max Body %", minval=0.05, maxval=0.30, step=0.01, group=groupSetupFilters, tooltip="Maximum signal-bar body percentage used to define a doji for the doji containment chop filter.")
 skipOppositeFiveBarPressureUnlessStrongReversal = input.bool(true, title="Skip Opposite 5-Bar Pressure Unless Strong Reversal", group=groupSetupFilters, tooltip="Blocks longs after sustained prior bear pressure and shorts after sustained prior bull pressure, unless the setup is a strong HTF reversal exception.")
@@ -120,10 +124,10 @@ allowRthSwingsBrokenPremarket  = input.bool(true, title="Allow Prior RTH 5m Swin
 // 07. Signal Engine Tuning
 maxLookback                   = input.int(20, title="Pressure: Max Lookback", group=groupSignalEngine, minval=3, tooltip="Maximum number of bars to scan backward when finding prior up/down legs for fallback midpoint checks.")
 pressureBodyWickThreshold     = input.float(0.40, title="Pressure: Body/Wick Range Threshold", group=groupSignalEngine, minval=0.05, maxval=0.95, step=0.05, tooltip="Minimum fraction of the full bar range required for body or wick qualification in pressure bar quality checks (default 40%).")
-strongCloseThresholdPct       = input.float(0.33, title="Strong Close Threshold %", minval=0.05, maxval=0.50, step=0.01, group=groupSignalEngine, tooltip="Defines upper/lower strong-close zones as a fraction of bar range. Default 0.33 means upper/lower third.")
-acceptableVolumeThreshold     = input(0.33, title="Acceptable Volume Threshold", group=groupSignalEngine, tooltip="Set the minimum volume threshold as a multiple of the volume average (e.g., 0.33x volume average). Bars with volume below this threshold will not display indications.")
+strongCloseThresholdPct       = input.float(0.34, title="Strong Close Threshold %", minval=0.05, maxval=0.50, step=0.01, group=groupSignalEngine, tooltip="Defines upper/lower strong-close zones as a fraction of bar range. Default 0.34 means upper/lower third.")
+acceptableVolumeThreshold     = input(0.34, title="Acceptable Volume Threshold", group=groupSignalEngine, tooltip="Set the minimum volume threshold as a multiple of the volume average (e.g., 0.34x volume average). Bars with volume below this threshold will not display indications.")
 volumeMetricLength            = input.int(50, title="Volume SMA Length", group=groupSignalEngine, minval=10, maxval=500, tooltip="Set the length for the volume SMA calculation.")
-acceptableVolatilityThreshold = input(0.33, title="Acceptable Volatility Threshold", group=groupSignalEngine, tooltip="Set the minimum volatility threshold as a multiple of the ATR (e.g., 0.5x ATR). Bars with volatility below this threshold will not display indications.")
+acceptableVolatilityThreshold = input(0.34, title="Acceptable Volatility Threshold", group=groupSignalEngine, tooltip="Set the minimum volatility threshold as a multiple of the ATR (e.g., 0.5x ATR). Bars with volatility below this threshold will not display indications.")
 atrLength                     = input(14, title="ATR Length", group=groupSignalEngine, tooltip="Set the length of the ATR calculation.")
 
 // 08. Display / Visuals
@@ -148,6 +152,7 @@ latestScalpMaxBarsAfterSignal = input.int(5, "Latest Alert Max Bars After Signal
 
 scalpPointValue = tickerInput == "MES" ? 5.0 : 2.0
 scalpTickSize   = 0.25
+float levelDegradationEpsilon = 0.0001
 
 majorHighLevelColor = color.rgb(0, 100, 0)
 majorLowLevelColor = color.rgb(145, 0, 0)
@@ -401,6 +406,13 @@ f_roundToScalpTick(_price) =>
 f_validSourcePrice(_price) =>
     not na(_price) and _price > 0
 
+f_longCloseStrength(float _close, float _low, float _high) =>
+    float _range = _high - _low
+    _range > 0 ? (_close - _low) / _range : na
+
+f_shortCloseStrength(float _close, float _low, float _high) =>
+    float _range = _high - _low
+    _range > 0 ? (_high - _close) / _range : na
 
 f_levelClosedBeyondLong(_level, _signalClose) =>
     _signalClose > _level
@@ -739,17 +751,23 @@ f_shortLodEdgeQualifies(float _targetPrice, string _targetType, string _entryTyp
      not na(rr) and
      rr >= minHodLodEdgeRR
 
+f_longTargetLocationOk(float _targetPrice, string _targetType, float _signalHigh) =>
+    bool priceReady = not na(_targetPrice) and _targetPrice > 0 and not na(_signalHigh)
+    priceReady and (_targetType == "HOD" ? _targetPrice >= _signalHigh : _targetPrice > _signalHigh)
+
+f_shortTargetLocationOk(float _targetPrice, string _targetType, float _signalLow) =>
+    bool priceReady = not na(_targetPrice) and _targetPrice > 0 and not na(_signalLow)
+    priceReady and (_targetType == "LOD" ? _targetPrice <= _signalLow : _targetPrice < _signalLow)
+
 f_longTargetQualifies(float _targetPrice, string _targetType, string _entryType, float _signalHigh, float _entryPrice, float _riskPoints, float _currentRTHHigh) =>
-    bool priceReady = not na(_targetPrice) and _targetPrice > 0
-    bool locationOk = priceReady and (_targetType == "HOD" ? _targetPrice >= _signalHigh : _targetPrice > _signalHigh)
+    bool locationOk = f_longTargetLocationOk(_targetPrice, _targetType, _signalHigh)
     float rr = f_targetRRLong(_targetPrice, _entryPrice, _riskPoints)
     bool normalTargetOk = locationOk and not na(rr) and rr >= minTargetRR
     bool edgeTargetOk = locationOk and f_longHodEdgeQualifies(_targetPrice, _targetType, _entryType, _signalHigh, _entryPrice, _riskPoints, _currentRTHHigh)
     normalTargetOk or edgeTargetOk
 
 f_shortTargetQualifies(float _targetPrice, string _targetType, string _entryType, float _signalLow, float _entryPrice, float _riskPoints, float _currentRTHLow) =>
-    bool priceReady = not na(_targetPrice) and _targetPrice > 0
-    bool locationOk = priceReady and (_targetType == "LOD" ? _targetPrice <= _signalLow : _targetPrice < _signalLow)
+    bool locationOk = f_shortTargetLocationOk(_targetPrice, _targetType, _signalLow)
     float rr = f_targetRRShort(_targetPrice, _entryPrice, _riskPoints)
     bool normalTargetOk = locationOk and not na(rr) and rr >= minTargetRR
     bool edgeTargetOk = locationOk and f_shortLodEdgeQualifies(_targetPrice, _targetType, _entryType, _signalLow, _entryPrice, _riskPoints, _currentRTHLow)
@@ -2643,7 +2661,7 @@ longRiskValid = longRiskPoints > 0 and not na(longRiskDollarsPerContract) and lo
 shortRiskValid = shortRiskPoints > 0 and not na(shortRiskDollarsPerContract) and shortRiskDollarsPerContract > 0 and shortContracts >= 1
 
 // ===================== Scalp Target Selection Logic =====================
-f_selectLongScalpTarget(string _entryType, float _entryPrice, float _riskPoints) =>
+f_selectLongNearestScalpTarget(string _entryType, float _entryPrice, float _riskPoints) =>
     float selectedTargetPrice = na
     string selectedTargetType = "N/A"
     float selectedTargetRR = na
@@ -2656,49 +2674,49 @@ f_selectLongScalpTarget(string _entryType, float _entryPrice, float _riskPoints)
             int expandedLongTargetPriority = array.get(swingLevelPriority, expandedLongTargetIndex)
             bool expandedLongTargetAllowed = array.get(swingLevelAllowedForTarget, expandedLongTargetIndex)
             string expandedLongTargetType = "Level " + expandedLongTargetName
-            if expandedLongTargetAllowed and f_longTargetQualifies(expandedLongTargetPrice, expandedLongTargetType, _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(expandedLongTargetPrice, expandedLongTargetPriority, selectedTargetPrice, selectedTargetPriority)
+            if expandedLongTargetAllowed and f_longTargetLocationOk(expandedLongTargetPrice, expandedLongTargetType, scalpSignalHigh) and f_longTargetCandidateBetter(expandedLongTargetPrice, expandedLongTargetPriority, selectedTargetPrice, selectedTargetPriority)
                 selectedTargetPrice := expandedLongTargetPrice
                 selectedTargetType := expandedLongTargetType
                 selectedTargetRR := f_targetRRLong(expandedLongTargetPrice, _entryPrice, _riskPoints)
                 selectedTargetPriority := expandedLongTargetPriority
 
-    if useDirectTradePrevDayHighLevel and f_longTargetQualifies(effectivePrevDayHigh, "Level PDH", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectivePrevDayHigh, 4, selectedTargetPrice, selectedTargetPriority)
+    if useDirectTradePrevDayHighLevel and f_longTargetLocationOk(effectivePrevDayHigh, "Level PDH", scalpSignalHigh) and f_longTargetCandidateBetter(effectivePrevDayHigh, 4, selectedTargetPrice, selectedTargetPriority)
         selectedTargetPrice := effectivePrevDayHigh
         selectedTargetType := "Level PDH"
         selectedTargetRR := f_targetRRLong(effectivePrevDayHigh, _entryPrice, _riskPoints)
         selectedTargetPriority := 4
 
-    if useDirectTradePrevDayLowLevel and f_longTargetQualifies(effectivePrevDayLow, "Level PDL", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectivePrevDayLow, 4, selectedTargetPrice, selectedTargetPriority)
+    if useDirectTradePrevDayLowLevel and f_longTargetLocationOk(effectivePrevDayLow, "Level PDL", scalpSignalHigh) and f_longTargetCandidateBetter(effectivePrevDayLow, 4, selectedTargetPrice, selectedTargetPriority)
         selectedTargetPrice := effectivePrevDayLow
         selectedTargetType := "Level PDL"
         selectedTargetRR := f_targetRRLong(effectivePrevDayLow, _entryPrice, _riskPoints)
         selectedTargetPriority := 4
 
-    if activeTradeDailyOpenValid and f_longTargetQualifies(activeTradeDailyOpen, "Level OP", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(activeTradeDailyOpen, 6, selectedTargetPrice, selectedTargetPriority)
+    if activeTradeDailyOpenValid and f_longTargetLocationOk(activeTradeDailyOpen, "Level OP", scalpSignalHigh) and f_longTargetCandidateBetter(activeTradeDailyOpen, 6, selectedTargetPrice, selectedTargetPriority)
         selectedTargetPrice := activeTradeDailyOpen
         selectedTargetType := "Level OP"
         selectedTargetRR := f_targetRRLong(activeTradeDailyOpen, _entryPrice, _riskPoints)
         selectedTargetPriority := 6
 
-    if usePremarketHighLevel and f_longTargetQualifies(effectivePremarketHigh, "Level PMH", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectivePremarketHigh, 7, selectedTargetPrice, selectedTargetPriority)
+    if usePremarketHighLevel and f_longTargetLocationOk(effectivePremarketHigh, "Level PMH", scalpSignalHigh) and f_longTargetCandidateBetter(effectivePremarketHigh, 7, selectedTargetPrice, selectedTargetPriority)
         selectedTargetPrice := effectivePremarketHigh
         selectedTargetType := "Level PMH"
         selectedTargetRR := f_targetRRLong(effectivePremarketHigh, _entryPrice, _riskPoints)
         selectedTargetPriority := 7
 
-    if usePremarketLowLevel and f_longTargetQualifies(effectivePremarketLow, "Level PML", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(effectivePremarketLow, 7, selectedTargetPrice, selectedTargetPriority)
+    if usePremarketLowLevel and f_longTargetLocationOk(effectivePremarketLow, "Level PML", scalpSignalHigh) and f_longTargetCandidateBetter(effectivePremarketLow, 7, selectedTargetPrice, selectedTargetPriority)
         selectedTargetPrice := effectivePremarketLow
         selectedTargetType := "Level PML"
         selectedTargetRR := f_targetRRLong(effectivePremarketLow, _entryPrice, _riskPoints)
         selectedTargetPriority := 7
 
-    if useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady and f_longTargetQualifies(openingRangeHigh, "Level ORH", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(openingRangeHigh, 8, selectedTargetPrice, selectedTargetPriority)
+    if useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady and f_longTargetLocationOk(openingRangeHigh, "Level ORH", scalpSignalHigh) and f_longTargetCandidateBetter(openingRangeHigh, 8, selectedTargetPrice, selectedTargetPriority)
         selectedTargetPrice := openingRangeHigh
         selectedTargetType := "Level ORH"
         selectedTargetRR := f_targetRRLong(openingRangeHigh, _entryPrice, _riskPoints)
         selectedTargetPriority := 8
 
-    if useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady and f_longTargetQualifies(openingRangeLow, "Level ORL", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(openingRangeLow, 8, selectedTargetPrice, selectedTargetPriority)
+    if useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady and f_longTargetLocationOk(openingRangeLow, "Level ORL", scalpSignalHigh) and f_longTargetCandidateBetter(openingRangeLow, 8, selectedTargetPrice, selectedTargetPriority)
         selectedTargetPrice := openingRangeLow
         selectedTargetType := "Level ORL"
         selectedTargetRR := f_targetRRLong(openingRangeLow, _entryPrice, _riskPoints)
@@ -2708,7 +2726,7 @@ f_selectLongScalpTarget(string _entryType, float _entryPrice, float _riskPoints)
         for swingHighIndex = 0 to array.size(swingHighPrices) - 1
             float swingHighPrice = array.get(swingHighPrices, swingHighIndex)
             bool swingHighAllowed = array.get(swingHighActive, swingHighIndex) and f_swingTargetSessionAllowed(array.get(swingHighSessions, swingHighIndex), array.get(swingHighDateKeys, swingHighIndex), nySessionDateKey, activeCurrentRTHDateKey, activePreviousRTHDateKey)
-            if swingHighAllowed and f_longTargetQualifies(swingHighPrice, "5m Swing", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(swingHighPrice, 9, selectedTargetPrice, selectedTargetPriority)
+            if swingHighAllowed and f_longTargetLocationOk(swingHighPrice, "5m Swing", scalpSignalHigh) and f_longTargetCandidateBetter(swingHighPrice, 9, selectedTargetPrice, selectedTargetPriority)
                 selectedTargetPrice := swingHighPrice
                 selectedTargetType := "5m Swing"
                 selectedTargetRR := f_targetRRLong(swingHighPrice, _entryPrice, _riskPoints)
@@ -2718,13 +2736,13 @@ f_selectLongScalpTarget(string _entryType, float _entryPrice, float _riskPoints)
         for oneHourTargetHighIndex = 0 to array.size(oneHourSwingHighPrices) - 1
             float oneHourTargetHighPrice = array.get(oneHourSwingHighPrices, oneHourTargetHighIndex)
             bool oneHourTargetHighAllowed = array.get(oneHourSwingHighActive, oneHourTargetHighIndex) and f_oneHourSwingSessionAllowed(array.get(oneHourSwingHighSessionCodes, oneHourTargetHighIndex), array.get(oneHourSwingHighDateKeys, oneHourTargetHighIndex), nySessionDateKey, oneHourSwingPreviousRTHDateKey)
-            if oneHourTargetHighAllowed and f_longTargetQualifies(oneHourTargetHighPrice, "1H Swing", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(oneHourTargetHighPrice, 9, selectedTargetPrice, selectedTargetPriority)
+            if oneHourTargetHighAllowed and f_longTargetLocationOk(oneHourTargetHighPrice, "1H Swing", scalpSignalHigh) and f_longTargetCandidateBetter(oneHourTargetHighPrice, 9, selectedTargetPrice, selectedTargetPriority)
                 selectedTargetPrice := oneHourTargetHighPrice
                 selectedTargetType := "1H Swing"
                 selectedTargetRR := f_targetRRLong(oneHourTargetHighPrice, _entryPrice, _riskPoints)
                 selectedTargetPriority := 9
 
-    if f_longTargetQualifies(currentRTHHigh, "HOD", _entryType, scalpSignalHigh, _entryPrice, _riskPoints, currentRTHHigh) and f_longTargetCandidateBetter(currentRTHHigh, 9, selectedTargetPrice, selectedTargetPriority)
+    if f_longTargetLocationOk(currentRTHHigh, "HOD", scalpSignalHigh) and f_longTargetCandidateBetter(currentRTHHigh, 9, selectedTargetPrice, selectedTargetPriority)
         selectedTargetPrice := currentRTHHigh
         selectedTargetType := "HOD"
         selectedTargetRR := f_targetRRLong(currentRTHHigh, _entryPrice, _riskPoints)
@@ -2732,7 +2750,7 @@ f_selectLongScalpTarget(string _entryType, float _entryPrice, float _riskPoints)
 
     [selectedTargetPrice, selectedTargetType, selectedTargetRR, selectedTargetPriority]
 
-f_selectShortScalpTarget(string _entryType, float _entryPrice, float _riskPoints) =>
+f_selectShortNearestScalpTarget(string _entryType, float _entryPrice, float _riskPoints) =>
     float selectedTargetPrice = na
     string selectedTargetType = "N/A"
     float selectedTargetRR = na
@@ -2745,49 +2763,49 @@ f_selectShortScalpTarget(string _entryType, float _entryPrice, float _riskPoints
             int expandedShortTargetPriority = array.get(swingLevelPriority, expandedShortTargetIndex)
             bool expandedShortTargetAllowed = array.get(swingLevelAllowedForTarget, expandedShortTargetIndex)
             string expandedShortTargetType = "Level " + expandedShortTargetName
-            if expandedShortTargetAllowed and f_shortTargetQualifies(expandedShortTargetPrice, expandedShortTargetType, _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(expandedShortTargetPrice, expandedShortTargetPriority, selectedTargetPrice, selectedTargetPriority)
+            if expandedShortTargetAllowed and f_shortTargetLocationOk(expandedShortTargetPrice, expandedShortTargetType, scalpSignalLow) and f_shortTargetCandidateBetter(expandedShortTargetPrice, expandedShortTargetPriority, selectedTargetPrice, selectedTargetPriority)
                 selectedTargetPrice := expandedShortTargetPrice
                 selectedTargetType := expandedShortTargetType
                 selectedTargetRR := f_targetRRShort(expandedShortTargetPrice, _entryPrice, _riskPoints)
                 selectedTargetPriority := expandedShortTargetPriority
 
-    if useDirectTradePrevDayHighLevel and f_shortTargetQualifies(effectivePrevDayHigh, "Level PDH", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectivePrevDayHigh, 4, selectedTargetPrice, selectedTargetPriority)
+    if useDirectTradePrevDayHighLevel and f_shortTargetLocationOk(effectivePrevDayHigh, "Level PDH", scalpSignalLow) and f_shortTargetCandidateBetter(effectivePrevDayHigh, 4, selectedTargetPrice, selectedTargetPriority)
         selectedTargetPrice := effectivePrevDayHigh
         selectedTargetType := "Level PDH"
         selectedTargetRR := f_targetRRShort(effectivePrevDayHigh, _entryPrice, _riskPoints)
         selectedTargetPriority := 4
 
-    if useDirectTradePrevDayLowLevel and f_shortTargetQualifies(effectivePrevDayLow, "Level PDL", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectivePrevDayLow, 4, selectedTargetPrice, selectedTargetPriority)
+    if useDirectTradePrevDayLowLevel and f_shortTargetLocationOk(effectivePrevDayLow, "Level PDL", scalpSignalLow) and f_shortTargetCandidateBetter(effectivePrevDayLow, 4, selectedTargetPrice, selectedTargetPriority)
         selectedTargetPrice := effectivePrevDayLow
         selectedTargetType := "Level PDL"
         selectedTargetRR := f_targetRRShort(effectivePrevDayLow, _entryPrice, _riskPoints)
         selectedTargetPriority := 4
 
-    if activeTradeDailyOpenValid and f_shortTargetQualifies(activeTradeDailyOpen, "Level OP", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(activeTradeDailyOpen, 6, selectedTargetPrice, selectedTargetPriority)
+    if activeTradeDailyOpenValid and f_shortTargetLocationOk(activeTradeDailyOpen, "Level OP", scalpSignalLow) and f_shortTargetCandidateBetter(activeTradeDailyOpen, 6, selectedTargetPrice, selectedTargetPriority)
         selectedTargetPrice := activeTradeDailyOpen
         selectedTargetType := "Level OP"
         selectedTargetRR := f_targetRRShort(activeTradeDailyOpen, _entryPrice, _riskPoints)
         selectedTargetPriority := 6
 
-    if usePremarketHighLevel and f_shortTargetQualifies(effectivePremarketHigh, "Level PMH", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectivePremarketHigh, 7, selectedTargetPrice, selectedTargetPriority)
+    if usePremarketHighLevel and f_shortTargetLocationOk(effectivePremarketHigh, "Level PMH", scalpSignalLow) and f_shortTargetCandidateBetter(effectivePremarketHigh, 7, selectedTargetPrice, selectedTargetPriority)
         selectedTargetPrice := effectivePremarketHigh
         selectedTargetType := "Level PMH"
         selectedTargetRR := f_targetRRShort(effectivePremarketHigh, _entryPrice, _riskPoints)
         selectedTargetPriority := 7
 
-    if usePremarketLowLevel and f_shortTargetQualifies(effectivePremarketLow, "Level PML", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(effectivePremarketLow, 7, selectedTargetPrice, selectedTargetPriority)
+    if usePremarketLowLevel and f_shortTargetLocationOk(effectivePremarketLow, "Level PML", scalpSignalLow) and f_shortTargetCandidateBetter(effectivePremarketLow, 7, selectedTargetPrice, selectedTargetPriority)
         selectedTargetPrice := effectivePremarketLow
         selectedTargetType := "Level PML"
         selectedTargetRR := f_targetRRShort(effectivePremarketLow, _entryPrice, _riskPoints)
         selectedTargetPriority := 7
 
-    if useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady and f_shortTargetQualifies(openingRangeHigh, "Level ORH", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(openingRangeHigh, 8, selectedTargetPrice, selectedTargetPriority)
+    if useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady and f_shortTargetLocationOk(openingRangeHigh, "Level ORH", scalpSignalLow) and f_shortTargetCandidateBetter(openingRangeHigh, 8, selectedTargetPrice, selectedTargetPriority)
         selectedTargetPrice := openingRangeHigh
         selectedTargetType := "Level ORH"
         selectedTargetRR := f_targetRRShort(openingRangeHigh, _entryPrice, _riskPoints)
         selectedTargetPriority := 8
 
-    if useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady and f_shortTargetQualifies(openingRangeLow, "Level ORL", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(openingRangeLow, 8, selectedTargetPrice, selectedTargetPriority)
+    if useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady and f_shortTargetLocationOk(openingRangeLow, "Level ORL", scalpSignalLow) and f_shortTargetCandidateBetter(openingRangeLow, 8, selectedTargetPrice, selectedTargetPriority)
         selectedTargetPrice := openingRangeLow
         selectedTargetType := "Level ORL"
         selectedTargetRR := f_targetRRShort(openingRangeLow, _entryPrice, _riskPoints)
@@ -2797,7 +2815,7 @@ f_selectShortScalpTarget(string _entryType, float _entryPrice, float _riskPoints
         for swingLowIndex = 0 to array.size(swingLowPrices) - 1
             float swingLowPrice = array.get(swingLowPrices, swingLowIndex)
             bool swingLowAllowed = array.get(swingLowActive, swingLowIndex) and f_swingTargetSessionAllowed(array.get(swingLowSessions, swingLowIndex), array.get(swingLowDateKeys, swingLowIndex), nySessionDateKey, activeCurrentRTHDateKey, activePreviousRTHDateKey)
-            if swingLowAllowed and f_shortTargetQualifies(swingLowPrice, "5m Swing", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(swingLowPrice, 9, selectedTargetPrice, selectedTargetPriority)
+            if swingLowAllowed and f_shortTargetLocationOk(swingLowPrice, "5m Swing", scalpSignalLow) and f_shortTargetCandidateBetter(swingLowPrice, 9, selectedTargetPrice, selectedTargetPriority)
                 selectedTargetPrice := swingLowPrice
                 selectedTargetType := "5m Swing"
                 selectedTargetRR := f_targetRRShort(swingLowPrice, _entryPrice, _riskPoints)
@@ -2807,13 +2825,13 @@ f_selectShortScalpTarget(string _entryType, float _entryPrice, float _riskPoints
         for oneHourTargetLowIndex = 0 to array.size(oneHourSwingLowPrices) - 1
             float oneHourTargetLowPrice = array.get(oneHourSwingLowPrices, oneHourTargetLowIndex)
             bool oneHourTargetLowAllowed = array.get(oneHourSwingLowActive, oneHourTargetLowIndex) and f_oneHourSwingSessionAllowed(array.get(oneHourSwingLowSessionCodes, oneHourTargetLowIndex), array.get(oneHourSwingLowDateKeys, oneHourTargetLowIndex), nySessionDateKey, oneHourSwingPreviousRTHDateKey)
-            if oneHourTargetLowAllowed and f_shortTargetQualifies(oneHourTargetLowPrice, "1H Swing", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(oneHourTargetLowPrice, 9, selectedTargetPrice, selectedTargetPriority)
+            if oneHourTargetLowAllowed and f_shortTargetLocationOk(oneHourTargetLowPrice, "1H Swing", scalpSignalLow) and f_shortTargetCandidateBetter(oneHourTargetLowPrice, 9, selectedTargetPrice, selectedTargetPriority)
                 selectedTargetPrice := oneHourTargetLowPrice
                 selectedTargetType := "1H Swing"
                 selectedTargetRR := f_targetRRShort(oneHourTargetLowPrice, _entryPrice, _riskPoints)
                 selectedTargetPriority := 9
 
-    if f_shortTargetQualifies(currentRTHLow, "LOD", _entryType, scalpSignalLow, _entryPrice, _riskPoints, currentRTHLow) and f_shortTargetCandidateBetter(currentRTHLow, 9, selectedTargetPrice, selectedTargetPriority)
+    if f_shortTargetLocationOk(currentRTHLow, "LOD", scalpSignalLow) and f_shortTargetCandidateBetter(currentRTHLow, 9, selectedTargetPrice, selectedTargetPriority)
         selectedTargetPrice := currentRTHLow
         selectedTargetType := "LOD"
         selectedTargetRR := f_targetRRShort(currentRTHLow, _entryPrice, _riskPoints)
@@ -3042,8 +3060,8 @@ f_promoteShortScalpTarget(bool _promotionAllowed, float _baseTargetPrice, string
 
     [finalTargetPrice, finalTargetType, finalTargetRR, finalTargetPriority, promotionBaseType]
 
-[longTargetPrice, longTargetType, longTargetRR, longTargetPriority] = f_selectLongScalpTarget(longEntryType, longEntryPrice, longRiskPoints)
-[shortTargetPrice, shortTargetType, shortTargetRR, shortTargetPriority] = f_selectShortScalpTarget(shortEntryType, shortEntryPrice, shortRiskPoints)
+[longTargetPrice, longTargetType, longTargetRR, longTargetPriority] = f_selectLongNearestScalpTarget(longEntryType, longEntryPrice, longRiskPoints)
+[shortTargetPrice, shortTargetType, shortTargetRR, shortTargetPriority] = f_selectShortNearestScalpTarget(shortEntryType, shortEntryPrice, shortRiskPoints)
 
 [longFinalTargetPrice, longFinalTargetType, longFinalTargetRR, longFinalTargetPriority, longTargetPromotionBaseType] = f_promoteLongScalpTarget(true, longTargetPrice, longTargetType, longTargetRR, longTargetPriority, longEntryType, longEntryPrice, longRiskPoints, atrValue)
 [shortFinalTargetPrice, shortFinalTargetType, shortFinalTargetRR, shortFinalTargetPriority, shortTargetPromotionBaseType] = f_promoteShortScalpTarget(true, shortTargetPrice, shortTargetType, shortTargetRR, shortTargetPriority, shortEntryType, shortEntryPrice, shortRiskPoints, atrValue)
@@ -3104,6 +3122,22 @@ shortSelectedTargetTouchedPriorBar = shortSelectedTargetIsLevel and not na(short
 longTargetNotRecentlyTouched = not longSelectedTargetTouchedPriorBar
 shortTargetNotRecentlyTouched = not shortSelectedTargetTouchedPriorBar
 
+longTargetIsFiveMinuteSwingAtHod = longTargetType == "5m Swing" and f_validSourcePrice(longTargetPrice) and f_validSourcePrice(currentRTHHigh) and f_roundToScalpTick(longTargetPrice) == f_roundToScalpTick(currentRTHHigh)
+shortTargetIsFiveMinuteSwingAtLod = shortTargetType == "5m Swing" and f_validSourcePrice(shortTargetPrice) and f_validSourcePrice(currentRTHLow) and f_roundToScalpTick(shortTargetPrice) == f_roundToScalpTick(currentRTHLow)
+longExtremeTargetActive = longTargetType == "HOD" or longTargetIsFiveMinuteSwingAtHod or longTargetPromotionBaseType == "HOD"
+shortExtremeTargetActive = shortTargetType == "LOD" or shortTargetIsFiveMinuteSwingAtLod or shortTargetPromotionBaseType == "LOD"
+longExtremeTargetMicrochannelBlocked = skipExtremeTargetMicrochannel and longExtremeTargetActive and longBarsWithoutPullbackBreak >= extremeTargetMicrochannelBars
+shortExtremeTargetMicrochannelBlocked = skipExtremeTargetMicrochannel and shortExtremeTargetActive and shortBarsWithoutPullbackBreak >= extremeTargetMicrochannelBars
+
+longPriorSameDirectionMostlyBody = f_isBullBar(open[1], close[1]) and bodyPct[1] >= levelDegradationPriorBodyPct
+shortPriorSameDirectionMostlyBody = f_isBearBar(open[1], close[1]) and bodyPct[1] >= levelDegradationPriorBodyPct
+float priorLongCloseStrength = f_longCloseStrength(close[1], low[1], high[1])
+float signalLongCloseStrength = f_longCloseStrength(close, low, high)
+float priorShortCloseStrength = f_shortCloseStrength(close[1], low[1], high[1])
+float signalShortCloseStrength = f_shortCloseStrength(close, low, high)
+longLevelSetupCloseDegradationBlocked = skipLevelSetupCloseDegradation and longLevelScalpSetupQualified and longPriorSameDirectionMostlyBody and not na(priorLongCloseStrength) and not na(signalLongCloseStrength) and signalLongCloseStrength + levelDegradationEpsilon < priorLongCloseStrength
+shortLevelSetupCloseDegradationBlocked = skipLevelSetupCloseDegradation and shortLevelScalpSetupQualified and shortPriorSameDirectionMostlyBody and not na(priorShortCloseStrength) and not na(signalShortCloseStrength) and signalShortCloseStrength + levelDegradationEpsilon < priorShortCloseStrength
+
 longSelectedLevelText = f_abbrevLevelName(longSelectedLevelName)
 shortSelectedLevelText = f_abbrevLevelName(shortSelectedLevelName)
 longEntryTypeText = f_abbrevLevelName(longEntryType)
@@ -3136,6 +3170,8 @@ bullScalpAlert =
      longOneHourSwingBlockerPassed and
      longRiskValid and
      longTargetFilterPassed and
+     not longExtremeTargetMicrochannelBlocked and
+     not longLevelSetupCloseDegradationBlocked and
      longTargetNotRecentlyTouched and
      longEntryPriceOverlapPassed
 bullAlertLabelTitle = longNineEmaMomentumActive ? "LONG 9EMA SCALP" : longNineEmaReclaimContinuationActive ? "LONG 9EMA RCLM SCALP" : longNineEmaLowVolumePullbackActive ? "LONG 9EMA LV SCALP" : "LONG SCALP"
@@ -3162,6 +3198,8 @@ bearScalpAlert =
      shortOneHourSwingBlockerPassed and
      shortRiskValid and
      shortTargetFilterPassed and
+     not shortExtremeTargetMicrochannelBlocked and
+     not shortLevelSetupCloseDegradationBlocked and
      shortTargetNotRecentlyTouched and
      shortEntryPriceOverlapPassed
 bearAlertLabelTitle = shortNineEmaMomentumActive ? "SHORT 9EMA SCALP" : shortNineEmaReclaimContinuationActive ? "SHORT 9EMA RCLM SCALP" : shortNineEmaLowVolumePullbackActive ? "SHORT 9EMA LV SCALP" : "SHORT SCALP"
@@ -3232,6 +3270,8 @@ if barstate.islast
         debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longOneHourSwingBlockerPassed / shortOneHourSwingBlockerPassed", longOneHourSwingBlockerPassed, shortOneHourSwingBlockerPassed)
         debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longRiskValid / shortRiskValid", longRiskValid, shortRiskValid)
         debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longTargetFilterPassed / shortTargetFilterPassed", longTargetFilterPassed, shortTargetFilterPassed)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "Extreme Target Microchannel", not longExtremeTargetMicrochannelBlocked, not shortExtremeTargetMicrochannelBlocked)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "Level Close Degradation", not longLevelSetupCloseDegradationBlocked, not shortLevelSetupCloseDegradationBlocked)
         debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longTargetNotRecentlyTouched / shortTargetNotRecentlyTouched", longTargetNotRecentlyTouched, shortTargetNotRecentlyTouched)
         debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longEntryPriceOverlapPassed / shortEntryPriceOverlapPassed", longEntryPriceOverlapPassed, shortEntryPriceOverlapPassed)
         debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "bullScalpAlert / bearScalpAlert", bullScalpAlert, bearScalpAlert)
