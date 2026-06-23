@@ -972,6 +972,44 @@ effectivePremarketLow = useAutoPremarketHighLow and not na(finalizedPremarketLow
 premarketDisplayHigh = showAutoScalpLevels and usePremarketHighLevel and timeframe.isintraday ? (inPremarketSession ? autoPremarketHigh : inScalpRTHSession ? finalizedPremarketHigh : na) : na
 premarketDisplayLow = showAutoScalpLevels and usePremarketLowLevel and timeframe.isintraday ? (inPremarketSession ? autoPremarketLow : inScalpRTHSession ? finalizedPremarketLow : na) : na
 
+var float autoOpeningRangeHigh = na
+var float autoOpeningRangeLow = na
+var bool openingRangeComplete = false
+var int openingRangeBias = 0
+var bool openingRangeHasBrokenOutOnce = false
+var int openingRangeLastTwoCloseBreakoutDirection = 0
+var int openingRangeConsecutiveClosesAboveHigh = 0
+var int openingRangeConsecutiveClosesBelowHigh = 0
+var int openingRangeConsecutiveClosesAboveLow = 0
+var int openingRangeConsecutiveClosesBelowLow = 0
+
+if newScalpRTHSession
+    autoOpeningRangeHigh := na
+    autoOpeningRangeLow := na
+    openingRangeComplete := false
+    openingRangeBias := 0
+    openingRangeHasBrokenOutOnce := false
+    openingRangeLastTwoCloseBreakoutDirection := 0
+    openingRangeConsecutiveClosesAboveHigh := 0
+    openingRangeConsecutiveClosesBelowHigh := 0
+    openingRangeConsecutiveClosesAboveLow := 0
+    openingRangeConsecutiveClosesBelowLow := 0
+
+if inOpeningRangeWindow
+    autoOpeningRangeHigh := na(autoOpeningRangeHigh) ? high : math.max(autoOpeningRangeHigh, high)
+    autoOpeningRangeLow := na(autoOpeningRangeLow) ? low : math.min(autoOpeningRangeLow, low)
+
+if inScalpRTHSession and not inOpeningRangeWindow and not openingRangeComplete and not na(autoOpeningRangeHigh) and not na(autoOpeningRangeLow)
+    openingRangeComplete := true
+
+openingRangeHigh = useManualOpeningRangeFallback and manualOpeningRangeHigh > 0 ? manualOpeningRangeHigh : autoOpeningRangeHigh
+openingRangeLow = useManualOpeningRangeFallback and manualOpeningRangeLow > 0 ? manualOpeningRangeLow : autoOpeningRangeLow
+openingRangeReady = not na(openingRangeHigh) and not na(openingRangeLow)
+openingRangeWindowElapsed = inScalpRTHSession and not inOpeningRangeWindow
+openingRangeLevelsReady = openingRangeReady and (openingRangeComplete or (useManualOpeningRangeFallback and openingRangeWindowElapsed))
+openingRangeDisplayHigh = inScalpRTHSession and openingRangeLevelsReady ? openingRangeHigh : na
+openingRangeDisplayLow = inScalpRTHSession and openingRangeLevelsReady ? openingRangeLow : na
+
 // ===================== Converted Source Levels =====================
 // MES defaults to AMEX:SPY. TradingView alerts may require real-time entitlement
 // for the exact feed used by request.security(), even if it appears usable on charts.
@@ -987,8 +1025,9 @@ dailyGapRequestEnabled = sourceLevelsEnabled and includeDailyGapsInConvertedLeve
 activeDailyGapSourceTicker = convertedLevelsSourceMode == "Manual Source" ? manualConvertedLevelsSourceSymbol : explicitDailyGapSourceTicker
 activeDailyGapTimeframe = "1440"
 
-// The HTF source values are frozen once per RTH session. Their converted chart
-// prices still use currentConversionRatio below, so live ratio drift is preserved.
+// Source HTF values are cached once per RTH session. Converted PWH/PWL/PDH/PDL
+// trade levels freeze after the Opening Range completes; display lines for
+// those four core levels use the same frozen prices as trade logic after OR.
 float sourcePrevDayHigh = na
 float sourcePrevDayLow = na
 float sourcePrevWeekHigh = na
@@ -1020,6 +1059,12 @@ var array<float> cachedSourceDailyGapHighs = array.new_float()
 var array<float> cachedSourceDailyGapLows = array.new_float()
 var array<int> cachedSourceDailyGapKeys = array.new_int()
 var int cachedSourceDailyGapSessionDateKey = na
+var float frozenHtfConversionRatio = na
+var int frozenHtfConversionSessionDateKey = na
+var float frozenConvertedTradePrevWeekHigh = na
+var float frozenConvertedTradePrevWeekLow = na
+var float frozenConvertedTradePrevDayHigh = na
+var float frozenConvertedTradePrevDayLow = na
 
 var array<float> swingLevelPrices = array.new_float()
 var array<string> swingLevelNames = array.new_string()
@@ -1037,6 +1082,14 @@ var array<float> swingDisplayGapBoxBottoms = array.new_float()
 var array<line> swingLevelLines = array.new_line()
 var array<label> swingLevelLabels = array.new_label()
 var array<box> swingDailyGapBoxes = array.new_box()
+
+if newScalpRTHSession
+    frozenHtfConversionRatio := na
+    frozenHtfConversionSessionDateKey := na
+    frozenConvertedTradePrevWeekHigh := na
+    frozenConvertedTradePrevWeekLow := na
+    frozenConvertedTradePrevDayHigh := na
+    frozenConvertedTradePrevDayLow := na
 
 sourceSessionCacheShouldRefresh = sourceLevelsEnabled and inScalpRTHSession and (newScalpRTHSession or na(convertedSourceCacheSessionDateKey) or convertedSourceCacheSessionDateKey != nySessionDateKey)
 dailyGapSessionCacheShouldRefresh = dailyGapRequestEnabled and inScalpRTHSession and (newScalpRTHSession or na(cachedSourceDailyGapSessionDateKey) or cachedSourceDailyGapSessionDateKey != nySessionDateKey)
@@ -1094,8 +1147,8 @@ if barstate.isconfirmed and inScalpRTHSession and f_validSourcePrice(close) and 
     lastRthChartCloseForDisplayConversion := close
     lastRthSourceCloseForDisplayConversion := sourceCloseForConversion
 
-// Current Price Ratio is the only active source-to-chart conversion. Once an
-// RTH ratio exists, premarket and after-hours bars reuse it instead of drifting.
+// The live/current source-to-chart ratio remains available for display-only
+// converted context levels. Core HTF trade levels use the frozen OR ratio below.
 fallbackChartConversionClose = barstate.isconfirmed ? close : close[1]
 fallbackSourceConversionClose = barstate.isconfirmed ? sourceCloseForConversion : sourceCloseForConversion[1]
 chartConversionBase = f_validSourcePrice(lastRthChartCloseForDisplayConversion) ? lastRthChartCloseForDisplayConversion : f_validSourcePrice(fallbackChartConversionClose) and f_validSourcePrice(fallbackSourceConversionClose) ? fallbackChartConversionClose : na
@@ -1120,14 +1173,42 @@ sourceDailyGapCount = dailyGapUsingCurrentSessionCache ? cachedSourceDailyGapCou
 f_convertSourceLevelToChart(_sourcePrice) =>
     f_validSourcePrice(_sourcePrice) and f_validSourcePrice(currentConversionRatio) ? f_roundToScalpTick(_sourcePrice * currentConversionRatio) : na
 
-f_convertSourceLevelToChartForDisplay(_sourcePrice) =>
-    float convertedDisplayPrice = f_validSourcePrice(_sourcePrice) and f_validSourcePrice(currentConversionRatio) ? _sourcePrice * currentConversionRatio : na
-    f_validSourcePrice(convertedDisplayPrice) ? f_roundToScalpTick(convertedDisplayPrice) : na
+f_convertSourceLevelToFrozenChart(_sourcePrice) =>
+    f_validSourcePrice(_sourcePrice) and f_validSourcePrice(frozenHtfConversionRatio) ? f_roundToScalpTick(_sourcePrice * frozenHtfConversionRatio) : na
 
-convertedTradePrevWeekHigh = f_convertSourceLevelToChart(sourcePrevWeekHigh)
-convertedTradePrevWeekLow = f_convertSourceLevelToChart(sourcePrevWeekLow)
-convertedTradePrevDayHigh = f_convertSourceLevelToChart(sourcePrevDayHigh)
-convertedTradePrevDayLow = f_convertSourceLevelToChart(sourcePrevDayLow)
+f_convertSourceLevelToChartForDisplay(_sourcePrice) =>
+    f_convertSourceLevelToChart(_sourcePrice)
+
+bool shouldFreezeHtfConversion =
+     sourceLevelsEnabled and
+     inScalpRTHSession and
+     openingRangeLevelsReady and
+     barstate.isconfirmed and
+     na(frozenHtfConversionRatio) and
+     f_validSourcePrice(currentConversionRatio)
+
+if shouldFreezeHtfConversion
+    frozenHtfConversionRatio := currentConversionRatio
+    frozenHtfConversionSessionDateKey := nySessionDateKey
+
+bool frozenHtfConversionActive =
+     f_validSourcePrice(frozenHtfConversionRatio) and
+     frozenHtfConversionSessionDateKey == nySessionDateKey
+
+if frozenHtfConversionActive
+    if na(frozenConvertedTradePrevWeekHigh)
+        frozenConvertedTradePrevWeekHigh := f_convertSourceLevelToFrozenChart(sourcePrevWeekHigh)
+    if na(frozenConvertedTradePrevWeekLow)
+        frozenConvertedTradePrevWeekLow := f_convertSourceLevelToFrozenChart(sourcePrevWeekLow)
+    if na(frozenConvertedTradePrevDayHigh)
+        frozenConvertedTradePrevDayHigh := f_convertSourceLevelToFrozenChart(sourcePrevDayHigh)
+    if na(frozenConvertedTradePrevDayLow)
+        frozenConvertedTradePrevDayLow := f_convertSourceLevelToFrozenChart(sourcePrevDayLow)
+
+convertedTradePrevWeekHigh = frozenConvertedTradePrevWeekHigh
+convertedTradePrevWeekLow = frozenConvertedTradePrevWeekLow
+convertedTradePrevDayHigh = frozenConvertedTradePrevDayHigh
+convertedTradePrevDayLow = frozenConvertedTradePrevDayLow
 
 f_addSwingDisplayConvertedLevel(_displayPrice, _label, _lineColor, _lineWidth, _lineStyle) =>
     if f_validSourcePrice(_displayPrice)
@@ -1208,17 +1289,21 @@ if sourceLevelsEnabled
         if usePrevDayLowLevel
             f_addSwingLevel(convertedTradePrevDayLow, "Previous Day Low", 4, true, true)
     if showSwingLevels
-        // Displayed converted lines are live reference levels. Their current price
-        // ratio updates only after confirmed New York RTH closes; they are
-        // not intended to behave like historical series plots.
+        // Display-only context levels keep using the live/current conversion
+        // ratio. Core PWH/PWL/PDH/PDL display lines use the frozen trade prices
+        // after OR completes so the visible and traded levels match.
+        float displayPrevWeekHigh = openingRangeLevelsReady ? convertedTradePrevWeekHigh : f_convertSourceLevelToChartForDisplay(sourcePrevWeekHigh)
+        float displayPrevWeekLow = openingRangeLevelsReady ? convertedTradePrevWeekLow : f_convertSourceLevelToChartForDisplay(sourcePrevWeekLow)
+        float displayPrevDayHigh = openingRangeLevelsReady ? convertedTradePrevDayHigh : f_convertSourceLevelToChartForDisplay(sourcePrevDayHigh)
+        float displayPrevDayLow = openingRangeLevelsReady ? convertedTradePrevDayLow : f_convertSourceLevelToChartForDisplay(sourcePrevDayLow)
         f_addSwingDisplayLevel(sourcePrevMonthHigh, "PMoH", paEngineHighLevelColor, 4, 1)
         f_addSwingDisplayLevel(sourcePrevMonthLow, "PMoL", paEngineLowLevelColor, 4, 1)
         f_addSwingDisplayLevel(sourceMonthOpen, "MO", paEngineOpenLevelColor, 3, 1)
-        f_addSwingDisplayLevel(sourcePrevWeekHigh, "PWH", paEngineHighLevelColor, 3, 0)
-        f_addSwingDisplayLevel(sourcePrevWeekLow, "PWL", paEngineLowLevelColor, 3, 0)
+        f_addSwingDisplayConvertedLevel(displayPrevWeekHigh, "PWH", paEngineHighLevelColor, 3, 0)
+        f_addSwingDisplayConvertedLevel(displayPrevWeekLow, "PWL", paEngineLowLevelColor, 3, 0)
         f_addSwingDisplayLevel(sourceWeekOpen, "WO", paEngineOpenLevelColor, 2, 0)
-        f_addSwingDisplayLevel(sourcePrevDayHigh, "PDH", paEngineHighLevelColor, 2, 0)
-        f_addSwingDisplayLevel(sourcePrevDayLow, "PDL", paEngineLowLevelColor, 2, 0)
+        f_addSwingDisplayConvertedLevel(displayPrevDayHigh, "PDH", paEngineHighLevelColor, 2, 0)
+        f_addSwingDisplayConvertedLevel(displayPrevDayLow, "PDL", paEngineLowLevelColor, 2, 0)
         int displayedGapCount = 0
         if maxDisplayedDailyGaps > 0 and sourceDailyGapCount > 0
             // Historical gaps use converted source boundaries. The current
@@ -1338,44 +1423,6 @@ if (barstate.isconfirmed or barstate.islast) and swingDisplayMaintenanceNeeded
                 label.set_color(swingDisplayNameLabel, color.new(color.black, 100))
                 label.set_style(swingDisplayNameLabel, label.style_label_left)
                 label.set_size(swingDisplayNameLabel, size.tiny)
-
-var float autoOpeningRangeHigh = na
-var float autoOpeningRangeLow = na
-var bool openingRangeComplete = false
-var int openingRangeBias = 0
-var bool openingRangeHasBrokenOutOnce = false
-var int openingRangeLastTwoCloseBreakoutDirection = 0
-var int openingRangeConsecutiveClosesAboveHigh = 0
-var int openingRangeConsecutiveClosesBelowHigh = 0
-var int openingRangeConsecutiveClosesAboveLow = 0
-var int openingRangeConsecutiveClosesBelowLow = 0
-
-if newScalpRTHSession
-    autoOpeningRangeHigh := na
-    autoOpeningRangeLow := na
-    openingRangeComplete := false
-    openingRangeBias := 0
-    openingRangeHasBrokenOutOnce := false
-    openingRangeLastTwoCloseBreakoutDirection := 0
-    openingRangeConsecutiveClosesAboveHigh := 0
-    openingRangeConsecutiveClosesBelowHigh := 0
-    openingRangeConsecutiveClosesAboveLow := 0
-    openingRangeConsecutiveClosesBelowLow := 0
-
-if inOpeningRangeWindow
-    autoOpeningRangeHigh := na(autoOpeningRangeHigh) ? high : math.max(autoOpeningRangeHigh, high)
-    autoOpeningRangeLow := na(autoOpeningRangeLow) ? low : math.min(autoOpeningRangeLow, low)
-
-if inScalpRTHSession and not inOpeningRangeWindow and not openingRangeComplete and not na(autoOpeningRangeHigh) and not na(autoOpeningRangeLow)
-    openingRangeComplete := true
-
-openingRangeHigh = useManualOpeningRangeFallback and manualOpeningRangeHigh > 0 ? manualOpeningRangeHigh : autoOpeningRangeHigh
-openingRangeLow = useManualOpeningRangeFallback and manualOpeningRangeLow > 0 ? manualOpeningRangeLow : autoOpeningRangeLow
-openingRangeReady = not na(openingRangeHigh) and not na(openingRangeLow)
-openingRangeWindowElapsed = inScalpRTHSession and not inOpeningRangeWindow
-openingRangeLevelsReady = openingRangeReady and (openingRangeComplete or (useManualOpeningRangeFallback and openingRangeWindowElapsed))
-openingRangeDisplayHigh = inScalpRTHSession and openingRangeLevelsReady ? openingRangeHigh : na
-openingRangeDisplayLow = inScalpRTHSession and openingRangeLevelsReady ? openingRangeLow : na
 
 if openingRangeLevelsReady and barstate.isconfirmed and inScalpRTHSession and not inOpeningRangeWindow
     bool useStateScopedOrCloseCounts = openingRangeBiasCloseCountMode == "State-Scoped"
@@ -1979,10 +2026,18 @@ string shortExpandedScalpLevelName = "N/A"
 int shortExpandedScalpLevelPriority = 999
 bool shortExpandedScalpLevelTouchedCurrent = false
 bool shortExpandedScalpLevelFound = false
+bool longPreviousWeekHighQualified = false
 bool longPreviousWeekLowQualified = false
 bool shortPreviousWeekHighQualified = false
+bool shortPreviousWeekLowQualified = false
+bool longPreviousDayHighQualified = false
 bool longPreviousDayLowQualified = false
 bool shortPreviousDayHighQualified = false
+bool shortPreviousDayLowQualified = false
+bool longPreviousWeekHighCurrentQualified = false
+bool shortPreviousWeekLowCurrentQualified = false
+bool longPreviousDayHighCurrentQualified = false
+bool shortPreviousDayLowCurrentQualified = false
 bool longPreviousWeekLowPriorClosePassed = false
 bool longPreviousDayLowPriorClosePassed = false
 bool shortPreviousWeekHighPriorClosePassed = false
@@ -2012,10 +2067,20 @@ if convertedHtfTradeLevelsEnabled and array.size(swingLevelPrices) > 0
              expandedEntryLevelIsPreviousDayLow ? convertedTradePrevDayLow[1] :
              expandedEntryLevelIsPreviousDayHigh ? convertedTradePrevDayHigh[1] :
              na
+        bool longExpandedEntryLevelCurrentQualified = expandedEntryLevelTouchedCurrent and scalpSignalClose > expandedEntryLevelPrice
+        bool shortExpandedEntryLevelCurrentQualified = expandedEntryLevelTouchedCurrent and scalpSignalClose < expandedEntryLevelPrice
+        longPreviousWeekHighQualified := longPreviousWeekHighQualified or (expandedEntryLevelIsPreviousWeekHigh and longExpandedEntryLevelQualified)
         longPreviousWeekLowQualified := longPreviousWeekLowQualified or (expandedEntryLevelIsPreviousWeekLow and longExpandedEntryLevelQualified)
         shortPreviousWeekHighQualified := shortPreviousWeekHighQualified or (expandedEntryLevelIsPreviousWeekHigh and shortExpandedEntryLevelQualified)
+        shortPreviousWeekLowQualified := shortPreviousWeekLowQualified or (expandedEntryLevelIsPreviousWeekLow and shortExpandedEntryLevelQualified)
+        longPreviousDayHighQualified := longPreviousDayHighQualified or (expandedEntryLevelIsPreviousDayHigh and longExpandedEntryLevelQualified)
         longPreviousDayLowQualified := longPreviousDayLowQualified or (expandedEntryLevelIsPreviousDayLow and longExpandedEntryLevelQualified)
         shortPreviousDayHighQualified := shortPreviousDayHighQualified or (expandedEntryLevelIsPreviousDayHigh and shortExpandedEntryLevelQualified)
+        shortPreviousDayLowQualified := shortPreviousDayLowQualified or (expandedEntryLevelIsPreviousDayLow and shortExpandedEntryLevelQualified)
+        longPreviousWeekHighCurrentQualified := longPreviousWeekHighCurrentQualified or (expandedEntryLevelIsPreviousWeekHigh and longExpandedEntryLevelCurrentQualified)
+        shortPreviousWeekLowCurrentQualified := shortPreviousWeekLowCurrentQualified or (expandedEntryLevelIsPreviousWeekLow and shortExpandedEntryLevelCurrentQualified)
+        longPreviousDayHighCurrentQualified := longPreviousDayHighCurrentQualified or (expandedEntryLevelIsPreviousDayHigh and longExpandedEntryLevelCurrentQualified)
+        shortPreviousDayLowCurrentQualified := shortPreviousDayLowCurrentQualified or (expandedEntryLevelIsPreviousDayLow and shortExpandedEntryLevelCurrentQualified)
         longPreviousWeekLowPriorClosePassed := longPreviousWeekLowPriorClosePassed or (expandedEntryLevelIsPreviousWeekLow and longExpandedEntryLevelQualified and f_longPriorCloseDidNotMeaningfullyBreakSupport(close[1], expandedEntryLevelPricePrior, low[1], high[1], htfPriorCloseMeaningfulBreakPct))
         longPreviousDayLowPriorClosePassed := longPreviousDayLowPriorClosePassed or (expandedEntryLevelIsPreviousDayLow and longExpandedEntryLevelQualified and f_longPriorCloseDidNotMeaningfullyBreakSupport(close[1], expandedEntryLevelPricePrior, low[1], high[1], htfPriorCloseMeaningfulBreakPct))
         shortPreviousWeekHighPriorClosePassed := shortPreviousWeekHighPriorClosePassed or (expandedEntryLevelIsPreviousWeekHigh and shortExpandedEntryLevelQualified and f_shortPriorCloseDidNotMeaningfullyBreakResistance(close[1], expandedEntryLevelPricePrior, low[1], high[1], htfPriorCloseMeaningfulBreakPct))
@@ -2049,12 +2114,26 @@ if convertedHtfTradeLevelsEnabled and array.size(swingLevelPrices) > 0
 [shortGroup4AfterORHPrice, shortGroup4AfterORHName, shortGroup4AfterORHPriority, shortGroup4AfterORHCurrent, shortGroup4AfterORHFound] = f_pickShortQualifiedLevel(useOpeningRangeHighAsEntryLevel and openingRangeLevelsReady, openingRangeHigh, "ORH", 8, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, noSelectedLevelPrice, noSelectedLevelName, noSelectedLevelPriority, noSelectedLevelTouchedCurrent, noSelectedLevelFound)
 [shortGroup4Price, shortGroup4Name, shortGroup4Priority, shortGroup4Current, shortGroup4Found] = f_pickShortQualifiedLevel(useOpeningRangeLowAsEntryLevel and openingRangeLevelsReady, openingRangeLow, "ORL", 8, scalpSignalLow, scalpSignalHigh, scalpSignalClose, low[1], high[1], priorBarBull, shortGroup4AfterORHPrice, shortGroup4AfterORHName, shortGroup4AfterORHPriority, shortGroup4AfterORHCurrent, shortGroup4AfterORHFound)
 
-bool longDirectPreviousDayLowTouchedForSignal = f_levelTouched(useDirectTradePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh) or f_levelTouchedByPriorBar(useDirectTradePrevDayLowLevel, effectivePrevDayLow, low[1], high[1], priorBarBear)
-bool shortDirectPreviousDayHighTouchedForSignal = f_levelTouched(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh) or f_levelTouchedByPriorBar(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, low[1], high[1], priorBarBull)
+bool longDirectPreviousDayHighTouchedCurrent = f_levelTouched(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh)
+bool longDirectPreviousDayLowTouchedCurrent = f_levelTouched(useDirectTradePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh)
+bool shortDirectPreviousDayHighTouchedCurrent = f_levelTouched(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, scalpSignalLow, scalpSignalHigh)
+bool shortDirectPreviousDayLowTouchedCurrent = f_levelTouched(useDirectTradePrevDayLowLevel, effectivePrevDayLow, scalpSignalLow, scalpSignalHigh)
+bool longDirectPreviousDayHighTouchedForSignal = longDirectPreviousDayHighTouchedCurrent or f_levelTouchedByPriorBar(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, low[1], high[1], priorBarBear)
+bool longDirectPreviousDayLowTouchedForSignal = longDirectPreviousDayLowTouchedCurrent or f_levelTouchedByPriorBar(useDirectTradePrevDayLowLevel, effectivePrevDayLow, low[1], high[1], priorBarBear)
+bool shortDirectPreviousDayHighTouchedForSignal = shortDirectPreviousDayHighTouchedCurrent or f_levelTouchedByPriorBar(useDirectTradePrevDayHighLevel, effectivePrevDayHigh, low[1], high[1], priorBarBull)
+bool shortDirectPreviousDayLowTouchedForSignal = shortDirectPreviousDayLowTouchedCurrent or f_levelTouchedByPriorBar(useDirectTradePrevDayLowLevel, effectivePrevDayLow, low[1], high[1], priorBarBull)
+bool longDirectPreviousDayHighQualified = longDirectPreviousDayHighTouchedForSignal and scalpSignalClose > effectivePrevDayHigh
 bool longDirectPreviousDayLowQualified = longDirectPreviousDayLowTouchedForSignal and scalpSignalClose > effectivePrevDayLow
 bool shortDirectPreviousDayHighQualified = shortDirectPreviousDayHighTouchedForSignal and scalpSignalClose < effectivePrevDayHigh
+bool shortDirectPreviousDayLowQualified = shortDirectPreviousDayLowTouchedForSignal and scalpSignalClose < effectivePrevDayLow
+bool longDirectPreviousDayHighCurrentQualified = longDirectPreviousDayHighTouchedCurrent and scalpSignalClose > effectivePrevDayHigh
+bool shortDirectPreviousDayLowCurrentQualified = shortDirectPreviousDayLowTouchedCurrent and scalpSignalClose < effectivePrevDayLow
+longPreviousDayHighQualified := longPreviousDayHighQualified or longDirectPreviousDayHighQualified
 longPreviousDayLowQualified := longPreviousDayLowQualified or longDirectPreviousDayLowQualified
 shortPreviousDayHighQualified := shortPreviousDayHighQualified or shortDirectPreviousDayHighQualified
+shortPreviousDayLowQualified := shortPreviousDayLowQualified or shortDirectPreviousDayLowQualified
+longPreviousDayHighCurrentQualified := longPreviousDayHighCurrentQualified or longDirectPreviousDayHighCurrentQualified
+shortPreviousDayLowCurrentQualified := shortPreviousDayLowCurrentQualified or shortDirectPreviousDayLowCurrentQualified
 longPreviousDayLowPriorClosePassed := longPreviousDayLowPriorClosePassed or (longDirectPreviousDayLowQualified and f_longPriorCloseDidNotMeaningfullyBreakSupport(close[1], effectivePrevDayLow[1], low[1], high[1], htfPriorCloseMeaningfulBreakPct))
 shortPreviousDayHighPriorClosePassed := shortPreviousDayHighPriorClosePassed or (shortDirectPreviousDayHighQualified and f_shortPriorCloseDidNotMeaningfullyBreakResistance(close[1], effectivePrevDayHigh[1], low[1], high[1], htfPriorCloseMeaningfulBreakPct))
 
@@ -2571,6 +2650,29 @@ shortStrongHtfReversalException =
      priorBarBull and
      ((shortPreviousWeekHighQualified and shortPreviousWeekHighPriorClosePassed) or
       (shortPreviousDayHighQualified and shortPreviousDayHighPriorClosePassed))
+longHtfContinuationBreakoutException =
+     openingRangeLevelsReady and
+     openingRangeHasBrokenOutOnce and
+     bullSignalHighVol and
+     longLevelScalpSetupQualified and
+     (longPreviousWeekHighCurrentQualified or
+      longPreviousDayHighCurrentQualified)
+
+shortHtfContinuationBreakdownException =
+     openingRangeLevelsReady and
+     openingRangeHasBrokenOutOnce and
+     bearSignalHighVol and
+     shortLevelScalpSetupQualified and
+     (shortPreviousWeekLowCurrentQualified or
+      shortPreviousDayLowCurrentQualified)
+longPreviousWeekLowRequiresReversal =
+     longPreviousWeekLowQualified
+shortPreviousWeekHighRequiresReversal =
+     shortPreviousWeekHighQualified
+longPreviousWeekLowDirectionalRulePassed =
+     not longPreviousWeekLowRequiresReversal or longStrongHtfReversalException
+shortPreviousWeekHighDirectionalRulePassed =
+     not shortPreviousWeekHighRequiresReversal or shortStrongHtfReversalException
 longOppositePressureBlocked =
      skipOppositeFiveBarPressureUnlessStrongReversal and
      longOppositeFiveBarPressure and
@@ -2591,9 +2693,11 @@ shortOpeningRangeMarketStatePassed =
      shortPostBreakoutDailyOpenRejection
 longOpeningRangeFiltersPassed =
      longStrongHtfReversalException or
+     longHtfContinuationBreakoutException or
      (longOpeningRangeFilterPassed and longOpeningRangePriorClosePassed and longOpeningRangeMarketStatePassed)
 shortOpeningRangeFiltersPassed =
      shortStrongHtfReversalException or
+     shortHtfContinuationBreakdownException or
      (shortOpeningRangeFilterPassed and shortOpeningRangePriorClosePassed and shortOpeningRangeMarketStatePassed)
 longNineEmaMomentumActive = longNineEmaMomentumSetupQualified and not longLevelScalpSetupQualified
 shortNineEmaMomentumActive = shortNineEmaMomentumSetupQualified and not shortLevelScalpSetupQualified
@@ -2610,6 +2714,7 @@ longCompactSignalText =
      longOpeningRangeFadeActive and longStrongHtfReversalException ? "ORF HTF REV" :
      longOpeningRangeFadeActive ? "ORF" :
      longStrongHtfReversalException ? "HTF REV" :
+     longHtfContinuationBreakoutException ? "HTF CONT" :
      "LVL"
 shortCompactSignalText =
      shortNineEmaMomentumActive ? "9EMA" :
@@ -2618,6 +2723,7 @@ shortCompactSignalText =
      shortOpeningRangeFadeActive and shortStrongHtfReversalException ? "ORF HTF REV" :
      shortOpeningRangeFadeActive ? "ORF" :
      shortStrongHtfReversalException ? "HTF REV" :
+     shortHtfContinuationBreakdownException ? "HTF CONT" :
      "LVL"
 
 openingRangeAlertText =
@@ -3164,6 +3270,7 @@ bullScalpAlert =
      not longOppositePressureBlocked and
      longHtfContinuationStatePassed and
      longHtfSupportLowStatePassed and
+     longPreviousWeekLowDirectionalRulePassed and
      longDailyOpenRangeAcceptancePassed and
      longFiveMinuteSwingAcceptancePassed and
      longOneHourSwingAcceptancePassed and
@@ -3192,6 +3299,7 @@ bearScalpAlert =
      not shortOppositePressureBlocked and
      shortHtfContinuationStatePassed and
      shortHtfResistanceHighStatePassed and
+     shortPreviousWeekHighDirectionalRulePassed and
      shortDailyOpenRangeAcceptancePassed and
      shortFiveMinuteSwingAcceptancePassed and
      shortOneHourSwingAcceptancePassed and
