@@ -38,8 +38,8 @@ skipFiveBarExtension     = input.bool(false, title="Skip 5+ No-Pullback Extensio
 skipStrongMicrochannelExtension = input.bool(false, title="Skip Two Prior Strong-Close Extension", group=groupSetupFilters, tooltip="Blocks long signals after two prior strong bullish closes and blocks short signals after two prior strong bearish closes. This treats back-to-back strong closes as extension even if the sequence is not a strict microchannel.")
 skipExtremeTargetMicrochannel = input.bool(true, title="Skip Extreme Target Microchannel", group=groupSetupFilters, tooltip="Blocks HOD/LOD or 5m swing equal HOD/LOD targets when price has moved in a 6+ bar no-pullback microchannel.")
 extremeTargetMicrochannelBars = input.int(6, title="Extreme Target Microchannel Bars", minval=5, maxval=10, group=groupSetupFilters)
-skipLevelSetupCloseDegradation = input.bool(true, title="Skip Level Setup Close Degradation", group=groupSetupFilters, tooltip="Blocks level setups when the prior same-direction mostly-body bar closed stronger than the signal bar.")
-levelDegradationPriorBodyPct = input.float(0.50, title="Level Degradation Prior Body %", minval=0.25, maxval=0.90, step=0.05, group=groupSetupFilters)
+skipExtremeTargetCloseDegradation = input.bool(true, title="Skip Extreme Target Close Degradation", group=groupSetupFilters, tooltip="Blocks HOD/LOD or equivalent 5m-swing extreme-target setups when the signal bar's directional close is weaker than the prior bar's directional close, unless the signal bar already closes in the extreme close zone.")
+extremeTargetCloseDegradationExtremeClosePct = input.float(0.15, title="Extreme Target Degradation Strong Close %", minval=0.05, maxval=0.25, step=0.01, group=groupSetupFilters, tooltip="If the signal bar closes within this fraction of the high for longs or low for shorts, the close-degradation comparison is bypassed. Default 0.15 means upper/lower 15%.")
 skipDojiContainingPriorTwoBars = input.bool(true, title="Skip Doji Containing Prior Two Bars", group=groupSetupFilters, tooltip="Blocks scalp alerts when the signal bar is a doji/indecision bar and fully contains the prior two bars' ranges, indicating chop/compression.")
 dojiContainingPriorTwoBarsMaxBodyPct = input.float(0.15, title="Doji Containment Max Body %", minval=0.05, maxval=0.30, step=0.01, group=groupSetupFilters, tooltip="Maximum signal-bar body percentage used to define a doji for the doji containment chop filter.")
 skipOppositeFiveBarPressureUnlessStrongReversal = input.bool(true, title="Skip Opposite 5-Bar Pressure Unless Strong Reversal", group=groupSetupFilters, tooltip="Blocks longs after sustained prior bear pressure and shorts after sustained prior bull pressure, unless the setup is a strong HTF reversal exception.")
@@ -3235,14 +3235,14 @@ shortExtremeTargetActive = shortTargetType == "LOD" or shortTargetIsFiveMinuteSw
 longExtremeTargetMicrochannelBlocked = skipExtremeTargetMicrochannel and longExtremeTargetActive and longBarsWithoutPullbackBreak >= extremeTargetMicrochannelBars
 shortExtremeTargetMicrochannelBlocked = skipExtremeTargetMicrochannel and shortExtremeTargetActive and shortBarsWithoutPullbackBreak >= extremeTargetMicrochannelBars
 
-longPriorSameDirectionMostlyBody = f_isBullBar(open[1], close[1]) and bodyPct[1] >= levelDegradationPriorBodyPct
-shortPriorSameDirectionMostlyBody = f_isBearBar(open[1], close[1]) and bodyPct[1] >= levelDegradationPriorBodyPct
 float priorLongCloseStrength = f_longCloseStrength(close[1], low[1], high[1])
 float signalLongCloseStrength = f_longCloseStrength(close, low, high)
 float priorShortCloseStrength = f_shortCloseStrength(close[1], low[1], high[1])
 float signalShortCloseStrength = f_shortCloseStrength(close, low, high)
-longLevelSetupCloseDegradationBlocked = skipLevelSetupCloseDegradation and longLevelScalpSetupQualified and longPriorSameDirectionMostlyBody and not na(priorLongCloseStrength) and not na(signalLongCloseStrength) and signalLongCloseStrength + levelDegradationEpsilon < priorLongCloseStrength
-shortLevelSetupCloseDegradationBlocked = skipLevelSetupCloseDegradation and shortLevelScalpSetupQualified and shortPriorSameDirectionMostlyBody and not na(priorShortCloseStrength) and not na(signalShortCloseStrength) and signalShortCloseStrength + levelDegradationEpsilon < priorShortCloseStrength
+longSignalExtremeCloseBypass = not na(signalLongCloseStrength) and signalLongCloseStrength >= 1.0 - extremeTargetCloseDegradationExtremeClosePct
+shortSignalExtremeCloseBypass = not na(signalShortCloseStrength) and signalShortCloseStrength >= 1.0 - extremeTargetCloseDegradationExtremeClosePct
+longExtremeTargetCloseDegradationBlocked = skipExtremeTargetCloseDegradation and longExtremeTargetActive and not na(priorLongCloseStrength) and not na(signalLongCloseStrength) and not longSignalExtremeCloseBypass and signalLongCloseStrength + levelDegradationEpsilon < priorLongCloseStrength
+shortExtremeTargetCloseDegradationBlocked = skipExtremeTargetCloseDegradation and shortExtremeTargetActive and not na(priorShortCloseStrength) and not na(signalShortCloseStrength) and not shortSignalExtremeCloseBypass and signalShortCloseStrength + levelDegradationEpsilon < priorShortCloseStrength
 
 longSelectedLevelText = f_abbrevLevelName(longSelectedLevelName)
 shortSelectedLevelText = f_abbrevLevelName(shortSelectedLevelName)
@@ -3278,7 +3278,7 @@ bullScalpAlert =
      longRiskValid and
      longTargetFilterPassed and
      not longExtremeTargetMicrochannelBlocked and
-     not longLevelSetupCloseDegradationBlocked and
+     not longExtremeTargetCloseDegradationBlocked and
      longTargetNotRecentlyTouched and
      longEntryPriceOverlapPassed
 bullAlertLabelTitle = longNineEmaMomentumActive ? "LONG 9EMA SCALP" : longNineEmaReclaimContinuationActive ? "LONG 9EMA RCLM SCALP" : longNineEmaLowVolumePullbackActive ? "LONG 9EMA LV SCALP" : "LONG SCALP"
@@ -3307,7 +3307,7 @@ bearScalpAlert =
      shortRiskValid and
      shortTargetFilterPassed and
      not shortExtremeTargetMicrochannelBlocked and
-     not shortLevelSetupCloseDegradationBlocked and
+     not shortExtremeTargetCloseDegradationBlocked and
      shortTargetNotRecentlyTouched and
      shortEntryPriceOverlapPassed
 bearAlertLabelTitle = shortNineEmaMomentumActive ? "SHORT 9EMA SCALP" : shortNineEmaReclaimContinuationActive ? "SHORT 9EMA RCLM SCALP" : shortNineEmaLowVolumePullbackActive ? "SHORT 9EMA LV SCALP" : "SHORT SCALP"
@@ -3379,7 +3379,7 @@ if barstate.islast
         debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longRiskValid / shortRiskValid", longRiskValid, shortRiskValid)
         debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longTargetFilterPassed / shortTargetFilterPassed", longTargetFilterPassed, shortTargetFilterPassed)
         debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "Extreme Target Microchannel", not longExtremeTargetMicrochannelBlocked, not shortExtremeTargetMicrochannelBlocked)
-        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "Level Close Degradation", not longLevelSetupCloseDegradationBlocked, not shortLevelSetupCloseDegradationBlocked)
+        debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "ExtCloseDeg", not longExtremeTargetCloseDegradationBlocked, not shortExtremeTargetCloseDegradationBlocked)
         debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longTargetNotRecentlyTouched / shortTargetNotRecentlyTouched", longTargetNotRecentlyTouched, shortTargetNotRecentlyTouched)
         debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "longEntryPriceOverlapPassed / shortEntryPriceOverlapPassed", longEntryPriceOverlapPassed, shortEntryPriceOverlapPassed)
         debugRow := f_addDebugBoolRow(currentBarAlertDebugTable, debugRow, "bullScalpAlert / bearScalpAlert", bullScalpAlert, bearScalpAlert)
