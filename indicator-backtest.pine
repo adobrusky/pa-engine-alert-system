@@ -1,5 +1,27 @@
 //@version=6
-indicator("PA Engine Scalp Alert System", shorttitle = "PA Engine Scalp Alerts", overlay=true, max_bars_back = 500, max_lines_count=500, max_labels_count=500, max_boxes_count=200, dynamic_requests=true)
+strategy(
+     title = "PA Engine Scalp Alert System Strategy Backtest",
+     shorttitle = "PA Engine Scalp Strategy",
+     overlay = true,
+     pyramiding = 0,
+     initial_capital = 1000000,
+     currency = currency.USD,
+     margin_long = 1,
+     margin_short = 1,
+     default_qty_type = strategy.fixed,
+     default_qty_value = 1,
+     commission_type = strategy.commission.cash_per_contract,
+     commission_value = 0.62,
+     slippage = 1,
+     process_orders_on_close = true,
+     calc_on_order_fills = true,
+     backtest_fill_limits_assumption = 0,
+     max_bars_back = 500,
+     max_lines_count = 500,
+     max_labels_count = 500,
+     max_boxes_count = 200,
+     dynamic_requests = true
+)
 
 // ===================== User Inputs =====================
 
@@ -12,6 +34,7 @@ groupTargets = "06. Target Settings"
 groupSignalEngine = "07. Signal Engine Tuning"
 groupDisplay = "08. Display / Visuals"
 groupLatestAlertTracker = "09. Latest Alert Tracker"
+groupStrategyBacktest = "10. Strategy Backtest"
 
 // 01. Core Alert Controls
 alertScalpSetups         = input.bool(true, title="Alert Scalp Setups", group=groupCoreAlerts, tooltip="Alerts qualified scalp setups. Scalp stops use the signal-bar extreme plus one tick.")
@@ -88,7 +111,7 @@ useConvertedHtfLevelsForTradeLogic = input.bool(true, title="Use Converted HTF L
 convertedLevelsSourceMode        = input.string("Auto From Ticker", title="Converted Levels Source Mode", options=["Auto From Ticker", "Manual Source"], group=groupScalpLevels)
 manualConvertedLevelsSourceSymbol = input.string("AMEX:SPY", title="Manual Converted Levels Source Symbol", group=groupScalpLevels)
 includeDailyGapsInConvertedLevels = input.bool(true, title="Include Daily Gaps In Converted Levels", group=groupScalpLevels)
-useDailyGapEndsAsTradeObstacles = input.bool(true, title="Use Daily Gap Ends As Trade Obstacles", group=groupScalpLevels, tooltip="When enabled, unfilled daily gap ends are used as close-acceptance blockers when touched and as target candidates when ahead of the signal bar. They are not used as entry levels.")
+useDailyGapEndsAsTradeObstacles = input.bool(false, title="Use Daily Gap Ends As Trade Obstacles", group=groupScalpLevels, tooltip="When enabled, unfilled daily gap ends are used as close-acceptance blockers when touched and as target candidates when ahead of the signal bar. They are not used as entry levels.")
 dailyGapLookback                 = input.int(200, title="Daily Gap Lookback", minval=10, maxval=500, group=groupScalpLevels, tooltip="Number of SPY/QQQ regular-session daily bars to scan for unfilled daily gaps.")
 
 // 04. Opening Range
@@ -106,6 +129,9 @@ openingRangeBiasCloseCountMode   = input.string(
 
 // 05. Risk / Position Sizing
 maxRiskDollars      = input.float(500.0, title="Max Risk Dollars", minval=0.0, step=10.0, group=groupRisk)
+// Strategy Tester commission is hard-coded in strategy() as 0.62 per side,
+// matching this default 1.24 round trip. If this input default changes,
+// update the declaration commission_value to match.
 commissionRoundTrip = input.float(1.24, title="Commission Per Contract, Round Trip", minval=0.0, step=0.01, group=groupRisk)
 useMaxContractCap   = input.bool(true, title="Use Max Contract Cap", group=groupRisk)
 maxContracts        = input.int(20, title="Max Contracts", minval=1, group=groupRisk)
@@ -136,6 +162,7 @@ showBullSignals              = input.bool(true, title="Show Bull Signals", group
 showBearSignals              = input.bool(true, title="Show Bear Signals", group=groupDisplay, tooltip="Enable bearish high-volume signal markers.")
 hideSignalPlotsBeforeOpeningRangeCompletes = input.bool(true, title="Hide Signal Plots Before Opening Range Completes", group=groupDisplay, tooltip="Suppresses bullish/bearish price-action signal markers until the configured opening range has completed. This affects plotted markers only, not alert logic.")
 alertLabelMode               = input.string("Compact", title="Historical Alert Labels", options=["Off", "Marker Only", "Compact"], group=groupDisplay)
+showAlertSignalDetails       = input.bool(false, title="Show Alert Signal Details", group=groupDisplay)
 showCurrentBarAlertDebugTable = input.bool(false, title="Show Current-Bar Alert Debug Table", group=groupDisplay, tooltip="Debug-only table showing current/latest bar pass/fail states for all final scalp alert conditions.")
 showSwingLevels              = input.bool(true, title="Show Converted Levels", group=groupDisplay, tooltip="Plots converted higher-timeframe levels used for scalp entries and targets.")
 showSwingLevelLabels         = input.bool(false, title="Show Converted Level Labels", group=groupDisplay)
@@ -150,6 +177,20 @@ cancelLatestOnTargetBeforeEntry = input.bool(true, "Cancel If Target Hit Before 
 cancelLatestOnMeasuredMoveBeforeEntry = input.bool(true, "Cancel If Measured Move Hit Before Entry", group=groupLatestAlertTracker)
 cancelLatestOnAgeBeforeEntry = input.bool(true, "Cancel If Entry Not Hit After Max Bars", group=groupLatestAlertTracker)
 latestScalpMaxBarsAfterSignal = input.int(5, "Latest Alert Max Bars After Signal", minval=1, maxval=20, group=groupLatestAlertTracker, tooltip="Cancels the latest tracked scalp alert if the entry has not been touched after this many completed bars after the signal bar. Default 5.")
+
+// 10. Strategy Backtest
+enableStrategyBacktest = input.bool(true, "Enable Strategy Orders", group=groupStrategyBacktest)
+strategyEntryMode = input.string("Limit At Alert Entry", "Strategy Entry Mode", options=["Limit At Alert Entry", "Market On Signal Close"], group=groupStrategyBacktest)
+strategyCancelUnfilledAfterBars = input.int(5, "Cancel Unfilled Entry After Bars", minval=1, maxval=20, group=groupStrategyBacktest)
+strategySameBarEntryVsCancelMode = input.string("Cancel Wins", "Same-Bar Entry vs Cancel", options=["Cancel Wins", "Entry Wins"], group=groupStrategyBacktest)
+strategyOneRTrimPct = input.float(0.50, "Normal 1R Trim %", minval=0.33, maxval=0.50, step=0.01, group=groupStrategyBacktest)
+strategyHodLodOneRTrimPct = input.float(0.50, "HOD/LOD 1R Trim %", minval=0.33, maxval=0.50, step=0.01, group=groupStrategyBacktest)
+strategySecondTrimPct = input.float(0.33, "2R Trim % When RR >= 2R", minval=0.10, maxval=0.50, step=0.01, group=groupStrategyBacktest)
+strategyMoveStopToBreakevenAfter1R = input.bool(true, "Move Stop To BE After 1R", group=groupStrategyBacktest)
+strategyUseHodLodManagement = input.bool(true, "Use HOD/LOD Special Management", group=groupStrategyBacktest)
+strategyDebugLabels = input.bool(false, "Show Strategy Debug Labels", group=groupStrategyBacktest)
+strategyShowDebugTable = input.bool(true, "Show Strategy Debug Table", group=groupStrategyBacktest)
+
 
 scalpPointValue = tickerInput == "MES" ? 5.0 : 2.0
 scalpTickSize   = 0.25
@@ -3518,8 +3559,8 @@ f_addDebugValueRow(table _table, int _row, string _label, string _longText, stri
 showHistoricalAlertLabels = alertLabelMode != "Off"
 showCompactAlertLabels = alertLabelMode == "Compact"
 
-f_buildMarkerChartLabel(_direction) =>
-    _direction
+f_buildMarkerChartLabel(_direction, _compactSignalText, _selectedLevelName) =>
+    showAlertSignalDetails ? _direction + "\n" + _compactSignalText + " | " + f_abbrevLevelName(_selectedLevelName) : _direction
 
 f_buildCompactChartLabel(_direction, _compactSignalText, _selectedLevelName, _entryPrice, _stopPrice, _targetPrice, _targetType, _targetRR, _contracts, _managementText) =>
     _direction + "\n" +
@@ -3580,7 +3621,7 @@ alertTwoRPrice = alertIsLong and alertManagementRiskValid ? alertEntryPrice + al
 alertManagementText = newEffectiveScalpAlert ? f_buildManagementText(alertOneRPrice, alertTwoRPrice, alertTargetRR, alertContracts) : ""
 
 if showHistoricalAlertLabels and newEffectiveScalpAlert
-    string chartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName, alertEntryPrice, alertStopPrice, alertTargetPrice, alertTargetType, alertTargetRR, alertContracts, alertManagementText) : f_buildMarkerChartLabel(alertDirectionTitle)
+    string chartLabelText = showCompactAlertLabels ? f_buildCompactChartLabel(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName, alertEntryPrice, alertStopPrice, alertTargetPrice, alertTargetType, alertTargetRR, alertContracts, alertManagementText) : f_buildMarkerChartLabel(alertDirectionTitle, alertCompactSignalText, alertSelectedLevelName)
     f_addAlertChartLabel(alertLabelPrice, chartLabelText, alertLabelStyle, alertLabelColor)
 
 // ===================== Alert Message =====================
@@ -3689,6 +3730,401 @@ else
             if alertLatestScalpCancellation
                 alert(f_buildLatestScalpCancellationAlertMessage(latestScalpDirection, latestCancellationReason, latestScalpEntry, latestScalpTarget, latestScalpMeasuredMove, latestScalpTargetType, latestScalpAlertId), alert.freq_once_per_bar)
             latestScalpAlertActive := false
+
+
+// ===================== Strategy Backtest Trade Management =====================
+// This strategy block intentionally consumes only the final effective alert packet.
+// Historical OHLC bars cannot prove intrabar sequence, so pending limit entries
+// explicitly arbitrate entry touch vs. target/MM cancellation before age/new-alert
+// cancellation. Same-bar entry-vs-cancel arbitration is limited by TradingView's
+// broker emulator assumptions: the code can cancel still-pending orders when no
+// broker fill has occurred, but it cannot retroactively undo a broker-emulated
+// fill that happened earlier on the historical bar. Market mode remains a
+// control path for proving the alert trigger.
+var bool strategyPendingEntry = false
+var int strategyStoredDirection = 0
+var int strategyStoredSignalBar = na
+var float strategyStoredEntry = na
+var float strategyStoredInitialStop = na
+var float strategyStoredInitialTarget = na
+var float strategyStoredFinalTarget = na
+var string strategyStoredTargetType = "N/A"
+var float strategyStoredTargetRR = na
+var int strategyStoredContracts = na
+var float strategyStoredOneR = na
+var float strategyStoredOnePointFiveR = na
+var float strategyStoredTwoR = na
+var float strategyStoredMeasuredMove = na
+var bool strategyStoredHodLodManagement = false
+var bool strategyStoredLimitEntry = false
+var bool strategyEntryOrderSubmitted = false
+var bool strategyStoredEntryTouched = false
+var int strategyStoredFillBar = na
+var float strategyStoredFillPrice = na
+var float strategyCurrentActiveStop = na
+var string strategyCurrentStopMode = "N/A"
+var int strategyStoredOneRQty = 0
+var int strategyStoredTwoRQty = 0
+var int strategyStoredFinalQty = 0
+var bool strategyOneRTouched = false
+var bool strategyTwoRTouched = false
+var int strategyEffectiveAlertCount = 0
+var int strategyLongAlertCount = 0
+var int strategyShortAlertCount = 0
+var int strategyStoredSignalCount = 0
+var int strategyEntryOrdersSubmittedCount = 0
+var int strategyMarketEntriesSubmittedCount = 0
+var int strategyLimitEntriesSubmittedCount = 0
+var int strategyPendingCanceledCount = 0
+var int strategyFilledTradesDetectedCount = 0
+var int strategyClosedTradesCount = 0
+var int strategyExistingTradeBlockCount = 0
+var int strategyBadValueBlockCount = 0
+var int strategyPendingEntryTouchedCount = 0
+var int strategySameBarCancelWinsCount = 0
+var int strategySameBarEntryWinsCount = 0
+var int strategyCanceledByNewAlertCount = 0
+var int strategyBrokerFillConfirmedCount = 0
+var string strategyLastBlockReason = "N/A"
+var string strategyLastSignalDirection = "N/A"
+var float strategyLastEntry = na
+var float strategyLastStop = na
+var float strategyLastTarget = na
+var string strategyLastTargetType = "N/A"
+var int strategyLastContracts = na
+
+f_strategyTrimQty(int _baseContracts, int _availableContracts, float _pct, int _reserveContracts) =>
+    int trimQty = 0
+    if not na(_baseContracts) and not na(_availableContracts) and _availableContracts > _reserveContracts
+        trimQty := math.max(1, int(math.floor(_baseContracts * _pct)))
+        trimQty := math.min(trimQty, _availableContracts - _reserveContracts)
+    trimQty
+
+f_strategyDebugLabel(string _text, float _price, bool _isLong) =>
+    if strategyDebugLabels
+        label.new(
+             bar_index,
+             _price,
+             _text,
+             style=_isLong ? label.style_label_up : label.style_label_down,
+             textcolor=color.white,
+             color=color.new(color.gray, 0),
+             size=size.tiny
+        )
+
+int strategySignalDirection = effectiveBullScalpAlert ? 1 : effectiveBearScalpAlert ? -1 : 0
+int strategySignalContracts = alertContracts
+string strategySignalTargetType = effectiveBullScalpAlert ? longTargetType : effectiveBearScalpAlert ? shortTargetType : "N/A"
+float strategySignalRiskPoints = strategySignalDirection == 1 ? alertEntryPrice - alertStopPrice : strategySignalDirection == -1 ? alertStopPrice - alertEntryPrice : na
+bool strategySignalValuesReady =
+     strategySignalDirection != 0 and
+     not na(alertEntryPrice) and
+     not na(alertStopPrice) and
+     not na(alertTargetPrice) and
+     not na(alertTargetRR) and
+     not na(strategySignalRiskPoints) and
+     strategySignalRiskPoints > 0 and
+     not na(strategySignalContracts) and
+     strategySignalContracts >= 1
+
+bool strategyPendingBeforeAlert = strategyPendingEntry and strategyStoredLimitEntry and strategy.position_size == 0
+bool strategyCanEvaluatePending = enableStrategyBacktest and strategyPendingBeforeAlert and bar_index > strategyStoredSignalBar
+bool strategyPendingStateResetNeeded = false
+if strategyCanEvaluatePending
+    bool strategyPendingLong = strategyStoredDirection == 1
+    bool strategyPendingShort = strategyStoredDirection == -1
+    bool strategyEntryWasAlreadyTouched = strategyStoredEntryTouched
+    bool strategyPendingEntryTouched = not na(strategyStoredEntry) and (strategyPendingLong ? low <= strategyStoredEntry : strategyPendingShort ? high >= strategyStoredEntry : false)
+    bool strategyPendingTargetIsHod = strategyStoredTargetType == "HOD"
+    bool strategyPendingTargetIsLod = strategyStoredTargetType == "LOD"
+    bool strategyPendingTargetHit = not na(strategyStoredInitialTarget) and (strategyPendingLong ? not strategyPendingTargetIsHod and high >= strategyStoredInitialTarget : strategyPendingShort ? not strategyPendingTargetIsLod and low <= strategyStoredInitialTarget : false)
+    bool strategyPendingMeasuredMoveEligible = strategyPendingLong ? strategyPendingTargetIsHod : strategyPendingShort ? strategyPendingTargetIsLod : false
+    bool strategyPendingMeasuredMoveHit = strategyPendingMeasuredMoveEligible and not na(strategyStoredMeasuredMove) and (strategyPendingLong ? high >= strategyStoredMeasuredMove : strategyPendingShort ? low <= strategyStoredMeasuredMove : false)
+    int strategyPendingBarsAfterSignal = bar_index - strategyStoredSignalBar
+    bool strategyPendingAgeExpired = strategyPendingBarsAfterSignal >= strategyCancelUnfilledAfterBars
+    bool strategyPendingNewAlert = newEffectiveScalpAlert
+    bool strategyPendingCancelHit = strategyPendingTargetHit or strategyPendingMeasuredMoveHit
+    bool strategySameBarEntryCancelConflict = strategyPendingEntryTouched and strategyPendingCancelHit
+    bool strategySameBarEntryWins = strategySameBarEntryVsCancelMode == "Entry Wins"
+    bool strategyEntryTouchWins = strategyPendingEntryTouched and (not strategySameBarEntryCancelConflict or strategySameBarEntryWins)
+    bool strategyCancelTouchWins = strategyPendingCancelHit and (not strategyPendingEntryTouched or not strategySameBarEntryWins)
+
+    if strategyPendingEntryTouched and not strategyEntryWasAlreadyTouched
+        strategyPendingEntryTouchedCount += 1
+        strategyStoredEntryTouched := true
+        f_strategyDebugLabel(strategyPendingLong ? "ENTRY TOUCH L" : "ENTRY TOUCH S", strategyStoredEntry, strategyPendingLong)
+
+    if strategySameBarEntryCancelConflict and not strategyEntryWasAlreadyTouched
+        if strategySameBarEntryWins
+            strategySameBarEntryWinsCount += 1
+        else
+            strategySameBarCancelWinsCount += 1
+
+    if strategyCancelTouchWins
+        strategyPendingCanceledCount += 1
+        strategyLastBlockReason := strategyPendingMeasuredMoveHit ? "Measured Move Before Entry" : "Target Before Entry"
+        if strategyPendingLong
+            strategy.cancel("L")
+        else if strategyPendingShort
+            strategy.cancel("S")
+        f_strategyDebugLabel(strategyPendingMeasuredMoveHit ? "CXL MM" : "CXL TGT", strategyPendingLong ? high : low, not strategyPendingLong)
+        strategyPendingStateResetNeeded := true
+    else if strategyEntryTouchWins and not strategyEntryWasAlreadyTouched
+        strategyLastBlockReason := "Entry Touch Awaiting Broker Fill"
+    else if strategyPendingAgeExpired
+        strategyPendingCanceledCount += 1
+        strategyLastBlockReason := "Limit Age Canceled"
+        if strategyPendingLong
+            strategy.cancel("L")
+        else if strategyPendingShort
+            strategy.cancel("S")
+        f_strategyDebugLabel("CXL AGE", strategyPendingLong ? high : low, not strategyPendingLong)
+        strategyPendingStateResetNeeded := true
+    else if strategyPendingNewAlert
+        strategyPendingCanceledCount += 1
+        strategyCanceledByNewAlertCount += 1
+        strategyLastBlockReason := "Canceled By New Alert"
+        if strategyPendingLong
+            strategy.cancel("L")
+        else if strategyPendingShort
+            strategy.cancel("S")
+        f_strategyDebugLabel("CXL NEW ALERT", strategyPendingLong ? high : low, not strategyPendingLong)
+        strategyPendingStateResetNeeded := true
+
+if strategyPendingStateResetNeeded
+    strategyPendingEntry := false
+    strategyStoredDirection := 0
+    strategyStoredSignalBar := na
+    strategyStoredEntry := na
+    strategyStoredInitialStop := na
+    strategyStoredInitialTarget := na
+    strategyStoredFinalTarget := na
+    strategyStoredTargetType := "N/A"
+    strategyStoredTargetRR := na
+    strategyStoredContracts := na
+    strategyStoredOneR := na
+    strategyStoredOnePointFiveR := na
+    strategyStoredTwoR := na
+    strategyStoredMeasuredMove := na
+    strategyStoredHodLodManagement := false
+    strategyStoredLimitEntry := false
+    strategyEntryOrderSubmitted := false
+    strategyStoredEntryTouched := false
+    strategyStoredFillBar := na
+    strategyStoredFillPrice := na
+    strategyCurrentActiveStop := na
+    strategyCurrentStopMode := "N/A"
+    strategyStoredOneRQty := 0
+    strategyStoredTwoRQty := 0
+    strategyStoredFinalQty := 0
+    strategyOneRTouched := false
+    strategyTwoRTouched := false
+
+bool strategyActiveForBlocking = strategy.position_size != 0
+bool strategyHasPendingOrActiveTrade = strategyPendingEntry or strategy.position_size != 0 or strategyStoredDirection != 0
+bool strategyCanStoreSignal = enableStrategyBacktest and newEffectiveScalpAlert and not strategyHasPendingOrActiveTrade and strategySignalValuesReady
+
+if newEffectiveScalpAlert
+    strategyEffectiveAlertCount += 1
+    strategyLongAlertCount += effectiveBullScalpAlert ? 1 : 0
+    strategyShortAlertCount += effectiveBearScalpAlert ? 1 : 0
+    strategyLastSignalDirection := strategySignalDirection == 1 ? "L" : strategySignalDirection == -1 ? "S" : "N/A"
+    strategyLastEntry := alertEntryPrice
+    strategyLastStop := alertStopPrice
+    strategyLastTarget := alertTargetPrice
+    strategyLastTargetType := strategySignalTargetType
+    strategyLastContracts := strategySignalContracts
+
+    bool strategyBadValuesOnAlert = enableStrategyBacktest and not strategySignalValuesReady
+    bool strategyBlockedByExistingTrade = enableStrategyBacktest and strategyHasPendingOrActiveTrade
+    float strategySignalDebugPrice = strategySignalDirection == 1 ? low : strategySignalDirection == -1 ? high : close
+    bool strategySignalDebugIsLong = strategySignalDirection != -1
+
+    if strategyBadValuesOnAlert
+        strategyBadValueBlockCount += 1
+        if not strategyBlockedByExistingTrade
+            strategyLastBlockReason := "Bad Values"
+        f_strategyDebugLabel("BAD VALUES", strategySignalDebugPrice, strategySignalDebugIsLong)
+
+    if strategyBlockedByExistingTrade
+        strategyExistingTradeBlockCount += 1
+        strategyLastBlockReason := "Existing Pending/Position"
+        f_strategyDebugLabel("BLOCKED ACTIVE/PENDING", strategySignalDebugPrice, strategySignalDebugIsLong)
+
+f_submitStrategyEntryOrder(bool _isLong) =>
+    bool submitted = false
+    int limitSubmitted = 0
+    int marketSubmitted = 0
+    int orderSubmitted = 0
+    if _isLong and not strategyEntryOrderSubmitted
+        f_strategyDebugLabel("STRAT SIG L", low, true)
+        if strategyEntryMode == "Limit At Alert Entry"
+            strategy.entry("L", strategy.long, qty=strategyStoredContracts, limit=strategyStoredEntry)
+            limitSubmitted += 1
+        else
+            strategy.entry("L", strategy.long, qty=strategyStoredContracts)
+            marketSubmitted += 1
+        submitted := true
+        orderSubmitted += 1
+        f_strategyDebugLabel("ENTRY ORDER L", strategyStoredEntry, true)
+    else if not _isLong and not strategyEntryOrderSubmitted
+        f_strategyDebugLabel("STRAT SIG S", high, false)
+        if strategyEntryMode == "Limit At Alert Entry"
+            strategy.entry("S", strategy.short, qty=strategyStoredContracts, limit=strategyStoredEntry)
+            limitSubmitted += 1
+        else
+            strategy.entry("S", strategy.short, qty=strategyStoredContracts)
+            marketSubmitted += 1
+        submitted := true
+        orderSubmitted += 1
+        f_strategyDebugLabel("ENTRY ORDER S", strategyStoredEntry, false)
+    [submitted, limitSubmitted, marketSubmitted, orderSubmitted]
+
+if strategyCanStoreSignal and strategySignalValuesReady
+    strategyStoredSignalCount += 1
+    strategyLastBlockReason := "None"
+    float strategyOneRDistance = strategySignalRiskPoints
+    bool strategySignalIsLong = strategySignalDirection == 1
+    bool strategySignalIsHodLod = strategyUseHodLodManagement and ((strategySignalIsLong and strategySignalTargetType == "HOD") or (not strategySignalIsLong and strategySignalTargetType == "LOD"))
+    float strategySignalOneR = strategySignalIsLong ? alertEntryPrice + strategyOneRDistance : alertEntryPrice - strategyOneRDistance
+    float strategySignalOnePointFiveR = strategySignalIsLong ? alertEntryPrice + strategyOneRDistance * 1.5 : alertEntryPrice - strategyOneRDistance * 1.5
+    float strategySignalTwoR = strategySignalIsLong ? alertEntryPrice + strategyOneRDistance * 2.0 : alertEntryPrice - strategyOneRDistance * 2.0
+    float strategySignalFinalTarget = strategySignalIsHodLod ? strategySignalOnePointFiveR : alertTargetPrice
+    float strategyFirstTrimPct = strategySignalIsHodLod ? strategyHodLodOneRTrimPct : strategyOneRTrimPct
+    int strategyFirstTrimQty = f_strategyTrimQty(strategySignalContracts, strategySignalContracts, strategyFirstTrimPct, 1)
+    int strategyAvailableAfterFirstTrim = strategySignalContracts - strategyFirstTrimQty
+    int strategySecondTrimQty = (not strategySignalIsHodLod and alertTargetRR >= 2.0) ? f_strategyTrimQty(strategySignalContracts, strategyAvailableAfterFirstTrim, strategySecondTrimPct, 1) : 0
+    int strategyFinalQty = strategySignalContracts - strategyFirstTrimQty - strategySecondTrimQty
+
+    strategyPendingEntry := true
+    strategyStoredDirection := strategySignalDirection
+    strategyStoredSignalBar := bar_index
+    strategyStoredEntry := alertEntryPrice
+    strategyStoredInitialStop := alertStopPrice
+    strategyStoredInitialTarget := alertTargetPrice
+    strategyStoredFinalTarget := strategySignalFinalTarget
+    strategyStoredTargetType := strategySignalTargetType
+    strategyStoredTargetRR := alertTargetRR
+    strategyStoredContracts := strategySignalContracts
+    strategyStoredOneR := strategySignalOneR
+    strategyStoredOnePointFiveR := strategySignalOnePointFiveR
+    strategyStoredTwoR := strategySignalTwoR
+    strategyStoredMeasuredMove := strategySignalIsLong ? high + (high - low) : low - (high - low)
+    strategyStoredHodLodManagement := strategySignalIsHodLod
+    strategyStoredLimitEntry := strategyEntryMode == "Limit At Alert Entry"
+    strategyEntryOrderSubmitted := false
+    strategyStoredEntryTouched := false
+    strategyStoredFillBar := na
+    strategyStoredFillPrice := na
+    strategyCurrentActiveStop := na
+    strategyCurrentStopMode := "N/A"
+    strategyStoredOneRQty := strategyFirstTrimQty
+    strategyStoredTwoRQty := strategySecondTrimQty
+    strategyStoredFinalQty := math.max(strategyFinalQty, 1)
+    strategyOneRTouched := false
+    strategyTwoRTouched := false
+
+    [strategyEntrySubmittedNow, strategyLimitEntriesSubmittedNow, strategyMarketEntriesSubmittedNow, strategyEntryOrdersSubmittedNow] = f_submitStrategyEntryOrder(strategySignalIsLong)
+    strategyEntryOrderSubmitted := strategyEntryOrderSubmitted or strategyEntrySubmittedNow
+    strategyLimitEntriesSubmittedCount += strategyLimitEntriesSubmittedNow
+    strategyMarketEntriesSubmittedCount += strategyMarketEntriesSubmittedNow
+    strategyEntryOrdersSubmittedCount += strategyEntryOrdersSubmittedNow
+
+bool strategyEntryFilledNow = strategy.position_size != 0 and nz(strategy.position_size[1]) == 0
+if strategyEntryFilledNow
+    if strategyStoredLimitEntry and not strategyStoredEntryTouched
+        strategyPendingEntryTouchedCount += 1
+        f_strategyDebugLabel(strategyStoredDirection == 1 ? "ENTRY TOUCH L" : "ENTRY TOUCH S", strategyStoredEntry, strategyStoredDirection == 1)
+    strategyFilledTradesDetectedCount += 1
+    strategyBrokerFillConfirmedCount += 1
+    strategyStoredFillBar := bar_index
+    strategyStoredFillPrice := strategy.position_avg_price
+    strategyPendingEntry := false
+    strategyStoredEntryTouched := true
+    f_strategyDebugLabel(strategyStoredDirection == 1 ? "BROKER FILL L" : "BROKER FILL S", strategy.position_avg_price, strategyStoredDirection == 1)
+
+f_updateStrategyOpenPositionManagement() =>
+    bool nextStrategyOneRTouched = strategyOneRTouched
+    bool nextStrategyTwoRTouched = strategyTwoRTouched
+    float nextStrategyCurrentActiveStop = strategyCurrentActiveStop
+    string nextStrategyCurrentStopMode = strategyCurrentStopMode
+    if enableStrategyBacktest and strategy.position_size != 0 and strategyStoredDirection != 0
+        bool strategyActiveLong = strategyStoredDirection == 1
+        bool strategyActiveShort = strategyStoredDirection == -1
+        bool strategyAfterFillBar = not na(strategyStoredFillBar) and bar_index > strategyStoredFillBar
+        bool strategyOneRTouchedNow = strategyAfterFillBar and not nextStrategyOneRTouched and not na(strategyStoredOneR) and (strategyActiveLong ? high >= strategyStoredOneR : strategyActiveShort ? low <= strategyStoredOneR : false)
+        if strategyOneRTouchedNow
+            nextStrategyOneRTouched := true
+            f_strategyDebugLabel("1R\nBE " + (strategyMoveStopToBreakevenAfter1R or strategyStoredHodLodManagement ? "ON" : "OFF"), strategyStoredOneR, strategyActiveLong)
+
+        bool strategyTwoRManagementAllowed = not strategyStoredHodLodManagement and not na(strategyStoredTargetRR) and strategyStoredTargetRR >= 2.0
+        bool strategyTwoRTouchedNow = strategyAfterFillBar and strategyTwoRManagementAllowed and not nextStrategyTwoRTouched and not na(strategyStoredTwoR) and (strategyActiveLong ? high >= strategyStoredTwoR : strategyActiveShort ? low <= strategyStoredTwoR : false)
+        if strategyTwoRTouchedNow
+            nextStrategyTwoRTouched := true
+            f_strategyDebugLabel("2R", strategyStoredTwoR, strategyActiveLong)
+
+        bool strategyBreakevenStopActive = strategyAfterFillBar and nextStrategyOneRTouched and (strategyMoveStopToBreakevenAfter1R or strategyStoredHodLodManagement)
+        float strategyBreakevenPrice = not na(strategyStoredFillPrice) ? strategyStoredFillPrice : strategyStoredEntry
+        float strategyActiveStop = strategyBreakevenStopActive ? strategyBreakevenPrice : strategyStoredInitialStop
+        nextStrategyCurrentActiveStop := strategyActiveStop
+        nextStrategyCurrentStopMode := strategyBreakevenStopActive ? "BE" : "INITIAL"
+        float strategyOpenQtyAbs = math.abs(strategy.position_size)
+        bool strategyOneRQtyStillOpen = strategyStoredOneRQty > 0 and strategyOpenQtyAbs > strategyStoredContracts - strategyStoredOneRQty
+        bool strategyTwoRQtyStillOpen = strategyStoredTwoRQty > 0 and strategyOpenQtyAbs > strategyStoredContracts - strategyStoredOneRQty - strategyStoredTwoRQty
+
+        // Stop protection is attached to each bracketed exit. A separate full-size
+        // L-STP/S-STP strategy.exit() would reserve quantity away from partial exits.
+        if strategyActiveLong
+            if strategyOneRQtyStillOpen
+                strategy.exit("L-1R", from_entry="L", qty=strategyStoredOneRQty, limit=strategyStoredOneR, stop=strategyActiveStop)
+            if strategyTwoRManagementAllowed and strategyTwoRQtyStillOpen
+                strategy.exit("L-2R", from_entry="L", qty=strategyStoredTwoRQty, limit=strategyStoredTwoR, stop=strategyActiveStop)
+            strategy.exit("L-FINAL", from_entry="L", qty=strategyStoredFinalQty, limit=strategyStoredFinalTarget, stop=strategyActiveStop)
+        else if strategyActiveShort
+            if strategyOneRQtyStillOpen
+                strategy.exit("S-1R", from_entry="S", qty=strategyStoredOneRQty, limit=strategyStoredOneR, stop=strategyActiveStop)
+            if strategyTwoRManagementAllowed and strategyTwoRQtyStillOpen
+                strategy.exit("S-2R", from_entry="S", qty=strategyStoredTwoRQty, limit=strategyStoredTwoR, stop=strategyActiveStop)
+            strategy.exit("S-FINAL", from_entry="S", qty=strategyStoredFinalQty, limit=strategyStoredFinalTarget, stop=strategyActiveStop)
+    [nextStrategyOneRTouched, nextStrategyTwoRTouched, nextStrategyCurrentActiveStop, nextStrategyCurrentStopMode]
+
+[nextStrategyOneRTouched, nextStrategyTwoRTouched, nextStrategyCurrentActiveStop, nextStrategyCurrentStopMode] = f_updateStrategyOpenPositionManagement()
+strategyOneRTouched := nextStrategyOneRTouched
+strategyTwoRTouched := nextStrategyTwoRTouched
+strategyCurrentActiveStop := nextStrategyCurrentActiveStop
+strategyCurrentStopMode := nextStrategyCurrentStopMode
+
+bool strategyTradeJustClosed = strategyStoredDirection != 0 and not strategyPendingEntry and strategy.position_size == 0 and nz(strategy.position_size[1]) != 0
+if strategyTradeJustClosed
+    strategyClosedTradesCount += 1
+    strategyStoredDirection := 0
+    strategyStoredSignalBar := na
+    strategyStoredEntry := na
+    strategyStoredInitialStop := na
+    strategyStoredInitialTarget := na
+    strategyStoredFinalTarget := na
+    strategyStoredTargetType := "N/A"
+    strategyStoredTargetRR := na
+    strategyStoredContracts := na
+    strategyStoredOneR := na
+    strategyStoredOnePointFiveR := na
+    strategyStoredTwoR := na
+    strategyStoredMeasuredMove := na
+    strategyStoredHodLodManagement := false
+    strategyStoredLimitEntry := false
+    strategyEntryOrderSubmitted := false
+    strategyStoredEntryTouched := false
+    strategyStoredFillBar := na
+    strategyStoredFillPrice := na
+    strategyCurrentActiveStop := na
+    strategyCurrentStopMode := "N/A"
+    strategyStoredOneRQty := 0
+    strategyStoredTwoRQty := 0
+    strategyStoredFinalQty := 0
+    strategyOneRTouched := false
+    strategyTwoRTouched := false
+
+// ===================== Strategy Debug Table =====================
 
 plot(showOpeningRange ? openingRangeDisplayHigh : na, "15m Opening Range High", color=openingRangeHighColor, linewidth=1, style=plot.style_linebr)
 plot(showOpeningRange ? openingRangeDisplayLow : na, "15m Opening Range Low", color=openingRangeLowColor, linewidth=1, style=plot.style_linebr)
