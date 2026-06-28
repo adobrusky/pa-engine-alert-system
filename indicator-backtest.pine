@@ -16,10 +16,6 @@ strategy(
      process_orders_on_close = true,
      calc_on_order_fills = true,
      backtest_fill_limits_assumption = 0,
-     max_bars_back = 500,
-     max_lines_count = 500,
-     max_labels_count = 500,
-     max_boxes_count = 200,
      dynamic_requests = true
 )
 
@@ -56,7 +52,7 @@ blockNineEmaSetupWhenTooFarFromEma = input.bool(true, title="Block 9 EMA Setup W
 nineEmaMaxDistanceBarRangeMultiplier = input.float(0.50, title="9 EMA Max Distance As Bar Range", minval=0.0, maxval=2.0, step=0.05, group=groupSetupFilters, tooltip="Maximum allowed distance between the signal bar and the rounded 9 EMA for 9 EMA Momentum Setups, expressed as a multiple of the signal bar's range. Default 0.50 means the signal bar must be within half of its own range from the EMA.")
 nineEmaPriorLaunchMaxDistanceBarRangeMultiplier = input.float(1.00, title="9 EMA Prior Launch Max Distance As Bar Range", minval=0.0, maxval=2.0, step=0.05, group=groupSetupFilters, tooltip="For 9 EMA two-bar impulse setups, maximum allowed distance between the prior launch bar and its own rounded 9 EMA, expressed as a multiple of the prior bar's range. Default 1.00 means the prior strong launch bar can be within one full prior-bar range of the EMA.")
 nineEmaLowVolumePullbackMaxDistanceBarRangeMultiplier = input.float(0.5, title="9 EMA Low-Volume Pullback Max Distance As Bar Range", minval=0.0, maxval=2.0, step=0.05, group=groupSetupFilters, tooltip="Maximum allowed distance between the low-volume pullback signal bar and the rounded 9 EMA, expressed as a multiple of the signal bar's range. Default 1.00.")
-skipFiveSameColorBarExtension = input.bool(false, title="Skip 5 Same-Color Bar Extension", group=groupSetupFilters, tooltip="Blocks long signals when the signal bar is the 5th consecutive bull bar or later, and blocks short signals when the signal bar is the 5th consecutive bear bar or later.")
+skipFiveSameColorBarExtension = input.bool(true, title="Skip 5 Same-Color Bar Extension", group=groupSetupFilters, tooltip="Blocks long signals when the signal bar is the 5th consecutive bull bar or later, and blocks short signals when the signal bar is the 5th consecutive bear bar or later.")
 skipFiveBarExtension     = input.bool(false, title="Skip 5+ No-Pullback Extension - Legacy", group=groupSetupFilters)
 skipStrongMicrochannelExtension = input.bool(false, title="Skip Two Prior Strong-Close Extension", group=groupSetupFilters, tooltip="Blocks long signals after two prior strong bullish closes and blocks short signals after two prior strong bearish closes. This treats back-to-back strong closes as extension even if the sequence is not a strict microchannel.")
 skipExtremeTargetMicrochannel = input.bool(true, title="Skip Extreme Target Microchannel", group=groupSetupFilters, tooltip="Blocks HOD/LOD or 5m swing equal HOD/LOD targets when price has moved in a 6+ bar no-pullback microchannel.")
@@ -83,7 +79,7 @@ useEntryPriceOverlapFilter = input.bool(
      tooltip="When enabled, blocks scalp alerts when the planned entry price is inside or exactly touching the candle bodies of both prior bars."
 )
 htfPriorCloseMeaningfulBreakPct = input.float(0.20, title="HTF Prior Close Meaningful Break %", minval=0.0, maxval=1.0, step=0.05, group=groupSetupFilters, tooltip="Prior-close acceptance for PD/PW support/resistance only fails if the prior close meaningfully penetrated beyond the prior bar's level value by at least this percentage of the prior bar range. Default 20%.")
-useDailyOpenAsCloseBeyondBlocker = input.bool(false, title="Use Daily Open As Close-Beyond Blocker", group=groupSetupFilters, tooltip="When disabled, touching the daily open will not cause a scalp setup to fail the all-touched-levels close-beyond check. Daily open can still be plotted, used as confluence, filtered by daily-open acceptance, and used as a target.")
+useDailyOpenAsCloseBeyondBlocker = input.bool(true, title="Use Daily Open As Close-Beyond Blocker", group=groupSetupFilters, tooltip="When disabled, touching the daily open will not cause a scalp setup to fail the all-touched-levels close-beyond check. Daily open can still be plotted, used as confluence, filtered by daily-open acceptance, and used as a target.")
 minLevelEntryRetracement = input.float(0.20, title="Minimum Level Entry Retracement", minval=0.0, maxval=0.5, step=0.05, group=groupSetupFilters)
 requireDailyOpenRangeAcceptance = input.bool(false, title="Require Daily Open Range Acceptance", group=groupSetupFilters, tooltip="When enabled, signals touching the daily open must have enough of both the signal-bar range and candle body accepted beyond the daily open in the trade direction.")
 dailyOpenRangeAcceptancePct = input.float(0.50, title="Daily Open Range/Body Acceptance %", minval=0.0, maxval=1.0, step=0.05, group=groupSetupFilters, tooltip="Minimum percentage of both the full signal-bar range and candle body that must be beyond the daily open in the trade direction when the signal bar touches the daily open.")
@@ -1900,7 +1896,7 @@ f_updateFiveMinuteSwingTracking() =>
 
 
 // ===================== 1H Swing Blocker Tracking =====================
-[oneHourPivotHigh, oneHourPivotLow, oneHourPivotTime, oneHourPivotDateKey, oneHourPivotSessionCode] = request.security(syminfo.tickerid, "60", f_oneHourSwingData(), lookahead=barmerge.lookahead_off, calc_bars_count=500)
+[oneHourPivotHigh, oneHourPivotLow, oneHourPivotTime, oneHourPivotDateKey, oneHourPivotSessionCode] = request.security(syminfo.tickerid, "60", f_oneHourSwingData(), lookahead=barmerge.lookahead_off)
 
 f_updateOneHourSwingTracking() =>
     if newPremarketSession or newScalpRTHSession
@@ -4157,25 +4153,7 @@ f_renderScalpStatusTable(table _table) =>
         scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "OR Bias", openingRangeBiasText, statusNeutralColor)
         scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "OR Last 2C Break", openingRangeLastTwoCloseBreakoutText, statusNeutralColor)
         scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "Converted Source", convertedLevelSourceSymbol, statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "Source Close", f_validSourcePrice(sourceCloseForConversion) ? "Valid" : "N/A", f_validSourcePrice(sourceCloseForConversion) ? color.lime : color.orange)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "Current Ratio", f_decimalText(currentConversionRatio), statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "Source Daily Date", f_intText(sourceDailyDateKey), statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "NY Date", f_intText(nySessionDateKey), statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "Conv Cache", convertedSourceCacheCurrent ? "Current" : "Waiting", convertedSourceCacheCurrent ? color.lime : color.orange)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "Conv Cache Date", na(convertedSourceCacheSessionDateKey) ? "N/A" : str.tostring(convertedSourceCacheSessionDateKey), statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "Trade Levels", convertedSourceDailyTradeLevelsReady ? "Ready" : "Waiting", convertedSourceDailyTradeLevelsReady ? color.lime : color.orange)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "HTF Logic", convertedHtfTradeLogicReady ? "Ready" : "Waiting", convertedHtfTradeLogicReady ? color.lime : color.orange)
         scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "Frozen Conv", frozenHtfConversionActive ? "Active" : "Waiting", frozenHtfConversionActive ? color.lime : color.orange)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "Frozen Ratio", f_decimalText(frozenHtfConversionRatio), statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "Conv PWH", f_priceText(convertedTradePrevWeekHigh), statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "Conv PWL", f_priceText(convertedTradePrevWeekLow), statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "Conv PDH", f_priceText(convertedTradePrevDayHigh), statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "Conv PDL", f_priceText(convertedTradePrevDayLow), statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "Trade Array", f_intText(array.size(swingLevelPrices)), statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "PWH/PWL Added", (convertedTradePrevWeekHighInserted ? "Y" : "N") + "/" + (convertedTradePrevWeekLowInserted ? "Y" : "N"), convertedTradePrevWeekHighInserted and convertedTradePrevWeekLowInserted ? color.lime : color.orange)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "PDH/PDL Added", (convertedTradePrevDayHighInserted ? "Y" : "N") + "/" + (convertedTradePrevDayLowInserted ? "Y" : "N"), convertedTradePrevDayHighInserted and convertedTradePrevDayLowInserted ? color.lime : color.orange)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "Gap Count", f_intText(sourceDailyGapCount), statusNeutralColor)
-        scalpStatusRow := f_addScalpStatusRow(_table, scalpStatusRow, "Gap Cache", dailyGapUsingCurrentSessionCache ? "Current" : "Waiting", dailyGapUsingCurrentSessionCache ? color.lime : color.orange)
 
 var table scalpStatusTable = table.new(position.bottom_right, 2, 100, bgcolor=color.new(color.black, 85), border_width=0)
 if barstate.islast
