@@ -107,7 +107,7 @@ useConvertedHtfLevelsForTradeLogic = input.bool(true, title="Use Converted HTF L
 convertedLevelsSourceMode        = input.string("Auto From Ticker", title="Converted Levels Source Mode", options=["Auto From Ticker", "Manual Source"], group=groupScalpLevels)
 manualConvertedLevelsSourceSymbol = input.string("AMEX:SPY", title="Manual Converted Levels Source Symbol", group=groupScalpLevels)
 includeDailyGapsInConvertedLevels = input.bool(true, title="Include Daily Gaps In Converted Levels", group=groupScalpLevels)
-useDailyGapEndsAsTradeObstacles = input.bool(false, title="Use Daily Gap Ends As Trade Obstacles", group=groupScalpLevels, tooltip="When enabled, unfilled daily gap ends are used as close-acceptance blockers when touched and as target candidates when ahead of the signal bar. They are not used as entry levels.")
+useDailyGapEndsAsTradeObstacles = input.bool(true, title="Use Daily Gap Ends As Trade Obstacles", group=groupScalpLevels, tooltip="When enabled, unfilled daily gap ends are used as close-acceptance blockers when touched and as target candidates when ahead of the signal bar. They are not used as entry levels.")
 dailyGapLookback                 = input.int(200, title="Daily Gap Lookback", minval=10, maxval=500, group=groupScalpLevels, tooltip="Number of SPY/QQQ regular-session daily bars to scan for unfilled daily gaps.")
 
 // 04. Opening Range

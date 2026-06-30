@@ -1,0 +1,1114 @@
+//@version=6
+strategy(
+     title = "OR Displacement + Failed Breakout Strategy",
+     shorttitle = "OR Displace/FBO",
+     overlay = true,
+     pyramiding = 0,
+     initial_capital = 1000000,
+     currency = currency.USD,
+     margin_long = 1,
+     margin_short = 1,
+     default_qty_type = strategy.fixed,
+     default_qty_value = 1,
+     commission_type = strategy.commission.cash_per_contract,
+     commission_value = 0.62,
+     slippage = 1,
+     process_orders_on_close = true,
+     calc_on_order_fills = true,
+     backtest_fill_limits_assumption = 0
+)
+
+// ===================== User Inputs =====================
+
+groupCore = "01. Core Controls"
+groupSession = "02. Session / Opening Range"
+groupTrendSetup = "03. OR Displacement Continuation"
+groupFailedBreakout = "04. OR Failed Breakout"
+groupRisk = "05. Risk / Position Sizing"
+groupManagement = "06. Trade Management"
+groupDisplay = "07. Display / Debug"
+
+// 01. Core Controls
+enableStrategyBacktest        = input.bool(true, "Enable Strategy Backtest", group=groupCore)
+tickerInput                   = input.string("MES", "Ticker", options=["ES", "NQ", "MES", "MNQ"], group=groupCore)
+enableLongs                   = input.bool(true, "Enable Longs", group=groupCore)
+enableShorts                  = input.bool(true, "Enable Shorts", group=groupCore)
+enableTrendContinuationSetup  = input.bool(true, "Enable Trend Continuation Setup", group=groupCore)
+enableFailedBreakoutSetup     = input.bool(true, "Enable Failed Breakout Setup", group=groupCore)
+oneTradePerDay                = input.bool(true, "One Trade Per Day", group=groupCore)
+maxTradesPerDay               = input.int(1, "Max Trades Per Day", minval=1, maxval=5, group=groupCore)
+setupPriorityMode             = input.string("Continuation First", "Setup Priority Mode", options=["Continuation First", "Failed Breakout First", "First Signal Wins"], group=groupCore)
+
+// 02. Session / Opening Range
+rthSession                    = input.session("0930-1600", "RTH Session", group=groupSession)
+openingRangeSession           = input.session("0930-0945", "Opening Range Session", group=groupSession)
+tradeWindow                   = input.session("0946-1115", "Trade Window", group=groupSession)
+forceFlatSession              = input.session("1125-1130", "Force Flat Session", group=groupSession)
+showOpeningRange              = input.bool(true, "Show Opening Range", group=groupSession)
+
+// 03. OR Displacement Continuation
+trendDisplacementAtrMult      = input.float(0.10, "Displacement ATR Mult", minval=0.0, step=0.05, group=groupTrendSetup)
+trendMinBodyPct               = input.float(0.50, "Min Body %", minval=0.1, maxval=1.0, step=0.05, group=groupTrendSetup)
+trendCloseZonePct             = input.float(0.25, "Close Zone %", minval=0.05, maxval=0.50, step=0.05, group=groupTrendSetup)
+trendMinRangeAtrMult          = input.float(0.75, "Min Range ATR Mult", minval=0.1, step=0.05, group=groupTrendSetup)
+trendMaxPullbackBars          = input.int(8, "Max Pullback Bars", minval=2, maxval=20, group=groupTrendSetup)
+trendEntryOrderValidBars      = input.int(3, "Entry Order Valid Bars", minval=1, maxval=10, group=groupTrendSetup)
+pullbackOrAtrBuffer           = input.float(0.25, "OR Pullback ATR Buffer", minval=0.0, step=0.05, group=groupTrendSetup)
+pullbackEmaAtrBuffer          = input.float(0.10, "EMA/VWAP Pullback ATR Buffer", minval=0.0, step=0.05, group=groupTrendSetup)
+trendUseVWAPFilter            = input.bool(true, "Use VWAP Filter", group=groupTrendSetup)
+trendUseEMAFilter             = input.bool(true, "Use EMA Filter", group=groupTrendSetup)
+trendUseVolumeFilter          = input.bool(false, "Use Volume Filter", group=groupTrendSetup)
+trendVolumeSmaLength          = input.int(50, "Volume SMA Length", minval=10, maxval=200, group=groupTrendSetup)
+trendVolumeMult               = input.float(1.0, "Volume Mult", minval=0.1, step=0.1, group=groupTrendSetup)
+
+// 04. OR Failed Breakout
+fboBreakAtrMult               = input.float(0.05, "Break ATR Mult", minval=0.0, step=0.05, group=groupFailedBreakout)
+fboReclaimBars                = input.int(3, "Reclaim Bars", minval=1, maxval=10, group=groupFailedBreakout)
+fboMaxWaitBarsAfterSweep      = input.int(6, "Max Wait Bars After Sweep", minval=1, maxval=20, group=groupFailedBreakout)
+fboRequireVWAPMeanReversionContext = input.bool(true, "Require VWAP Mean Reversion Context", group=groupFailedBreakout)
+fboVwapSlopeLookback          = input.int(5, "VWAP Slope Lookback", minval=1, maxval=20, group=groupFailedBreakout)
+fboMaxVwapSlopeAtrMult        = input.float(0.10, "Max VWAP Slope ATR Mult", minval=0.0, step=0.05, group=groupFailedBreakout)
+fboMinReclaimBodyPct          = input.float(0.35, "Min Reclaim Body %", minval=0.1, maxval=1.0, step=0.05, group=groupFailedBreakout)
+fboCloseZonePct               = input.float(0.34, "Reclaim Close Zone %", minval=0.05, maxval=0.50, step=0.01, group=groupFailedBreakout)
+fboEntryOrderValidBars        = input.int(3, "Entry Order Valid Bars", minval=1, maxval=10, group=groupFailedBreakout)
+
+// 05. Risk / Position Sizing
+maxRiskDollars                = input.float(200.0, "Max Risk Dollars", minval=0.0, step=10.0, group=groupRisk)
+useMaxContractCap             = input.bool(true, "Use Max Contract Cap", group=groupRisk)
+maxContracts                  = input.int(20, "Max Contracts", minval=1, group=groupRisk)
+minStopPointsES               = input.float(1.50, "Min Stop Points ES/MES", step=0.25, group=groupRisk)
+maxStopPointsES               = input.float(8.00, "Max Stop Points ES/MES", step=0.25, group=groupRisk)
+minStopPointsNQ               = input.float(6.00, "Min Stop Points NQ/MNQ", step=0.25, group=groupRisk)
+maxStopPointsNQ               = input.float(35.00, "Max Stop Points NQ/MNQ", step=0.25, group=groupRisk)
+
+// 06. Trade Management
+trendTargetR                  = input.float(3.0, "Trend Target R", minval=1.0, step=0.25, group=groupManagement)
+trendTrimAtOneR               = input.bool(true, "Trend Trim At 1R", group=groupManagement)
+trendOneRTrimPct              = input.float(0.50, "Trend 1R Trim %", minval=0.25, maxval=0.75, step=0.05, group=groupManagement)
+trendMoveStopToBEAfterOneR    = input.bool(true, "Trend Move Stop To BE After 1R", group=groupManagement)
+trendUseEmaAtrRunnerTrail     = input.bool(true, "Trend Use EMA ATR Runner Trail", group=groupManagement)
+trendRunnerTrailAtrBuffer     = input.float(0.25, "Trend Runner Trail ATR Buffer", minval=0.0, step=0.05, group=groupManagement)
+fboTargetMode                 = input.string("Nearest Of VWAP Or OR Mid", "FBO Target Mode", options=["VWAP", "OR Mid", "Fixed R", "Nearest Of VWAP Or OR Mid"], group=groupManagement)
+fboFixedTargetR               = input.float(1.5, "FBO Fixed Target R", minval=0.5, step=0.25, group=groupManagement)
+fboMoveStopToBEAfterOneR      = input.bool(true, "FBO Move Stop To BE After 1R", group=groupManagement)
+exitOnOppositeSetup           = input.bool(false, "Exit On Opposite Setup", group=groupManagement)
+strategyDebugLabels           = input.bool(true, "Strategy Debug Labels", group=groupManagement)
+strategyShowDebugTable        = input.bool(true, "Strategy Show Debug Table", group=groupManagement)
+
+// 07. Display / Debug
+showTrendSetupLabels          = input.bool(true, "Show Trend Setup Labels", group=groupDisplay)
+showFboSetupLabels            = input.bool(true, "Show FBO Setup Labels", group=groupDisplay)
+showOrderLabels               = input.bool(true, "Show Order Labels", group=groupDisplay)
+showDebugTable                = input.bool(true, "Show Debug Table", group=groupDisplay)
+
+// ===================== Constants =====================
+
+string TZ = "America/New_York"
+
+int STATE_IDLE = 0
+int STATE_WAIT_TREND_LONG_PULLBACK = 1
+int STATE_WAIT_TREND_SHORT_PULLBACK = 2
+int STATE_WAIT_TREND_LONG_TRIGGER = 3
+int STATE_WAIT_TREND_SHORT_TRIGGER = 4
+int STATE_TREND_LONG_PENDING = 5
+int STATE_TREND_SHORT_PENDING = 6
+int STATE_WAIT_FBO_LONG_RECLAIM = 7
+int STATE_WAIT_FBO_SHORT_RECLAIM = 8
+int STATE_FBO_LONG_PENDING = 9
+int STATE_FBO_SHORT_PENDING = 10
+int STATE_IN_TRADE = 11
+
+string SETUP_NONE = "N/A"
+string SETUP_TREND_LONG = "TrendLong"
+string SETUP_TREND_SHORT = "TrendShort"
+string SETUP_FBO_LONG = "FboLong"
+string SETUP_FBO_SHORT = "FboShort"
+
+color trendLongColor = color.rgb(40, 190, 105)
+color trendShortColor = color.rgb(235, 95, 95)
+color fboLongColor = color.rgb(40, 150, 235)
+color fboShortColor = color.rgb(245, 165, 45)
+color neutralLabelColor = color.rgb(90, 90, 90)
+
+// ===================== Helper Functions =====================
+
+f_isInSession(string _sessionString) =>
+    not na(time(timeframe.period, _sessionString, TZ))
+
+f_dateKey() =>
+    year(time, TZ) * 10000 + month(time, TZ) * 100 + dayofmonth(time, TZ)
+
+f_tickSize() =>
+    syminfo.mintick > 0 ? syminfo.mintick : 0.25
+
+f_roundToTick(float _price) =>
+    na(_price) ? na : math.round(_price / f_tickSize()) * f_tickSize()
+
+f_roundUpToTick(float _price) =>
+    na(_price) ? na : math.ceil(_price / f_tickSize()) * f_tickSize()
+
+f_roundDownToTick(float _price) =>
+    na(_price) ? na : math.floor(_price / f_tickSize()) * f_tickSize()
+
+f_priceText(float _price) =>
+    na(_price) ? "N/A" : str.tostring(_price, format.mintick)
+
+f_rrText(float _rr) =>
+    na(_rr) ? "N/A" : str.tostring(_rr, "#.00") + "R"
+
+f_qtyText(int _qty) =>
+    na(_qty) ? "N/A" : str.tostring(_qty)
+
+f_bodyPct() =>
+    float currentRange = high - low
+    currentRange > 0 ? math.abs(close - open) / currentRange : 0.0
+
+f_closeStrengthLong() =>
+    float currentRange = high - low
+    currentRange > 0 ? (close - low) / currentRange : na
+
+f_closeStrengthShort() =>
+    float currentRange = high - low
+    currentRange > 0 ? (high - close) / currentRange : na
+
+f_isBullBar() =>
+    close > open
+
+f_isBearBar() =>
+    close < open
+
+f_contractPointValue() =>
+    tickerInput == "ES" ? 50.0 :
+     tickerInput == "MES" ? 5.0 :
+     tickerInput == "NQ" ? 20.0 :
+     2.0
+
+f_stopPointsValid(float _stopPoints) =>
+    bool esFamily = tickerInput == "ES" or tickerInput == "MES"
+    float minStop = esFamily ? minStopPointsES : minStopPointsNQ
+    float maxStop = esFamily ? maxStopPointsES : maxStopPointsNQ
+    not na(_stopPoints) and _stopPoints >= minStop and _stopPoints <= maxStop
+
+f_contractQty(float _riskDollars, float _stopPoints) =>
+    int qty = 0
+    float riskPerContract = _stopPoints * f_contractPointValue()
+    if not na(_riskDollars) and not na(riskPerContract) and _riskDollars > 0 and riskPerContract > 0
+        qty := int(math.floor(_riskDollars / riskPerContract))
+        qty := useMaxContractCap ? math.min(qty, maxContracts) : qty
+    qty
+
+f_debugLabel(string _text, float _price, bool _isLong) =>
+    if strategyDebugLabels and not na(_price)
+        label.new(
+             bar_index,
+             _price,
+             _text,
+             style=_isLong ? label.style_label_up : label.style_label_down,
+             textcolor=color.white,
+             color=color.new(neutralLabelColor, 0),
+             size=size.tiny
+        )
+
+f_cancelAllOrders(string _reason) =>
+    strategy.cancel("TrendL")
+    strategy.cancel("TrendS")
+    strategy.cancel("FboL")
+    strategy.cancel("FboS")
+    strategy.cancel("TrendL_T1")
+    strategy.cancel("TrendL_RUN")
+    strategy.cancel("TrendS_T1")
+    strategy.cancel("TrendS_RUN")
+    strategy.cancel("FboL_EXIT")
+    strategy.cancel("FboS_EXIT")
+    if showOrderLabels
+        f_debugLabel("CXL\n" + _reason, close, close >= open)
+    _reason
+
+f_resetDailyState() =>
+    STATE_IDLE
+
+f_hasPendingState(int _state) =>
+    _state == STATE_TREND_LONG_PENDING or
+     _state == STATE_TREND_SHORT_PENDING or
+     _state == STATE_FBO_LONG_PENDING or
+     _state == STATE_FBO_SHORT_PENDING
+
+f_tradeCountPermits(int _tradeCountToday) =>
+    oneTradePerDay ? _tradeCountToday < 1 : _tradeCountToday < maxTradesPerDay
+
+f_stateName(int _state) =>
+    switch _state
+        STATE_IDLE => "Idle"
+        STATE_WAIT_TREND_LONG_PULLBACK => "Wait Trend L PB"
+        STATE_WAIT_TREND_SHORT_PULLBACK => "Wait Trend S PB"
+        STATE_WAIT_TREND_LONG_TRIGGER => "Wait Trend L Trigger"
+        STATE_WAIT_TREND_SHORT_TRIGGER => "Wait Trend S Trigger"
+        STATE_TREND_LONG_PENDING => "Trend L Pending"
+        STATE_TREND_SHORT_PENDING => "Trend S Pending"
+        STATE_WAIT_FBO_LONG_RECLAIM => "Wait FBO L Reclaim"
+        STATE_WAIT_FBO_SHORT_RECLAIM => "Wait FBO S Reclaim"
+        STATE_FBO_LONG_PENDING => "FBO L Pending"
+        STATE_FBO_SHORT_PENDING => "FBO S Pending"
+        STATE_IN_TRADE => "In Trade"
+        => "Unknown"
+
+f_setupDirection(string _setupType) =>
+    _setupType == SETUP_TREND_LONG or _setupType == SETUP_FBO_LONG ? "Long" :
+     _setupType == SETUP_TREND_SHORT or _setupType == SETUP_FBO_SHORT ? "Short" :
+     "N/A"
+
+f_entryIdForSetup(string _setupType) =>
+    _setupType == SETUP_TREND_LONG ? "TrendL" :
+     _setupType == SETUP_TREND_SHORT ? "TrendS" :
+     _setupType == SETUP_FBO_LONG ? "FboL" :
+     _setupType == SETUP_FBO_SHORT ? "FboS" :
+     ""
+
+f_targetRR(bool _isLong, float _entry, float _target, float _riskPoints) =>
+    not na(_entry) and not na(_target) and not na(_riskPoints) and _riskPoints > 0 ?
+     (_isLong ? (_target - _entry) / _riskPoints : (_entry - _target) / _riskPoints) :
+     na
+
+f_orderMessage(string _event, string _setup, string _direction, float _entry, float _stop, float _target, float _riskPoints, int _qty, float _rr) =>
+    _event + " | " + _setup + " " + _direction + " | " + tickerInput + "\n" +
+     "Entry " + f_priceText(_entry) + "\n" +
+     "Stop " + f_priceText(_stop) + "\n" +
+     "Target " + f_priceText(_target) + "\n" +
+     "Risk " + f_priceText(_riskPoints) + " pts\n" +
+     f_qtyText(_qty) + " contracts | " + f_rrText(_rr)
+
+f_trendTrimQty(int _baseQty) =>
+    int trimQty = 0
+    if trendTrimAtOneR and _baseQty > 1
+        trimQty := math.max(1, int(math.floor(_baseQty * trendOneRTrimPct)))
+        trimQty := math.min(trimQty, _baseQty - 1)
+    trimQty
+
+f_selectFboTarget(bool _isLong, float _entry, float _riskPoints, float _vwap, float _orMid) =>
+    float fixedTarget = _isLong ? _entry + _riskPoints * fboFixedTargetR : _entry - _riskPoints * fboFixedTargetR
+    bool vwapValid = not na(_vwap) and (_isLong ? _vwap > _entry : _vwap < _entry)
+    bool midValid = not na(_orMid) and (_isLong ? _orMid > _entry : _orMid < _entry)
+    float selectedTarget = fixedTarget
+    if fboTargetMode == "VWAP"
+        selectedTarget := vwapValid ? _vwap : fixedTarget
+    else if fboTargetMode == "OR Mid"
+        selectedTarget := midValid ? _orMid : fixedTarget
+    else if fboTargetMode == "Nearest Of VWAP Or OR Mid"
+        if vwapValid and midValid
+            selectedTarget := _isLong ? math.min(_vwap, _orMid) : math.max(_vwap, _orMid)
+        else if vwapValid
+            selectedTarget := _vwap
+        else if midValid
+            selectedTarget := _orMid
+        else
+            selectedTarget := fixedTarget
+    _isLong ? f_roundDownToTick(selectedTarget) : f_roundUpToTick(selectedTarget)
+
+f_boolText(bool _value) =>
+    _value ? "Yes" : "No"
+
+f_addDebugRow(table _table, int _row, string _label, string _value, color _valueColor) =>
+    table.cell(_table, 0, _row, _label, text_color=color.rgb(180, 180, 180), text_size=size.small, text_halign=text.align_left)
+    table.cell(_table, 1, _row, _value, text_color=_valueColor, text_size=size.small, text_halign=text.align_right)
+    _row + 1
+
+// ===================== Persistent State =====================
+
+var float orHigh = na
+var float orLow = na
+var float orOpen = na
+var bool openingRangeComplete = false
+
+var int setupState = STATE_IDLE
+var string activeSetupType = SETUP_NONE
+var int setupStartBar = na
+var bool pullbackSeen = false
+var float pullbackLow = na
+var float pullbackHigh = na
+var float sweepExtreme = na
+var int reclaimBarIndex = na
+var float triggerHigh = na
+var float triggerLow = na
+var float pendingEntry = na
+var float pendingStop = na
+var float pendingTarget1 = na
+var float pendingTarget2 = na
+var int pendingQty = na
+var int pendingDirection = 0
+var int pendingExpiryBar = na
+var float storedEntry = na
+var float storedInitialStop = na
+var float storedRiskPoints = na
+var float storedOneR = na
+var float storedTarget1 = na
+var float storedTarget2 = na
+var int storedTarget1Qty = 0
+var int storedRunnerQty = 0
+var int storedFillBar = na
+var float currentStop = na
+var bool oneRTouched = false
+var int tradeCountToday = 0
+var string lastExitReason = "N/A"
+var string lastCancelReason = "N/A"
+
+// ===================== Base Calculations =====================
+
+atrValue = ta.atr(14)
+ema9 = ta.ema(close, 9)
+ema21 = ta.ema(close, 21)
+sessionVWAP = ta.vwap(hlc3)
+volumeSMA = ta.sma(volume, trendVolumeSmaLength)
+barRange = high - low
+body = math.abs(close - open)
+bodyPct = f_bodyPct()
+closeStrengthLong = f_closeStrengthLong()
+closeStrengthShort = f_closeStrengthShort()
+tickSize = f_tickSize()
+
+inRTH = f_isInSession(rthSession)
+inOpeningRangeWindow = inRTH and f_isInSession(openingRangeSession)
+inTradeWindow = f_isInSession(tradeWindow)
+inForceFlatWindow = f_isInSession(forceFlatSession)
+dateKey = f_dateKey()
+priorDateKey = bar_index > 0 ? dateKey[1] : dateKey
+wasInRTH = bar_index > 0 ? inRTH[1] : false
+newRTHSession = inRTH and (not wasInRTH or dateKey != priorDateKey)
+
+orMid = not na(orHigh) and not na(orLow) ? (orHigh + orLow) / 2.0 : na
+orRange = not na(orHigh) and not na(orLow) ? orHigh - orLow : na
+openingRangeWindowElapsed = inRTH and not inOpeningRangeWindow and not na(orHigh) and not na(orLow)
+
+// ===================== Per-Bar Events =====================
+
+bool trendLongDisplacementEvent = false
+bool trendShortDisplacementEvent = false
+bool trendLongPullbackEvent = false
+bool trendShortPullbackEvent = false
+bool trendLongEntryOrderEvent = false
+bool trendShortEntryOrderEvent = false
+bool fboHighSweepEvent = false
+bool fboLowSweepEvent = false
+bool fboShortReclaimEvent = false
+bool fboLongReclaimEvent = false
+bool fboShortEntryOrderEvent = false
+bool fboLongEntryOrderEvent = false
+bool pendingOrderCanceledEvent = false
+bool stopMovedToBEEvent = false
+bool momentumFailureExitEvent = false
+bool forceFlatExitEvent = false
+bool oppositeSetupExitEvent = false
+
+// ===================== Daily / OR Session Reset =====================
+
+if newRTHSession
+    if f_hasPendingState(setupState)
+        lastCancelReason := f_cancelAllOrders("New RTH")
+        pendingOrderCanceledEvent := true
+    orHigh := na
+    orLow := na
+    orOpen := open
+    openingRangeComplete := false
+    setupState := f_resetDailyState()
+    activeSetupType := SETUP_NONE
+    setupStartBar := na
+    pullbackSeen := false
+    pullbackLow := na
+    pullbackHigh := na
+    sweepExtreme := na
+    reclaimBarIndex := na
+    triggerHigh := na
+    triggerLow := na
+    pendingEntry := na
+    pendingStop := na
+    pendingTarget1 := na
+    pendingTarget2 := na
+    pendingQty := na
+    pendingDirection := 0
+    pendingExpiryBar := na
+    storedEntry := na
+    storedInitialStop := na
+    storedRiskPoints := na
+    storedOneR := na
+    storedTarget1 := na
+    storedTarget2 := na
+    storedTarget1Qty := 0
+    storedRunnerQty := 0
+    storedFillBar := na
+    currentStop := na
+    oneRTouched := false
+    tradeCountToday := 0
+    lastExitReason := "N/A"
+    lastCancelReason := "N/A"
+
+if inOpeningRangeWindow
+    orOpen := na(orOpen) ? open : orOpen
+    orHigh := na(orHigh) ? high : math.max(orHigh, high)
+    orLow := na(orLow) ? low : math.min(orLow, low)
+
+if openingRangeWindowElapsed and not openingRangeComplete
+    openingRangeComplete := true
+
+// ===================== Active Fill / Trade Management =====================
+
+bool entryFilledNow = strategy.position_size != 0 and nz(strategy.position_size[1]) == 0
+if entryFilledNow
+    setupState := STATE_IN_TRADE
+    storedFillBar := bar_index
+    tradeCountToday += 1
+    lastExitReason := "N/A"
+    if showOrderLabels
+        f_debugLabel("FILL\n" + activeSetupType, strategy.position_avg_price, strategy.position_size > 0)
+
+bool activeLong = strategy.position_size > 0
+bool activeShort = strategy.position_size < 0
+bool activeTrade = strategy.position_size != 0
+bool activeTrendLong = activeTrade and activeSetupType == SETUP_TREND_LONG and activeLong
+bool activeTrendShort = activeTrade and activeSetupType == SETUP_TREND_SHORT and activeShort
+bool activeFboLong = activeTrade and activeSetupType == SETUP_FBO_LONG and activeLong
+bool activeFboShort = activeTrade and activeSetupType == SETUP_FBO_SHORT and activeShort
+bool afterFillBar = activeTrade and not na(storedFillBar) and bar_index > storedFillBar
+
+if activeTrade
+    bool oneRTouchedNow = afterFillBar and not oneRTouched and not na(storedOneR) and (activeLong ? high >= storedOneR : activeShort ? low <= storedOneR : false)
+    if oneRTouchedNow
+        oneRTouched := true
+        bool moveStopToBE = activeSetupType == SETUP_TREND_LONG or activeSetupType == SETUP_TREND_SHORT ? trendMoveStopToBEAfterOneR : fboMoveStopToBEAfterOneR
+        if moveStopToBE
+            float bePrice = activeLong ? f_roundUpToTick(strategy.position_avg_price + tickSize) : f_roundDownToTick(strategy.position_avg_price - tickSize)
+            currentStop := bePrice
+            stopMovedToBEEvent := true
+            if showOrderLabels
+                f_debugLabel("1R\nBE", storedOneR, activeLong)
+            alert("Stop moved to breakeven | " + activeSetupType + " " + f_setupDirection(activeSetupType) + " | " + tickerInput + " | Stop " + f_priceText(currentStop), alert.freq_once_per_bar_close)
+        else if showOrderLabels
+            f_debugLabel("1R", storedOneR, activeLong)
+
+    if oneRTouched and (activeTrendLong or activeTrendShort) and trendUseEmaAtrRunnerTrail and not na(ema21) and not na(atrValue)
+        if activeTrendLong
+            float longTrailStop = f_roundDownToTick(ema21 - trendRunnerTrailAtrBuffer * atrValue)
+            currentStop := na(currentStop) ? longTrailStop : math.max(currentStop, longTrailStop)
+        else if activeTrendShort
+            float shortTrailStop = f_roundUpToTick(ema21 + trendRunnerTrailAtrBuffer * atrValue)
+            currentStop := na(currentStop) ? shortTrailStop : math.min(currentStop, shortTrailStop)
+
+    float managedStop = na(currentStop) ? storedInitialStop : currentStop
+    float openQtyAbs = math.abs(strategy.position_size)
+    bool target1QtyStillOpen = storedTarget1Qty > 0 and openQtyAbs > storedRunnerQty
+    string exitMsg = f_orderMessage("Exit update", activeSetupType, f_setupDirection(activeSetupType), storedEntry, managedStop, storedTarget2, storedRiskPoints, storedRunnerQty, f_targetRR(activeLong, storedEntry, storedTarget2, storedRiskPoints))
+
+    if activeTrendLong
+        if target1QtyStillOpen
+            strategy.exit("TrendL_T1", from_entry="TrendL", qty=storedTarget1Qty, limit=storedTarget1, stop=managedStop, alert_message=f_orderMessage("Trend 1R exit", activeSetupType, "Long", storedEntry, managedStop, storedTarget1, storedRiskPoints, storedTarget1Qty, 1.0))
+        strategy.exit("TrendL_RUN", from_entry="TrendL", qty=storedRunnerQty, limit=storedTarget2, stop=managedStop, alert_message=exitMsg)
+    else if activeTrendShort
+        if target1QtyStillOpen
+            strategy.exit("TrendS_T1", from_entry="TrendS", qty=storedTarget1Qty, limit=storedTarget1, stop=managedStop, alert_message=f_orderMessage("Trend 1R exit", activeSetupType, "Short", storedEntry, managedStop, storedTarget1, storedRiskPoints, storedTarget1Qty, 1.0))
+        strategy.exit("TrendS_RUN", from_entry="TrendS", qty=storedRunnerQty, limit=storedTarget2, stop=managedStop, alert_message=exitMsg)
+    else if activeFboLong
+        strategy.exit("FboL_EXIT", from_entry="FboL", qty=storedRunnerQty, limit=storedTarget2, stop=managedStop, alert_message=exitMsg)
+    else if activeFboShort
+        strategy.exit("FboS_EXIT", from_entry="FboS", qty=storedRunnerQty, limit=storedTarget2, stop=managedStop, alert_message=exitMsg)
+
+bool trendLongMomentumFailure = activeTrendLong and afterFillBar and barstate.isconfirmed and (
+     (not na(sessionVWAP) and close < sessionVWAP) or
+     ema9 < ema21 or
+     (not na(orHigh) and close < orHigh and close[1] < orHigh)
+)
+bool trendShortMomentumFailure = activeTrendShort and afterFillBar and barstate.isconfirmed and (
+     (not na(sessionVWAP) and close > sessionVWAP) or
+     ema9 > ema21 or
+     (not na(orLow) and close > orLow and close[1] > orLow)
+)
+
+bool oppositeShortConfirmed = exitOnOppositeSetup and activeLong and openingRangeComplete and not na(orHigh) and not na(orLow) and not na(atrValue) and (
+     (close < orLow and bodyPct >= trendMinBodyPct and closeStrengthShort >= 1.0 - trendCloseZonePct) or
+     (high > orHigh and close < orHigh and bodyPct >= fboMinReclaimBodyPct and closeStrengthShort >= 1.0 - fboCloseZonePct)
+)
+bool oppositeLongConfirmed = exitOnOppositeSetup and activeShort and openingRangeComplete and not na(orHigh) and not na(orLow) and not na(atrValue) and (
+     (close > orHigh and bodyPct >= trendMinBodyPct and closeStrengthLong >= 1.0 - trendCloseZonePct) or
+     (low < orLow and close > orLow and bodyPct >= fboMinReclaimBodyPct and closeStrengthLong >= 1.0 - fboCloseZonePct)
+)
+
+string activeCloseId = f_entryIdForSetup(activeSetupType)
+
+if activeTrade and inForceFlatWindow
+    if activeCloseId != ""
+        strategy.close(activeCloseId, comment="Force Flat", alert_message="Force flat exit | " + activeSetupType + " | " + tickerInput)
+    lastExitReason := "Force Flat"
+    forceFlatExitEvent := true
+    if showOrderLabels
+        f_debugLabel("FORCE FLAT", close, activeLong)
+    alert("Force flat exit | " + activeSetupType + " " + f_setupDirection(activeSetupType) + " | " + tickerInput, alert.freq_once_per_bar_close)
+else if activeTrade and (trendLongMomentumFailure or trendShortMomentumFailure)
+    if activeCloseId != ""
+        strategy.close(activeCloseId, comment="Momentum Failure", alert_message="Momentum failure exit | " + activeSetupType + " | " + tickerInput)
+    lastExitReason := "Momentum Failure"
+    momentumFailureExitEvent := true
+    if showOrderLabels
+        f_debugLabel("MOM FAIL", close, activeLong)
+    alert("Momentum failure exit | " + activeSetupType + " " + f_setupDirection(activeSetupType) + " | " + tickerInput, alert.freq_once_per_bar_close)
+else if activeTrade and (oppositeShortConfirmed or oppositeLongConfirmed)
+    if activeCloseId != ""
+        strategy.close(activeCloseId, comment="Opposite Setup", alert_message="Opposite setup exit | " + activeSetupType + " | " + tickerInput)
+    lastExitReason := "Opposite Setup"
+    oppositeSetupExitEvent := true
+    if showOrderLabels
+        f_debugLabel("OPP EXIT", close, activeLong)
+
+// ===================== Pending Order Cancellation =====================
+
+bool resetSetupNow = false
+string resetReason = "N/A"
+
+if f_hasPendingState(setupState) and strategy.position_size == 0
+    bool pendingTrendLong = setupState == STATE_TREND_LONG_PENDING
+    bool pendingTrendShort = setupState == STATE_TREND_SHORT_PENDING
+    bool pendingFboLong = setupState == STATE_FBO_LONG_PENDING
+    bool pendingFboShort = setupState == STATE_FBO_SHORT_PENDING
+    bool pendingExpired = not na(pendingExpiryBar) and bar_index > pendingExpiryBar
+    bool pendingWindowInvalid = not inTradeWindow or inForceFlatWindow
+    bool pendingTrendLongInvalid = pendingTrendLong and (
+         close < orHigh or
+         (not na(sessionVWAP) and close < sessionVWAP) or
+         ema9 < ema21
+    )
+    bool pendingTrendShortInvalid = pendingTrendShort and (
+         close > orLow or
+         (not na(sessionVWAP) and close > sessionVWAP) or
+         ema9 > ema21
+    )
+    bool pendingFboLongInvalid = pendingFboLong and (
+         close < orLow or
+         (not na(sweepExtreme) and low < sweepExtreme - 0.25 * atrValue)
+    )
+    bool pendingFboShortInvalid = pendingFboShort and (
+         close > orHigh or
+         (not na(sweepExtreme) and high > sweepExtreme + 0.25 * atrValue)
+    )
+    bool pendingCancel = pendingExpired or pendingWindowInvalid or pendingTrendLongInvalid or pendingTrendShortInvalid or pendingFboLongInvalid or pendingFboShortInvalid
+
+    if pendingCancel
+        resetReason := pendingExpired ? "Expired" :
+             pendingWindowInvalid ? "Window" :
+             pendingTrendLongInvalid or pendingTrendShortInvalid ? "Trend Invalid" :
+             "FBO Invalid"
+        lastCancelReason := f_cancelAllOrders(resetReason)
+        pendingOrderCanceledEvent := true
+        resetSetupNow := true
+        alert("Pending order canceled | " + activeSetupType + " | " + tickerInput + " | " + resetReason, alert.freq_once_per_bar_close)
+
+// ===================== Closed Position Cleanup =====================
+
+bool positionClosedNow = strategy.position_size == 0 and nz(strategy.position_size[1]) != 0
+if positionClosedNow
+    if not forceFlatExitEvent and not momentumFailureExitEvent and not oppositeSetupExitEvent
+        lastExitReason := "Broker Exit"
+    if showOrderLabels
+        f_debugLabel("EXIT\n" + lastExitReason, close, nz(strategy.position_size[1]) > 0)
+    setupState := STATE_IDLE
+    activeSetupType := SETUP_NONE
+    setupStartBar := na
+    pullbackSeen := false
+    pullbackLow := na
+    pullbackHigh := na
+    sweepExtreme := na
+    reclaimBarIndex := na
+    triggerHigh := na
+    triggerLow := na
+    pendingEntry := na
+    pendingStop := na
+    pendingTarget1 := na
+    pendingTarget2 := na
+    pendingQty := na
+    pendingDirection := 0
+    pendingExpiryBar := na
+    storedEntry := na
+    storedInitialStop := na
+    storedRiskPoints := na
+    storedOneR := na
+    storedTarget1 := na
+    storedTarget2 := na
+    storedTarget1Qty := 0
+    storedRunnerQty := 0
+    storedFillBar := na
+    currentStop := na
+    oneRTouched := false
+
+// ===================== Raw Setup Calculations =====================
+
+bool levelsReady = openingRangeComplete and not na(orHigh) and not na(orLow) and not na(orRange) and orRange > 0
+bool atrReady = not na(atrValue) and atrValue > 0
+bool vwapReady = not na(sessionVWAP)
+bool canStartSetup = enableStrategyBacktest and barstate.isconfirmed and levelsReady and atrReady and inTradeWindow and not inForceFlatWindow and not entryFilledNow and not positionClosedNow and setupState == STATE_IDLE and strategy.position_size == 0 and f_tradeCountPermits(tradeCountToday)
+
+bool trendLongVwapOk = not trendUseVWAPFilter or (vwapReady and not na(sessionVWAP[5]) and close > sessionVWAP and sessionVWAP > sessionVWAP[5])
+bool trendShortVwapOk = not trendUseVWAPFilter or (vwapReady and not na(sessionVWAP[5]) and close < sessionVWAP and sessionVWAP < sessionVWAP[5])
+bool trendLongEmaOk = not trendUseEMAFilter or (ema9 > ema21 and close > ema21)
+bool trendShortEmaOk = not trendUseEMAFilter or (ema9 < ema21 and close < ema21)
+bool trendVolumeOk = not trendUseVolumeFilter or (not na(volumeSMA) and volume >= volumeSMA * trendVolumeMult)
+
+bool trendLongDisplacementRaw = canStartSetup and enableTrendContinuationSetup and enableLongs and
+     close > orHigh and
+     close >= orHigh + trendDisplacementAtrMult * atrValue and
+     bodyPct >= trendMinBodyPct and
+     closeStrengthLong >= 1.0 - trendCloseZonePct and
+     barRange >= trendMinRangeAtrMult * atrValue and
+     trendLongVwapOk and
+     trendLongEmaOk and
+     trendVolumeOk
+
+bool trendShortDisplacementRaw = canStartSetup and enableTrendContinuationSetup and enableShorts and
+     close < orLow and
+     close <= orLow - trendDisplacementAtrMult * atrValue and
+     bodyPct >= trendMinBodyPct and
+     closeStrengthShort >= 1.0 - trendCloseZonePct and
+     barRange >= trendMinRangeAtrMult * atrValue and
+     trendShortVwapOk and
+     trendShortEmaOk and
+     trendVolumeOk
+
+bool fboVwapSlopeReady = vwapReady and not na(sessionVWAP[fboVwapSlopeLookback])
+bool fboFlatVwap = fboVwapSlopeReady and math.abs(sessionVWAP - sessionVWAP[fboVwapSlopeLookback]) <= fboMaxVwapSlopeAtrMult * atrValue
+bool fboNotStrongBullish = fboVwapSlopeReady and not (ema9 > ema21 and close > sessionVWAP and sessionVWAP > sessionVWAP[fboVwapSlopeLookback])
+bool fboNotStrongBearish = fboVwapSlopeReady and not (ema9 < ema21 and close < sessionVWAP and sessionVWAP < sessionVWAP[fboVwapSlopeLookback])
+bool fboShortContextOk = not fboRequireVWAPMeanReversionContext or (fboVwapSlopeReady and (fboFlatVwap or fboNotStrongBullish))
+bool fboLongContextOk = not fboRequireVWAPMeanReversionContext or (fboVwapSlopeReady and (fboFlatVwap or fboNotStrongBearish))
+
+bool fboHighSweepRaw = canStartSetup and enableFailedBreakoutSetup and enableShorts and
+     high >= orHigh + fboBreakAtrMult * atrValue and
+     high > orHigh and
+     fboShortContextOk
+
+bool fboLowSweepRaw = canStartSetup and enableFailedBreakoutSetup and enableLongs and
+     low <= orLow - fboBreakAtrMult * atrValue and
+     low < orLow and
+     fboLongContextOk
+
+bool trendLongDisplacementAllowed = trendLongDisplacementRaw
+bool trendShortDisplacementAllowed = trendShortDisplacementRaw
+bool fboHighSweepAllowed = fboHighSweepRaw
+bool fboLowSweepAllowed = fboLowSweepRaw
+
+if setupPriorityMode == "Continuation First"
+    fboHighSweepAllowed := fboHighSweepRaw and not trendLongDisplacementRaw
+    fboLowSweepAllowed := fboLowSweepRaw and not trendShortDisplacementRaw
+else if setupPriorityMode == "Failed Breakout First"
+    trendLongDisplacementAllowed := trendLongDisplacementRaw and not fboHighSweepRaw
+    trendShortDisplacementAllowed := trendShortDisplacementRaw and not fboLowSweepRaw
+
+// ===================== State Machine: New Setups =====================
+
+if setupState == STATE_IDLE and canStartSetup
+    if trendLongDisplacementAllowed
+        setupState := STATE_WAIT_TREND_LONG_PULLBACK
+        activeSetupType := SETUP_TREND_LONG
+        setupStartBar := bar_index
+        pullbackSeen := false
+        pullbackLow := na
+        trendLongDisplacementEvent := true
+        if showTrendSetupLabels
+            f_debugLabel("TREND L DISP", low, true)
+        alert("Trend long displacement detected | " + tickerInput + " | ORH " + f_priceText(orHigh) + " | Close " + f_priceText(close), alert.freq_once_per_bar_close)
+    else if trendShortDisplacementAllowed
+        setupState := STATE_WAIT_TREND_SHORT_PULLBACK
+        activeSetupType := SETUP_TREND_SHORT
+        setupStartBar := bar_index
+        pullbackSeen := false
+        pullbackHigh := na
+        trendShortDisplacementEvent := true
+        if showTrendSetupLabels
+            f_debugLabel("TREND S DISP", high, false)
+        alert("Trend short displacement detected | " + tickerInput + " | ORL " + f_priceText(orLow) + " | Close " + f_priceText(close), alert.freq_once_per_bar_close)
+    else if fboHighSweepAllowed
+        setupState := STATE_WAIT_FBO_SHORT_RECLAIM
+        activeSetupType := SETUP_FBO_SHORT
+        setupStartBar := bar_index
+        sweepExtreme := high
+        fboHighSweepEvent := true
+        if showFboSetupLabels
+            f_debugLabel("FBO SWEEP HIGH", high, false)
+        alert("FBO high sweep detected | " + tickerInput + " | ORH " + f_priceText(orHigh) + " | High " + f_priceText(high), alert.freq_once_per_bar_close)
+    else if fboLowSweepAllowed
+        setupState := STATE_WAIT_FBO_LONG_RECLAIM
+        activeSetupType := SETUP_FBO_LONG
+        setupStartBar := bar_index
+        sweepExtreme := low
+        fboLowSweepEvent := true
+        if showFboSetupLabels
+            f_debugLabel("FBO SWEEP LOW", low, true)
+        alert("FBO low sweep detected | " + tickerInput + " | ORL " + f_priceText(orLow) + " | Low " + f_priceText(low), alert.freq_once_per_bar_close)
+
+// ===================== State Machine: Trend Continuation =====================
+
+if setupState == STATE_WAIT_TREND_LONG_PULLBACK
+    bool longPbExpired = bar_index - setupStartBar > trendMaxPullbackBars
+    bool longPbInvalid = bar_index > setupStartBar and (
+         longPbExpired or not inTradeWindow or inForceFlatWindow or
+         close < orHigh - trendDisplacementAtrMult * atrValue or
+         (not na(sessionVWAP) and close < sessionVWAP) or
+         ema9 < ema21 or
+         low < orLow
+    )
+    bool longPbTouched = bar_index > setupStartBar and not longPbInvalid and (
+         low <= orHigh + pullbackOrAtrBuffer * atrValue or
+         low <= ema21 + pullbackEmaAtrBuffer * atrValue or
+         (not na(sessionVWAP) and low <= sessionVWAP + pullbackEmaAtrBuffer * atrValue)
+    )
+    if longPbTouched
+        setupState := STATE_WAIT_TREND_LONG_TRIGGER
+        pullbackSeen := true
+        pullbackLow := low
+        trendLongPullbackEvent := true
+        if showTrendSetupLabels
+            f_debugLabel("TREND L PB", low, true)
+        alert("Trend long pullback detected | " + tickerInput + " | Pullback low " + f_priceText(low), alert.freq_once_per_bar_close)
+    else if longPbInvalid
+        resetSetupNow := true
+        resetReason := "Trend L PB Invalid"
+
+else if setupState == STATE_WAIT_TREND_SHORT_PULLBACK
+    bool shortPbExpired = bar_index - setupStartBar > trendMaxPullbackBars
+    bool shortPbInvalid = bar_index > setupStartBar and (
+         shortPbExpired or not inTradeWindow or inForceFlatWindow or
+         close > orLow + trendDisplacementAtrMult * atrValue or
+         (not na(sessionVWAP) and close > sessionVWAP) or
+         ema9 > ema21 or
+         high > orHigh
+    )
+    bool shortPbTouched = bar_index > setupStartBar and not shortPbInvalid and (
+         high >= orLow - pullbackOrAtrBuffer * atrValue or
+         high >= ema21 - pullbackEmaAtrBuffer * atrValue or
+         (not na(sessionVWAP) and high >= sessionVWAP - pullbackEmaAtrBuffer * atrValue)
+    )
+    if shortPbTouched
+        setupState := STATE_WAIT_TREND_SHORT_TRIGGER
+        pullbackSeen := true
+        pullbackHigh := high
+        trendShortPullbackEvent := true
+        if showTrendSetupLabels
+            f_debugLabel("TREND S PB", high, false)
+        alert("Trend short pullback detected | " + tickerInput + " | Pullback high " + f_priceText(high), alert.freq_once_per_bar_close)
+    else if shortPbInvalid
+        resetSetupNow := true
+        resetReason := "Trend S PB Invalid"
+
+else if setupState == STATE_WAIT_TREND_LONG_TRIGGER
+    pullbackLow := na(pullbackLow) ? low : math.min(pullbackLow, low)
+    bool longTriggerInvalid = not inTradeWindow or inForceFlatWindow or
+         close < orHigh - trendDisplacementAtrMult * atrValue or
+         (not na(sessionVWAP) and close < sessionVWAP) or
+         ema9 < ema21 or
+         bar_index - setupStartBar > trendMaxPullbackBars or
+         low < orLow
+    bool longTrigger = not longTriggerInvalid and
+         close > ema9 and
+         close > orHigh and
+         closeStrengthLong >= 1.0 - 0.34 and
+         bodyPct >= 0.40 and
+         high > high[1]
+    if longTrigger
+        triggerHigh := high
+        triggerLow := low
+        pendingEntry := f_roundUpToTick(high + tickSize)
+        pendingStop := f_roundDownToTick(math.min(pullbackLow, low) - tickSize)
+        float riskPoints = pendingEntry - pendingStop
+        int qty = f_contractQty(maxRiskDollars, riskPoints)
+        bool validOrder = not na(pendingEntry) and not na(pendingStop) and riskPoints > 0 and f_stopPointsValid(riskPoints) and qty >= 1
+        if validOrder
+            pendingTarget1 := f_roundDownToTick(pendingEntry + riskPoints)
+            pendingTarget2 := f_roundDownToTick(pendingEntry + riskPoints * trendTargetR)
+            pendingQty := qty
+            pendingDirection := 1
+            pendingExpiryBar := bar_index + trendEntryOrderValidBars
+            storedEntry := pendingEntry
+            storedInitialStop := pendingStop
+            storedRiskPoints := riskPoints
+            storedOneR := pendingTarget1
+            storedTarget1 := pendingTarget1
+            storedTarget2 := pendingTarget2
+            storedTarget1Qty := f_trendTrimQty(qty)
+            storedRunnerQty := qty - storedTarget1Qty
+            currentStop := pendingStop
+            oneRTouched := false
+            setupState := STATE_TREND_LONG_PENDING
+            string entryMsg = f_orderMessage("Trend long stop entry placed", activeSetupType, "Long", pendingEntry, pendingStop, pendingTarget2, riskPoints, qty, trendTargetR)
+            strategy.entry("TrendL", strategy.long, qty=qty, stop=pendingEntry, alert_message=entryMsg)
+            if storedTarget1Qty > 0
+                strategy.exit("TrendL_T1", from_entry="TrendL", qty=storedTarget1Qty, limit=storedTarget1, stop=storedInitialStop, alert_message=f_orderMessage("Trend long 1R exit", activeSetupType, "Long", pendingEntry, pendingStop, storedTarget1, riskPoints, storedTarget1Qty, 1.0))
+            strategy.exit("TrendL_RUN", from_entry="TrendL", qty=storedRunnerQty, limit=storedTarget2, stop=storedInitialStop, alert_message=f_orderMessage("Trend long runner exit", activeSetupType, "Long", pendingEntry, pendingStop, storedTarget2, riskPoints, storedRunnerQty, trendTargetR))
+            trendLongEntryOrderEvent := true
+            if showOrderLabels
+                f_debugLabel("TREND L STOP ORDER\nE " + f_priceText(pendingEntry) + "\nS " + f_priceText(pendingStop), pendingEntry, true)
+            alert(entryMsg, alert.freq_once_per_bar_close)
+        else
+            resetSetupNow := true
+            resetReason := "Bad Qty/Stop"
+    else if longTriggerInvalid
+        resetSetupNow := true
+        resetReason := "Trend L Trigger Invalid"
+
+else if setupState == STATE_WAIT_TREND_SHORT_TRIGGER
+    pullbackHigh := na(pullbackHigh) ? high : math.max(pullbackHigh, high)
+    bool shortTriggerInvalid = not inTradeWindow or inForceFlatWindow or
+         close > orLow + trendDisplacementAtrMult * atrValue or
+         (not na(sessionVWAP) and close > sessionVWAP) or
+         ema9 > ema21 or
+         bar_index - setupStartBar > trendMaxPullbackBars or
+         high > orHigh
+    bool shortTrigger = not shortTriggerInvalid and
+         close < ema9 and
+         close < orLow and
+         closeStrengthShort >= 1.0 - 0.34 and
+         bodyPct >= 0.40 and
+         low < low[1]
+    if shortTrigger
+        triggerHigh := high
+        triggerLow := low
+        pendingEntry := f_roundDownToTick(low - tickSize)
+        pendingStop := f_roundUpToTick(math.max(pullbackHigh, high) + tickSize)
+        float riskPoints = pendingStop - pendingEntry
+        int qty = f_contractQty(maxRiskDollars, riskPoints)
+        bool validOrder = not na(pendingEntry) and not na(pendingStop) and riskPoints > 0 and f_stopPointsValid(riskPoints) and qty >= 1
+        if validOrder
+            pendingTarget1 := f_roundUpToTick(pendingEntry - riskPoints)
+            pendingTarget2 := f_roundUpToTick(pendingEntry - riskPoints * trendTargetR)
+            pendingQty := qty
+            pendingDirection := -1
+            pendingExpiryBar := bar_index + trendEntryOrderValidBars
+            storedEntry := pendingEntry
+            storedInitialStop := pendingStop
+            storedRiskPoints := riskPoints
+            storedOneR := pendingTarget1
+            storedTarget1 := pendingTarget1
+            storedTarget2 := pendingTarget2
+            storedTarget1Qty := f_trendTrimQty(qty)
+            storedRunnerQty := qty - storedTarget1Qty
+            currentStop := pendingStop
+            oneRTouched := false
+            setupState := STATE_TREND_SHORT_PENDING
+            string entryMsg = f_orderMessage("Trend short stop entry placed", activeSetupType, "Short", pendingEntry, pendingStop, pendingTarget2, riskPoints, qty, trendTargetR)
+            strategy.entry("TrendS", strategy.short, qty=qty, stop=pendingEntry, alert_message=entryMsg)
+            if storedTarget1Qty > 0
+                strategy.exit("TrendS_T1", from_entry="TrendS", qty=storedTarget1Qty, limit=storedTarget1, stop=storedInitialStop, alert_message=f_orderMessage("Trend short 1R exit", activeSetupType, "Short", pendingEntry, pendingStop, storedTarget1, riskPoints, storedTarget1Qty, 1.0))
+            strategy.exit("TrendS_RUN", from_entry="TrendS", qty=storedRunnerQty, limit=storedTarget2, stop=storedInitialStop, alert_message=f_orderMessage("Trend short runner exit", activeSetupType, "Short", pendingEntry, pendingStop, storedTarget2, riskPoints, storedRunnerQty, trendTargetR))
+            trendShortEntryOrderEvent := true
+            if showOrderLabels
+                f_debugLabel("TREND S STOP ORDER\nE " + f_priceText(pendingEntry) + "\nS " + f_priceText(pendingStop), pendingEntry, false)
+            alert(entryMsg, alert.freq_once_per_bar_close)
+        else
+            resetSetupNow := true
+            resetReason := "Bad Qty/Stop"
+    else if shortTriggerInvalid
+        resetSetupNow := true
+        resetReason := "Trend S Trigger Invalid"
+
+// ===================== State Machine: Failed Breakout =====================
+
+if setupState == STATE_WAIT_FBO_SHORT_RECLAIM
+    sweepExtreme := na(sweepExtreme) ? high : math.max(sweepExtreme, high)
+    int shortBarsSinceSweep = bar_index - setupStartBar
+    int shortFboEffectiveWaitBars = math.min(fboReclaimBars, fboMaxWaitBarsAfterSweep)
+    bool reclaimWindowOpen = shortBarsSinceSweep > 0 and shortBarsSinceSweep <= shortFboEffectiveWaitBars
+    bool fboExpired = shortBarsSinceSweep > 0 and (shortBarsSinceSweep > shortFboEffectiveWaitBars or not inTradeWindow or inForceFlatWindow)
+    bool shortReclaim = reclaimWindowOpen and not fboExpired and
+         close < orHigh and
+         bodyPct >= fboMinReclaimBodyPct and
+         closeStrengthShort >= 1.0 - fboCloseZonePct and
+         (close < open or close < close[1])
+    if shortReclaim
+        reclaimBarIndex := bar_index
+        pendingEntry := f_roundDownToTick(low - tickSize)
+        pendingStop := f_roundUpToTick(sweepExtreme + tickSize)
+        float riskPoints = pendingStop - pendingEntry
+        int qty = f_contractQty(maxRiskDollars, riskPoints)
+        float selectedTarget = f_selectFboTarget(false, pendingEntry, riskPoints, sessionVWAP, orMid)
+        float targetRR = f_targetRR(false, pendingEntry, selectedTarget, riskPoints)
+        bool validOrder = not na(pendingEntry) and not na(pendingStop) and not na(selectedTarget) and riskPoints > 0 and selectedTarget < pendingEntry and f_stopPointsValid(riskPoints) and qty >= 1
+        fboShortReclaimEvent := true
+        if showFboSetupLabels
+            f_debugLabel("FBO S RECLAIM", high, false)
+        alert("FBO short reclaim detected | " + tickerInput + " | Entry " + f_priceText(pendingEntry) + " | Stop " + f_priceText(pendingStop), alert.freq_once_per_bar_close)
+        if validOrder
+            pendingTarget1 := f_roundUpToTick(pendingEntry - riskPoints)
+            pendingTarget2 := selectedTarget
+            pendingQty := qty
+            pendingDirection := -1
+            pendingExpiryBar := bar_index + fboEntryOrderValidBars
+            storedEntry := pendingEntry
+            storedInitialStop := pendingStop
+            storedRiskPoints := riskPoints
+            storedOneR := pendingTarget1
+            storedTarget1 := pendingTarget1
+            storedTarget2 := pendingTarget2
+            storedTarget1Qty := 0
+            storedRunnerQty := qty
+            currentStop := pendingStop
+            oneRTouched := false
+            setupState := STATE_FBO_SHORT_PENDING
+            string entryMsg = f_orderMessage("FBO short stop entry placed", activeSetupType, "Short", pendingEntry, pendingStop, pendingTarget2, riskPoints, qty, targetRR)
+            strategy.entry("FboS", strategy.short, qty=qty, stop=pendingEntry, alert_message=entryMsg)
+            strategy.exit("FboS_EXIT", from_entry="FboS", qty=qty, limit=storedTarget2, stop=storedInitialStop, alert_message=f_orderMessage("FBO short exit", activeSetupType, "Short", pendingEntry, pendingStop, pendingTarget2, riskPoints, qty, targetRR))
+            fboShortEntryOrderEvent := true
+            if showOrderLabels
+                f_debugLabel("FBO S STOP ORDER\nE " + f_priceText(pendingEntry) + "\nS " + f_priceText(pendingStop), pendingEntry, false)
+            alert(entryMsg, alert.freq_once_per_bar_close)
+        else
+            resetSetupNow := true
+            resetReason := "Bad Qty/Stop"
+    else if fboExpired
+        resetSetupNow := true
+        resetReason := "FBO S Expired"
+
+else if setupState == STATE_WAIT_FBO_LONG_RECLAIM
+    sweepExtreme := na(sweepExtreme) ? low : math.min(sweepExtreme, low)
+    int longBarsSinceSweep = bar_index - setupStartBar
+    int longFboEffectiveWaitBars = math.min(fboReclaimBars, fboMaxWaitBarsAfterSweep)
+    bool reclaimWindowOpen = longBarsSinceSweep > 0 and longBarsSinceSweep <= longFboEffectiveWaitBars
+    bool fboExpired = longBarsSinceSweep > 0 and (longBarsSinceSweep > longFboEffectiveWaitBars or not inTradeWindow or inForceFlatWindow)
+    bool longReclaim = reclaimWindowOpen and not fboExpired and
+         close > orLow and
+         bodyPct >= fboMinReclaimBodyPct and
+         closeStrengthLong >= 1.0 - fboCloseZonePct and
+         (close > open or close > close[1])
+    if longReclaim
+        reclaimBarIndex := bar_index
+        pendingEntry := f_roundUpToTick(high + tickSize)
+        pendingStop := f_roundDownToTick(sweepExtreme - tickSize)
+        float riskPoints = pendingEntry - pendingStop
+        int qty = f_contractQty(maxRiskDollars, riskPoints)
+        float selectedTarget = f_selectFboTarget(true, pendingEntry, riskPoints, sessionVWAP, orMid)
+        float targetRR = f_targetRR(true, pendingEntry, selectedTarget, riskPoints)
+        bool validOrder = not na(pendingEntry) and not na(pendingStop) and not na(selectedTarget) and riskPoints > 0 and selectedTarget > pendingEntry and f_stopPointsValid(riskPoints) and qty >= 1
+        fboLongReclaimEvent := true
+        if showFboSetupLabels
+            f_debugLabel("FBO L RECLAIM", low, true)
+        alert("FBO long reclaim detected | " + tickerInput + " | Entry " + f_priceText(pendingEntry) + " | Stop " + f_priceText(pendingStop), alert.freq_once_per_bar_close)
+        if validOrder
+            pendingTarget1 := f_roundDownToTick(pendingEntry + riskPoints)
+            pendingTarget2 := selectedTarget
+            pendingQty := qty
+            pendingDirection := 1
+            pendingExpiryBar := bar_index + fboEntryOrderValidBars
+            storedEntry := pendingEntry
+            storedInitialStop := pendingStop
+            storedRiskPoints := riskPoints
+            storedOneR := pendingTarget1
+            storedTarget1 := pendingTarget1
+            storedTarget2 := pendingTarget2
+            storedTarget1Qty := 0
+            storedRunnerQty := qty
+            currentStop := pendingStop
+            oneRTouched := false
+            setupState := STATE_FBO_LONG_PENDING
+            string entryMsg = f_orderMessage("FBO long stop entry placed", activeSetupType, "Long", pendingEntry, pendingStop, pendingTarget2, riskPoints, qty, targetRR)
+            strategy.entry("FboL", strategy.long, qty=qty, stop=pendingEntry, alert_message=entryMsg)
+            strategy.exit("FboL_EXIT", from_entry="FboL", qty=qty, limit=storedTarget2, stop=storedInitialStop, alert_message=f_orderMessage("FBO long exit", activeSetupType, "Long", pendingEntry, pendingStop, pendingTarget2, riskPoints, qty, targetRR))
+            fboLongEntryOrderEvent := true
+            if showOrderLabels
+                f_debugLabel("FBO L STOP ORDER\nE " + f_priceText(pendingEntry) + "\nS " + f_priceText(pendingStop), pendingEntry, true)
+            alert(entryMsg, alert.freq_once_per_bar_close)
+        else
+            resetSetupNow := true
+            resetReason := "Bad Qty/Stop"
+    else if fboExpired
+        resetSetupNow := true
+        resetReason := "FBO L Expired"
+
+// ===================== Setup Reset =====================
+
+if resetSetupNow and strategy.position_size == 0
+    if not f_hasPendingState(setupState) and showOrderLabels
+        f_debugLabel("RESET\n" + resetReason, close, close >= open)
+    setupState := STATE_IDLE
+    activeSetupType := SETUP_NONE
+    setupStartBar := na
+    pullbackSeen := false
+    pullbackLow := na
+    pullbackHigh := na
+    sweepExtreme := na
+    reclaimBarIndex := na
+    triggerHigh := na
+    triggerLow := na
+    pendingEntry := na
+    pendingStop := na
+    pendingTarget1 := na
+    pendingTarget2 := na
+    pendingQty := na
+    pendingDirection := 0
+    pendingExpiryBar := na
+    storedEntry := na
+    storedInitialStop := na
+    storedRiskPoints := na
+    storedOneR := na
+    storedTarget1 := na
+    storedTarget2 := na
+    storedTarget1Qty := 0
+    storedRunnerQty := 0
+    storedFillBar := na
+    currentStop := na
+    oneRTouched := false
+    lastCancelReason := resetReason
+
+// ===================== Visuals =====================
+
+plot(showOpeningRange and not na(orHigh) ? orHigh : na, "ORH", color=trendLongColor, linewidth=1, style=plot.style_linebr)
+plot(showOpeningRange and not na(orLow) ? orLow : na, "ORL", color=trendShortColor, linewidth=1, style=plot.style_linebr)
+plot(showOpeningRange and not na(orMid) ? orMid : na, "OR Mid", color=color.new(color.gray, 45), linewidth=1, style=plot.style_linebr)
+
+plotshape(showTrendSetupLabels and trendLongDisplacementEvent, title="Trend Long Displacement", style=shape.triangleup, location=location.belowbar, color=trendLongColor, size=size.tiny, text="L DISP")
+plotshape(showTrendSetupLabels and trendShortDisplacementEvent, title="Trend Short Displacement", style=shape.triangledown, location=location.abovebar, color=trendShortColor, size=size.tiny, text="S DISP")
+plotshape(showTrendSetupLabels and trendLongPullbackEvent, title="Trend Long Pullback", style=shape.circle, location=location.belowbar, color=color.new(trendLongColor, 15), size=size.tiny, text="L PB")
+plotshape(showTrendSetupLabels and trendShortPullbackEvent, title="Trend Short Pullback", style=shape.circle, location=location.abovebar, color=color.new(trendShortColor, 15), size=size.tiny, text="S PB")
+plotshape(showFboSetupLabels and fboHighSweepEvent, title="FBO High Sweep", style=shape.xcross, location=location.abovebar, color=fboShortColor, size=size.tiny, text="FBO H")
+plotshape(showFboSetupLabels and fboLowSweepEvent, title="FBO Low Sweep", style=shape.xcross, location=location.belowbar, color=fboLongColor, size=size.tiny, text="FBO L")
+plotshape(showFboSetupLabels and fboShortReclaimEvent, title="FBO Short Reclaim", style=shape.triangledown, location=location.abovebar, color=fboShortColor, size=size.tiny, text="S REC")
+plotshape(showFboSetupLabels and fboLongReclaimEvent, title="FBO Long Reclaim", style=shape.triangleup, location=location.belowbar, color=fboLongColor, size=size.tiny, text="L REC")
+plotshape(showOrderLabels and (trendLongEntryOrderEvent or fboLongEntryOrderEvent), title="Long Stop Order", style=shape.flag, location=location.belowbar, color=color.lime, size=size.tiny, text="ORDER")
+plotshape(showOrderLabels and (trendShortEntryOrderEvent or fboShortEntryOrderEvent), title="Short Stop Order", style=shape.flag, location=location.abovebar, color=color.red, size=size.tiny, text="ORDER")
+plotshape(showOrderLabels and pendingOrderCanceledEvent, title="Pending Order Canceled", style=shape.xcross, location=location.top, color=color.yellow, size=size.tiny, text="CXL")
+plotshape(showOrderLabels and stopMovedToBEEvent, title="Stop Moved To BE", style=shape.diamond, location=location.top, color=color.aqua, size=size.tiny, text="BE")
+plotshape(showOrderLabels and forceFlatExitEvent, title="Force Flat Exit", style=shape.square, location=location.top, color=color.orange, size=size.tiny, text="FLAT")
+plotshape(showOrderLabels and momentumFailureExitEvent, title="Momentum Failure Exit", style=shape.square, location=location.top, color=color.purple, size=size.tiny, text="MOM")
+
+// ===================== Alerts =====================
+
+alertcondition(trendLongDisplacementEvent, "Trend Long Displacement Detected", "Trend long displacement detected")
+alertcondition(trendShortDisplacementEvent, "Trend Short Displacement Detected", "Trend short displacement detected")
+alertcondition(trendLongPullbackEvent, "Trend Long Pullback Detected", "Trend long pullback detected")
+alertcondition(trendShortPullbackEvent, "Trend Short Pullback Detected", "Trend short pullback detected")
+alertcondition(trendLongEntryOrderEvent, "Trend Long Entry Order Placed", "Trend long entry order placed")
+alertcondition(trendShortEntryOrderEvent, "Trend Short Entry Order Placed", "Trend short entry order placed")
+alertcondition(fboHighSweepEvent, "FBO High Sweep Detected", "FBO high sweep detected")
+alertcondition(fboLowSweepEvent, "FBO Low Sweep Detected", "FBO low sweep detected")
+alertcondition(fboShortReclaimEvent, "FBO Short Reclaim Detected", "FBO short reclaim detected")
+alertcondition(fboLongReclaimEvent, "FBO Long Reclaim Detected", "FBO long reclaim detected")
+alertcondition(fboShortEntryOrderEvent, "FBO Short Entry Order Placed", "FBO short entry order placed")
+alertcondition(fboLongEntryOrderEvent, "FBO Long Entry Order Placed", "FBO long entry order placed")
+alertcondition(pendingOrderCanceledEvent, "Pending Order Canceled", "Pending order canceled")
+alertcondition(stopMovedToBEEvent, "Stop Moved To Breakeven", "Stop moved to breakeven")
+alertcondition(momentumFailureExitEvent, "Momentum Failure Exit", "Momentum failure exit")
+alertcondition(forceFlatExitEvent, "Force Flat Exit", "Force flat exit")
+
+// ===================== Debug Table =====================
+
+var table debugTable = table.new(position.bottom_right, 2, 14, bgcolor=color.new(color.black, 85), border_width=0)
+
+if barstate.islast
+    table.clear(debugTable, 0, 0, 1, 13)
+    if strategyShowDebugTable and showDebugTable
+        string emaAlignmentText = ema9 > ema21 ? "Bull" : ema9 < ema21 ? "Bear" : "Flat"
+        color stateColor = setupState == STATE_IDLE ? color.rgb(190, 190, 190) : setupState == STATE_IN_TRADE ? color.lime : color.orange
+        int row = 0
+        row := f_addDebugRow(debugTable, row, "State", f_stateName(setupState), stateColor)
+        row := f_addDebugRow(debugTable, row, "Setup", activeSetupType, color.white)
+        row := f_addDebugRow(debugTable, row, "ORH", f_priceText(orHigh), color.white)
+        row := f_addDebugRow(debugTable, row, "ORL", f_priceText(orLow), color.white)
+        row := f_addDebugRow(debugTable, row, "VWAP", f_priceText(sessionVWAP), color.white)
+        row := f_addDebugRow(debugTable, row, "EMA 9/21", emaAlignmentText, ema9 > ema21 ? color.lime : ema9 < ema21 ? color.red : color.gray)
+        row := f_addDebugRow(debugTable, row, "Trades Today", str.tostring(tradeCountToday), color.white)
+        row := f_addDebugRow(debugTable, row, "Pending Entry", f_priceText(pendingEntry), color.white)
+        row := f_addDebugRow(debugTable, row, "Pending Stop", f_priceText(pendingStop), color.white)
+        row := f_addDebugRow(debugTable, row, "Current Stop", f_priceText(currentStop), color.white)
+        row := f_addDebugRow(debugTable, row, "1R Touched", f_boolText(oneRTouched), oneRTouched ? color.lime : color.gray)
+        row := f_addDebugRow(debugTable, row, "Last Cancel", lastCancelReason, color.yellow)
+        row := f_addDebugRow(debugTable, row, "Last Exit", lastExitReason, color.orange)
