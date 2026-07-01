@@ -1,0 +1,914 @@
+//@version=6
+strategy(
+     title = "EMA Level Pullback Break Strategy",
+     shorttitle = "EMA Level Pullback Break",
+     overlay = true,
+     pyramiding = 0,
+     initial_capital = 1000000,
+     currency = currency.USD,
+     margin_long = 1,
+     margin_short = 1,
+     default_qty_type = strategy.fixed,
+     default_qty_value = 1,
+     commission_type = strategy.commission.cash_per_contract,
+     commission_value = 0.62,
+     slippage = 1,
+     process_orders_on_close = true,
+     calc_on_order_fills = true,
+     dynamic_requests = true,
+     max_labels_count = 500
+)
+
+// ===================== User Inputs =====================
+
+groupCore = "01. Core Controls"
+groupOpeningRangeCore = "02. Opening Range / Core Controls"
+groupEmaTrend = "03. EMA Trend Filters"
+groupLocation = "04. Location Filters"
+groupPullbackEntry = "05. Pullback / Entry"
+groupRiskTargets = "06. Risk / Targets"
+groupLevels = "07. Levels"
+groupDisplayAlerts = "08. Display / Alerts"
+groupBacktestDebug = "09. Strategy Backtest / Debug"
+
+// 01. Core Controls
+enableStrategyBacktest = input.bool(true, "Enable Strategy Backtest", group=groupCore)
+useLongs = input.bool(true, "Use Longs", group=groupCore)
+useShorts = input.bool(true, "Use Shorts", group=groupCore)
+tickerInput = input.string("MNQ", "Ticker", options=["MES", "MNQ", "ES", "NQ"], group=groupCore)
+alertTradingWindow = input.session("0945-1130", "Alert Trading Window", group=groupCore)
+maxTradesPerDay = input.int(2, "Max Trades Per Day", minval=1, maxval=10, group=groupCore)
+onlyOneActiveTradeOrOrder = input.bool(true, "Only One Active Trade Or Order", group=groupCore)
+scalpTickSizeFallback = input.float(0.25, "Tick Size Fallback", minval=0.01, step=0.01, group=groupCore)
+useTickSizeFallback = input.bool(false, "Use Tick Size Fallback", group=groupCore)
+
+// 02. Opening Range / Core Controls
+useOpeningRangeBiasFilter = input.bool(false, "Use Opening Range Bias Filter", group=groupOpeningRangeCore)
+useOpeningRangeLevelsForEntries = input.bool(true, "Use Opening Range Levels For Entries", group=groupOpeningRangeCore)
+requiredOpeningRangeBreakoutCloses = input.int(2, "Required Opening Range Breakout Closes", minval=1, maxval=3, group=groupOpeningRangeCore)
+
+// 03. EMA Trend Filters
+emaFastLength = input.int(9, "Fast EMA Length", minval=1, group=groupEmaTrend)
+emaMidLength = input.int(20, "Mid EMA Length", minval=1, group=groupEmaTrend)
+emaSlowLength = input.int(50, "Slow EMA Length", minval=1, group=groupEmaTrend)
+requireCloseBeyondFastEma = input.bool(false, "Require Close Beyond Fast EMA", group=groupEmaTrend)
+requireMidEmaBeyondSlowEma = input.bool(false, "Require Mid EMA Beyond Slow EMA", group=groupEmaTrend)
+emaSlopeLookbackBars = input.int(5, "EMA Slope Lookback Bars", minval=1, maxval=50, group=groupEmaTrend)
+minMidEmaSlopeTicks = input.float(0.0, "Minimum Mid EMA Slope Ticks", minval=0.0, step=0.25, group=groupEmaTrend)
+useEmaChopFilter = input.bool(true, "Use EMA Chop Filter", group=groupEmaTrend)
+
+// 04. Location Filters
+useEmaLocation = input.bool(true, "Use EMA Location", group=groupLocation)
+useLevelLocation = input.bool(true, "Use Level Location", group=groupLocation)
+proximityAtrMultiplier = input.float(0.25, "Proximity ATR Multiplier", minval=0.0, step=0.05, group=groupLocation)
+atrLength = input.int(14, "ATR Length", minval=1, group=groupLocation)
+locationLookbackBars = input.int(2, "Location Lookback Bars", minval=1, maxval=2, group=groupLocation)
+
+// 05. Pullback / Entry
+pullbackLookbackBars = input.int(3, "Pullback Lookback Bars", minval=1, maxval=20, group=groupPullbackEntry)
+requirePullback = input.bool(true, "Require Pullback", group=groupPullbackEntry)
+entryMode = input.string("Prior Bar Break Only", "Entry Mode", options=["Prior Bar Break Only", "Prior Bar Break Or Delayed Confirmation"], group=groupPullbackEntry)
+cancelUnfilledAfterBars = input.int(3, "Cancel Unfilled After Bars", minval=1, maxval=20, group=groupPullbackEntry)
+sameBarEntryVsCancelMode = input.string("Cancel Wins", "Same-Bar Entry vs Cancel", options=["Cancel Wins", "Entry Wins"], group=groupPullbackEntry)
+
+// 06. Risk / Targets
+stopMode = input.string("Trigger Bar", "Stop Mode", options=["Trigger Bar", "Pullback Swing"], group=groupRiskTargets)
+pullbackStopLookbackBars = input.int(3, "Pullback Stop Lookback Bars", minval=1, maxval=20, group=groupRiskTargets)
+minStopAtrMultiplier = input.float(0.25, "Minimum Stop ATR Multiplier", minval=0.0, step=0.05, group=groupRiskTargets)
+maxStopAtrMultiplier = input.float(1.25, "Maximum Stop ATR Multiplier", minval=0.05, step=0.05, group=groupRiskTargets)
+targetR = input.float(1.5, "Target R", minval=0.1, step=0.1, group=groupRiskTargets)
+maxRiskDollars = input.float(500.0, "Max Risk Dollars", minval=0.0, step=10.0, group=groupRiskTargets)
+useRiskBasedSizing = input.bool(true, "Use Risk-Based Sizing", group=groupRiskTargets)
+fixedContracts = input.int(1, "Fixed Contracts", minval=1, maxval=100, group=groupRiskTargets)
+useMaxContractCap = input.bool(true, "Use Max Contract Cap", group=groupRiskTargets)
+maxContracts = input.int(20, "Max Contracts", minval=1, maxval=100, group=groupRiskTargets)
+
+// 07. Levels
+usePrevDayHighLevel = input.bool(true, "Use RTH Previous Day High", group=groupLevels)
+usePrevDayLowLevel = input.bool(true, "Use RTH Previous Day Low", group=groupLevels)
+useRthOpenLevel = input.bool(true, "Use Current RTH Open", group=groupLevels)
+usePremarketHighLevel = input.bool(true, "Use Premarket High", group=groupLevels)
+usePremarketLowLevel = input.bool(true, "Use Premarket Low", group=groupLevels)
+useOpeningRangeHighLevel = input.bool(true, "Use 15m Opening Range High", group=groupLevels)
+useOpeningRangeLowLevel = input.bool(true, "Use 15m Opening Range Low", group=groupLevels)
+showLevels = input.bool(true, "Show Levels", group=groupLevels)
+showOpeningRange = input.bool(true, "Show Opening Range", group=groupLevels)
+
+// 08. Display / Alerts
+alertLabelMode = input.string("Compact", "Historical Alert Labels", options=["Off", "Marker Only", "Compact"], group=groupDisplayAlerts)
+showBullSignals = input.bool(true, "Show Bull Signals", group=groupDisplayAlerts)
+showBearSignals = input.bool(true, "Show Bear Signals", group=groupDisplayAlerts)
+showCancellationLabels = input.bool(true, "Show Cancellation Labels", group=groupDisplayAlerts)
+showDebugTable = input.bool(true, "Show Debug Table", group=groupDisplayAlerts)
+
+// 09. Strategy Backtest / Debug
+showStrategyDebugLabels = input.bool(false, "Show Strategy Debug Labels", group=groupBacktestDebug)
+
+// ===================== Constants / Colors =====================
+
+string TZ = "America/New_York"
+string RTH_SESSION = "0930-1600:23456"
+string PREMARKET_SESSION = "0400-0930:23456"
+string OPENING_RANGE_SESSION = "0930-0945:23456"
+string LONG_ENTRY_ID = "EMA LPB Long"
+string SHORT_ENTRY_ID = "EMA LPB Short"
+string LONG_EXIT_ID = "EMA LPB Long Exit"
+string SHORT_EXIT_ID = "EMA LPB Short Exit"
+
+float pointValue = tickerInput == "MES" ? 5.0 : tickerInput == "ES" ? 50.0 : tickerInput == "MNQ" ? 2.0 : 20.0
+float tickSize = useTickSizeFallback or syminfo.mintick <= 0 ? scalpTickSizeFallback : syminfo.mintick
+
+color majorHighLevelColor = color.rgb(0, 100, 0)
+color majorLowLevelColor = color.rgb(145, 0, 0)
+color premarketLevelColor = color.blue
+color openLevelColor = color.orange
+color openingRangeHighColor = color.rgb(70, 190, 105)
+color openingRangeLowColor = color.rgb(235, 95, 95)
+color bullSignalColor = color.new(color.lime, 0)
+color bearSignalColor = color.new(color.red, 0)
+color cancellationLabelColor = color.rgb(245, 180, 45)
+
+// ===================== Formatting Helpers =====================
+
+f_priceText(float _price) =>
+    na(_price) ? "na" : str.tostring(_price, format.mintick)
+
+f_pointsText(float _points) =>
+    na(_points) ? "na" : str.tostring(_points, "#.##")
+
+f_rText(float _r) =>
+    na(_r) ? "na" : str.tostring(_r, "#.##") + "R"
+
+f_boolText(bool _value) =>
+    _value ? "TRUE" : "FALSE"
+
+f_boolColor(bool _value) =>
+    _value ? color.lime : color.red
+
+f_validLevel(float _price) =>
+    not na(_price) and _price > 0
+
+// ===================== Price / Location Helpers =====================
+
+f_barTouchesPrice(float _price, float _low, float _high) =>
+    not na(_price) and not na(_low) and not na(_high) and _low <= _price and _high >= _price
+
+f_bodyTouchesPrice(float _price, float _open, float _close) =>
+    float bodyLow = math.min(_open, _close)
+    float bodyHigh = math.max(_open, _close)
+    not na(_price) and not na(_open) and not na(_close) and bodyLow <= _price and bodyHigh >= _price
+
+f_barOrBodyNearPrice(float _price, float _open, float _high, float _low, float _close, float _atr, float _proximityMult) =>
+    float bodyLow = math.min(_open, _close)
+    float bodyHigh = math.max(_open, _close)
+    float proximity = nz(_atr) * _proximityMult
+    bool barTouches = f_barTouchesPrice(_price, _low, _high)
+    bool bodyTouches = f_bodyTouchesPrice(_price, _open, _close)
+    bool bodyNear = not na(_price) and (math.abs(bodyLow - _price) <= proximity or math.abs(bodyHigh - _price) <= proximity)
+    bool rangeNear = not na(_price) and (math.abs(_low - _price) <= proximity or math.abs(_high - _price) <= proximity)
+    barTouches or bodyTouches or bodyNear or rangeNear
+
+f_recentSeriesInteraction(float _priceSeries, int _lookbackBars, float _atrSeries, float _proximityMult) =>
+    bool touched = false
+    for i = 0 to _lookbackBars - 1
+        touched := touched or f_barOrBodyNearPrice(_priceSeries[i], open[i], high[i], low[i], close[i], _atrSeries[i], _proximityMult)
+    touched
+
+f_recentStaticInteraction(float _price, int _lookbackBars, float _atrSeries, float _proximityMult) =>
+    bool touched = false
+    for i = 0 to _lookbackBars - 1
+        touched := touched or f_barOrBodyNearPrice(_price, open[i], high[i], low[i], close[i], _atrSeries[i], _proximityMult)
+    touched
+
+f_pickLocationName(bool _ema20, bool _ema50, bool _orh, bool _orl, bool _pdh, bool _pdl, bool _pmh, bool _pml, bool _rthOpen) =>
+    _ema20 ? "20EMA" :
+     _ema50 ? "50EMA" :
+     _orh ? "ORH" :
+     _orl ? "ORL" :
+     _pdh ? "PDH" :
+     _pdl ? "PDL" :
+     _pmh ? "PMH" :
+     _pml ? "PML" :
+     _rthOpen ? "RTH Open" :
+     "N/A"
+
+f_locationCode(string _locationName) =>
+    _locationName == "20EMA" ? 1.0 :
+     _locationName == "50EMA" ? 2.0 :
+     _locationName == "ORH" ? 3.0 :
+     _locationName == "ORL" ? 4.0 :
+     _locationName == "PDH" ? 5.0 :
+     _locationName == "PDL" ? 6.0 :
+     _locationName == "PMH" ? 7.0 :
+     _locationName == "PML" ? 8.0 :
+     _locationName == "RTH Open" ? 9.0 :
+     0.0
+
+// ===================== Trend / Pullback / Risk Helpers =====================
+
+f_countClosesBelow(float _ema, int _bars) =>
+    int count = 0
+    for i = 0 to _bars - 1
+        if not na(close[i]) and not na(_ema[i]) and close[i] < _ema[i]
+            count += 1
+    count
+
+f_countClosesAbove(float _ema, int _bars) =>
+    int count = 0
+    for i = 0 to _bars - 1
+        if not na(close[i]) and not na(_ema[i]) and close[i] > _ema[i]
+            count += 1
+    count
+
+f_longPullbackExists(int _lookbackBars) =>
+    bool pullbackFound = false
+    for i = 0 to _lookbackBars - 1
+        pullbackFound := pullbackFound or (not na(high[i + 1]) and high[i] < high[i + 1]) or (not na(low[i + 1]) and low[i] < low[i + 1])
+    pullbackFound
+
+f_shortPullbackExists(int _lookbackBars) =>
+    bool pullbackFound = false
+    for i = 0 to _lookbackBars - 1
+        pullbackFound := pullbackFound or (not na(high[i + 1]) and high[i] > high[i + 1]) or (not na(low[i + 1]) and low[i] > low[i + 1])
+    pullbackFound
+
+f_riskPass(float _riskPoints, float _atr) =>
+    not na(_riskPoints) and not na(_atr) and _riskPoints > 0 and _riskPoints >= _atr * minStopAtrMultiplier and _riskPoints <= _atr * maxStopAtrMultiplier
+
+f_positionSize(float _riskPoints) =>
+    int contracts = 0
+    if not na(_riskPoints) and _riskPoints > 0
+        if useRiskBasedSizing
+            float riskPerContract = _riskPoints * pointValue
+            contracts := riskPerContract > 0 and maxRiskDollars >= riskPerContract ? int(math.floor(maxRiskDollars / riskPerContract)) : 0
+        else
+            contracts := fixedContracts
+        contracts := useMaxContractCap ? math.min(contracts, maxContracts) : contracts
+    contracts
+
+f_buildSetupLabelText(string _direction, string _locationName, float _entry, float _stop, float _target, float _targetR) =>
+    _direction + "\n" +
+     _locationName + "\n" +
+     "E " + f_priceText(_entry) + "\n" +
+     "S " + f_priceText(_stop) + "\n" +
+     "T " + f_priceText(_target) + "\n" +
+     f_rText(_targetR)
+
+f_buildSetupAlertMessage(string _direction, string _locationName, float _entry, float _stop, float _target, float _riskPoints, float _targetR, int _contracts) =>
+    "EMA LEVEL PULLBACK BREAK " + _direction + "\n" +
+     syminfo.ticker + " " + timeframe.period + "\n" +
+     "Ticker input: " + tickerInput + "\n" +
+     "Location: " + _locationName + "\n" +
+     "Entry: " + f_priceText(_entry) + "\n" +
+     "Stop: " + f_priceText(_stop) + "\n" +
+     "Target: " + f_priceText(_target) + "\n" +
+     "Risk points: " + f_pointsText(_riskPoints) + "\n" +
+     "Target R: " + f_rText(_targetR) + "\n" +
+     "Contracts: " + str.tostring(_contracts)
+
+f_buildCancelAlertMessage(string _direction, string _locationName, string _reason, float _entry, float _stop, float _target, float _riskPoints, float _targetR) =>
+    "EMA LEVEL PULLBACK BREAK CANCEL " + _direction + "\n" +
+     syminfo.ticker + " " + timeframe.period + "\n" +
+     "Ticker input: " + tickerInput + "\n" +
+     "Location: " + _locationName + "\n" +
+     "Reason: " + _reason + "\n" +
+     "Entry: " + f_priceText(_entry) + "\n" +
+     "Stop: " + f_priceText(_stop) + "\n" +
+     "Target: " + f_priceText(_target) + "\n" +
+     "Risk points: " + f_pointsText(_riskPoints) + "\n" +
+     "Target R: " + f_rText(_targetR)
+
+f_addSetupChartLabel(bool _isLong, string _text) =>
+    label.new(
+         bar_index,
+         _isLong ? low : high,
+         _text,
+         style = _isLong ? label.style_label_up : label.style_label_down,
+         textcolor = color.white,
+         color = _isLong ? bullSignalColor : bearSignalColor,
+         size = size.small
+    )
+
+f_addCancellationChartLabel(bool _isLong, string _text) =>
+    label.new(
+         bar_index,
+         _isLong ? high : low,
+         _text,
+         style = _isLong ? label.style_label_down : label.style_label_up,
+         textcolor = color.black,
+         color = cancellationLabelColor,
+         size = size.tiny
+    )
+
+// ===================== EMA / ATR Calculations =====================
+
+ema9 = ta.ema(close, emaFastLength)
+ema20 = ta.ema(close, emaMidLength)
+ema50 = ta.ema(close, emaSlowLength)
+atrValue = ta.atr(atrLength)
+
+barRange = high - low
+closeInBottomQuarter = barRange > 0 and close <= low + barRange * 0.25
+closeInTopQuarter = barRange > 0 and close >= high - barRange * 0.25
+
+// Trend filter: price and EMA alignment, optional fast EMA confirmation,
+// optional mid-over-slow confirmation, mid EMA slope, and a simple chop block.
+midEmaSlope = ema20 - ema20[emaSlopeLookbackBars]
+minMidEmaSlopePoints = minMidEmaSlopeTicks * tickSize
+longEmaChopBlocked = useEmaChopFilter and f_countClosesBelow(ema20, 5) >= 3
+shortEmaChopBlocked = useEmaChopFilter and f_countClosesAbove(ema20, 5) >= 3
+
+longTrendPass = close > ema20 and close > ema50 and ema9 > ema20 and midEmaSlope >= minMidEmaSlopePoints and (not requireCloseBeyondFastEma or close > ema9) and (not requireMidEmaBeyondSlowEma or ema20 > ema50) and not longEmaChopBlocked
+shortTrendPass = close < ema20 and close < ema50 and ema9 < ema20 and midEmaSlope <= -minMidEmaSlopePoints and (not requireCloseBeyondFastEma or close < ema9) and (not requireMidEmaBeyondSlowEma or ema20 < ema50) and not shortEmaChopBlocked
+
+// Pullback filter: a recent lower high/low for longs, or higher high/low for shorts.
+longPullbackPass = not requirePullback or f_longPullbackExists(pullbackLookbackBars)
+shortPullbackPass = not requirePullback or f_shortPullbackExists(pullbackLookbackBars)
+
+// ===================== RTH / Premarket / Opening Range Levels =====================
+
+rthTime = time(timeframe.period, RTH_SESSION, TZ)
+premarketTime = time(timeframe.period, PREMARKET_SESSION, TZ)
+openingRangeTime = time(timeframe.period, OPENING_RANGE_SESSION, TZ)
+tradingWindowTime = time(timeframe.period, alertTradingWindow, TZ)
+
+inRthSession = not na(rthTime)
+inPremarketSession = not na(premarketTime)
+inOpeningRangeWindow = inRthSession and not na(openingRangeTime)
+inAlertTradingWindow = not na(tradingWindowTime)
+
+nySessionDateKey = year(time, TZ) * 10000 + month(time, TZ) * 100 + dayofmonth(time, TZ)
+priorNYSessionDateKey = bar_index > 0 ? nySessionDateKey[1] : nySessionDateKey
+wasInRthSession = bar_index > 0 ? inRthSession[1] : false
+wasInPremarketSession = bar_index > 0 ? inPremarketSession[1] : false
+newNYSessionDate = bar_index > 0 and nySessionDateKey != priorNYSessionDateKey
+newRthSession = inRthSession and (not wasInRthSession or nySessionDateKey != priorNYSessionDateKey)
+newPremarketSession = inPremarketSession and (not wasInPremarketSession or nySessionDateKey != priorNYSessionDateKey)
+
+var float currentRthHigh = na
+var float currentRthLow = na
+var float effectivePrevDayHigh = na
+var float effectivePrevDayLow = na
+var float autoRthOpen = na
+var float autoPremarketHigh = na
+var float autoPremarketLow = na
+var float finalizedPremarketHigh = na
+var float finalizedPremarketLow = na
+var int autoPremarketDateKey = na
+var int currentRthDateKey = na
+var int previousRthDateKey = na
+var int currentRthStartBar = na
+var float openingRangeHigh = na
+var float openingRangeLow = na
+var bool openingRangeComplete = false
+var int openingRangeBullishCloseCount = 0
+var int openingRangeBearishCloseCount = 0
+
+if newNYSessionDate and not inRthSession and not inPremarketSession
+    autoRthOpen := na
+    finalizedPremarketHigh := na
+    finalizedPremarketLow := na
+
+if newPremarketSession
+    autoPremarketHigh := high
+    autoPremarketLow := low
+    autoRthOpen := na
+    finalizedPremarketHigh := na
+    finalizedPremarketLow := na
+    autoPremarketDateKey := nySessionDateKey
+else if inPremarketSession
+    autoPremarketHigh := na(autoPremarketHigh) ? high : math.max(autoPremarketHigh, high)
+    autoPremarketLow := na(autoPremarketLow) ? low : math.min(autoPremarketLow, low)
+    autoPremarketDateKey := nySessionDateKey
+
+if newRthSession
+    if not na(currentRthDateKey)
+        previousRthDateKey := currentRthDateKey
+    currentRthDateKey := nySessionDateKey
+    currentRthStartBar := bar_index
+    effectivePrevDayHigh := currentRthHigh
+    effectivePrevDayLow := currentRthLow
+    currentRthHigh := high
+    currentRthLow := low
+    autoRthOpen := open
+    bool currentPremarketReady = autoPremarketDateKey == nySessionDateKey and not na(autoPremarketHigh) and not na(autoPremarketLow)
+    finalizedPremarketHigh := currentPremarketReady ? autoPremarketHigh : na
+    finalizedPremarketLow := currentPremarketReady ? autoPremarketLow : na
+    openingRangeHigh := na
+    openingRangeLow := na
+    openingRangeComplete := false
+    openingRangeBullishCloseCount := 0
+    openingRangeBearishCloseCount := 0
+else if inRthSession
+    currentRthHigh := na(currentRthHigh) ? high : math.max(currentRthHigh, high)
+    currentRthLow := na(currentRthLow) ? low : math.min(currentRthLow, low)
+
+if inOpeningRangeWindow
+    openingRangeHigh := na(openingRangeHigh) ? high : math.max(openingRangeHigh, high)
+    openingRangeLow := na(openingRangeLow) ? low : math.min(openingRangeLow, low)
+
+if inRthSession and not inOpeningRangeWindow and not openingRangeComplete and not na(openingRangeHigh) and not na(openingRangeLow)
+    openingRangeComplete := true
+
+// Optional OR bias filter: when enabled, it only requires a simple count of
+// confirmed post-OR closes beyond ORH/ORL.
+if barstate.isconfirmed and inRthSession and openingRangeComplete and not inOpeningRangeWindow
+    if close > openingRangeHigh
+        openingRangeBullishCloseCount += 1
+    if close < openingRangeLow
+        openingRangeBearishCloseCount += 1
+
+longOpeningRangeBiasPass = not useOpeningRangeBiasFilter or openingRangeBullishCloseCount >= requiredOpeningRangeBreakoutCloses
+shortOpeningRangeBiasPass = not useOpeningRangeBiasFilter or openingRangeBearishCloseCount >= requiredOpeningRangeBreakoutCloses
+
+activePrevDayHigh = usePrevDayHighLevel and f_validLevel(effectivePrevDayHigh) ? effectivePrevDayHigh : na
+activePrevDayLow = usePrevDayLowLevel and f_validLevel(effectivePrevDayLow) ? effectivePrevDayLow : na
+activeRthOpen = useRthOpenLevel and f_validLevel(autoRthOpen) ? autoRthOpen : na
+activePremarketHigh = usePremarketHighLevel and f_validLevel(finalizedPremarketHigh) ? finalizedPremarketHigh : na
+activePremarketLow = usePremarketLowLevel and f_validLevel(finalizedPremarketLow) ? finalizedPremarketLow : na
+activeOpeningRangeHigh = useOpeningRangeLevelsForEntries and useOpeningRangeHighLevel and openingRangeComplete and f_validLevel(openingRangeHigh) ? openingRangeHigh : na
+activeOpeningRangeLow = useOpeningRangeLevelsForEntries and useOpeningRangeLowLevel and openingRangeComplete and f_validLevel(openingRangeLow) ? openingRangeLow : na
+openingRangeDisplayHigh = openingRangeComplete and f_validLevel(openingRangeHigh) ? openingRangeHigh : na
+openingRangeDisplayLow = openingRangeComplete and f_validLevel(openingRangeLow) ? openingRangeLow : na
+
+// ===================== Location Filter =====================
+
+// Location filter: the last two bars can qualify by touching/crossing or being
+// ATR-near the 20 EMA, 50 EMA, or one of the enabled session levels.
+longTouchedEma20 = useEmaLocation and f_recentSeriesInteraction(ema20, locationLookbackBars, atrValue, proximityAtrMultiplier)
+longTouchedEma50 = useEmaLocation and f_recentSeriesInteraction(ema50, locationLookbackBars, atrValue, proximityAtrMultiplier)
+shortTouchedEma20 = useEmaLocation and f_recentSeriesInteraction(ema20, locationLookbackBars, atrValue, proximityAtrMultiplier)
+shortTouchedEma50 = useEmaLocation and f_recentSeriesInteraction(ema50, locationLookbackBars, atrValue, proximityAtrMultiplier)
+
+longTouchedOrh = useLevelLocation and f_recentStaticInteraction(activeOpeningRangeHigh, locationLookbackBars, atrValue, proximityAtrMultiplier)
+longTouchedOrl = useLevelLocation and f_recentStaticInteraction(activeOpeningRangeLow, locationLookbackBars, atrValue, proximityAtrMultiplier)
+longTouchedPdh = useLevelLocation and f_recentStaticInteraction(activePrevDayHigh, locationLookbackBars, atrValue, proximityAtrMultiplier)
+longTouchedPdl = useLevelLocation and f_recentStaticInteraction(activePrevDayLow, locationLookbackBars, atrValue, proximityAtrMultiplier)
+longTouchedPmh = useLevelLocation and f_recentStaticInteraction(activePremarketHigh, locationLookbackBars, atrValue, proximityAtrMultiplier)
+longTouchedPml = useLevelLocation and f_recentStaticInteraction(activePremarketLow, locationLookbackBars, atrValue, proximityAtrMultiplier)
+longTouchedRthOpen = useLevelLocation and f_recentStaticInteraction(activeRthOpen, locationLookbackBars, atrValue, proximityAtrMultiplier)
+
+shortTouchedOrh = useLevelLocation and f_recentStaticInteraction(activeOpeningRangeHigh, locationLookbackBars, atrValue, proximityAtrMultiplier)
+shortTouchedOrl = useLevelLocation and f_recentStaticInteraction(activeOpeningRangeLow, locationLookbackBars, atrValue, proximityAtrMultiplier)
+shortTouchedPdh = useLevelLocation and f_recentStaticInteraction(activePrevDayHigh, locationLookbackBars, atrValue, proximityAtrMultiplier)
+shortTouchedPdl = useLevelLocation and f_recentStaticInteraction(activePrevDayLow, locationLookbackBars, atrValue, proximityAtrMultiplier)
+shortTouchedPmh = useLevelLocation and f_recentStaticInteraction(activePremarketHigh, locationLookbackBars, atrValue, proximityAtrMultiplier)
+shortTouchedPml = useLevelLocation and f_recentStaticInteraction(activePremarketLow, locationLookbackBars, atrValue, proximityAtrMultiplier)
+shortTouchedRthOpen = useLevelLocation and f_recentStaticInteraction(activeRthOpen, locationLookbackBars, atrValue, proximityAtrMultiplier)
+
+longTouchedLevel = longTouchedOrh or longTouchedOrl or longTouchedPdh or longTouchedPdl or longTouchedPmh or longTouchedPml or longTouchedRthOpen
+shortTouchedLevel = shortTouchedOrh or shortTouchedOrl or shortTouchedPdh or shortTouchedPdl or shortTouchedPmh or shortTouchedPml or shortTouchedRthOpen
+
+longLocationName = f_pickLocationName(longTouchedEma20, longTouchedEma50, longTouchedOrh, longTouchedOrl, longTouchedPdh, longTouchedPdl, longTouchedPmh, longTouchedPml, longTouchedRthOpen)
+shortLocationName = f_pickLocationName(shortTouchedEma20, shortTouchedEma50, shortTouchedOrh, shortTouchedOrl, shortTouchedPdh, shortTouchedPdl, shortTouchedPmh, shortTouchedPml, shortTouchedRthOpen)
+
+longLocationPass = (useEmaLocation and (longTouchedEma20 or longTouchedEma50)) or (useLevelLocation and longTouchedLevel)
+shortLocationPass = (useEmaLocation and (shortTouchedEma20 or shortTouchedEma50)) or (useLevelLocation and shortTouchedLevel)
+
+// ===================== Stop, Risk, and Target Calculations =====================
+
+longTriggerStop = low - tickSize
+shortTriggerStop = high + tickSize
+longPullbackSwingStop = ta.lowest(low, pullbackStopLookbackBars) - tickSize
+shortPullbackSwingStop = ta.highest(high, pullbackStopLookbackBars) + tickSize
+
+longEntryPrice = high + tickSize
+shortEntryPrice = low - tickSize
+longStopPrice = stopMode == "Trigger Bar" ? longTriggerStop : longPullbackSwingStop
+shortStopPrice = stopMode == "Trigger Bar" ? shortTriggerStop : shortPullbackSwingStop
+longRiskPoints = longEntryPrice - longStopPrice
+shortRiskPoints = shortStopPrice - shortEntryPrice
+longRiskPass = f_riskPass(longRiskPoints, atrValue)
+shortRiskPass = f_riskPass(shortRiskPoints, atrValue)
+longTargetPrice = longEntryPrice + longRiskPoints * targetR
+shortTargetPrice = shortEntryPrice - shortRiskPoints * targetR
+longContracts = f_positionSize(longRiskPoints)
+shortContracts = f_positionSize(shortRiskPoints)
+
+longTriggerQualityPass = not na(atrValue) and barRange <= atrValue * 1.5 and not closeInBottomQuarter and close >= ema20 - tickSize and longRiskPass
+shortTriggerQualityPass = not na(atrValue) and barRange <= atrValue * 1.5 and not closeInTopQuarter and close <= ema20 + tickSize and shortRiskPass
+
+// ===================== Strategy State =====================
+
+var int tradesToday = 0
+var int lastFillBar = na
+var bool longPendingOrder = false
+var bool shortPendingOrder = false
+var int longPendingSignalBar = na
+var int shortPendingSignalBar = na
+var float longPendingEntry = na
+var float longPendingStop = na
+var float longPendingTarget = na
+var float shortPendingEntry = na
+var float shortPendingStop = na
+var float shortPendingTarget = na
+var int longPendingContracts = na
+var int shortPendingContracts = na
+var string longPendingLocation = "N/A"
+var string shortPendingLocation = "N/A"
+var float activeLongStop = na
+var float activeLongTarget = na
+var float activeShortStop = na
+var float activeShortTarget = na
+var bool pendingLongDelayedSetup = false
+var bool pendingShortDelayedSetup = false
+var int pendingLongDelayedSetupBar = na
+var int pendingShortDelayedSetupBar = na
+var float pendingLongDelayedBreakPrice = na
+var float pendingShortDelayedBreakPrice = na
+var float pendingLongDelayedSetupStop = na
+var float pendingShortDelayedSetupStop = na
+var string pendingLongDelayedLocation = "N/A"
+var string pendingShortDelayedLocation = "N/A"
+var string lastSignalReason = "Waiting"
+
+bool longSetupPlacedEvent = false
+bool shortSetupPlacedEvent = false
+bool longOrderCancelledEvent = false
+bool shortOrderCancelledEvent = false
+float longSetupAlertEntry = na
+float longSetupAlertStop = na
+float longSetupAlertTarget = na
+float longSetupAlertRisk = na
+float longSetupAlertTargetR = na
+float longSetupAlertLocationCode = na
+float shortSetupAlertEntry = na
+float shortSetupAlertStop = na
+float shortSetupAlertTarget = na
+float shortSetupAlertRisk = na
+float shortSetupAlertTargetR = na
+float shortSetupAlertLocationCode = na
+float longCancelAlertEntry = na
+float longCancelAlertStop = na
+float longCancelAlertTarget = na
+float longCancelAlertRisk = na
+float longCancelAlertReasonCode = na
+float shortCancelAlertEntry = na
+float shortCancelAlertStop = na
+float shortCancelAlertTarget = na
+float shortCancelAlertRisk = na
+float shortCancelAlertReasonCode = na
+
+bool delayedEntryMode = entryMode == "Prior Bar Break Or Delayed Confirmation"
+bool cancelWinsSameBar = sameBarEntryVsCancelMode == "Cancel Wins"
+bool isFiveMinuteChart = timeframe.period == "5"
+
+if newRthSession
+    tradesToday := 0
+    pendingLongDelayedSetup := false
+    pendingShortDelayedSetup := false
+    if longPendingOrder
+        strategy.cancel(LONG_ENTRY_ID)
+        longPendingOrder := false
+    if shortPendingOrder
+        strategy.cancel(SHORT_ENTRY_ID)
+        shortPendingOrder := false
+    lastSignalReason := "New RTH session"
+
+// Actual fill tracking: tradesToday increments only when the broker emulator
+// opens a position, not when a setup appears or a stop order is submitted.
+bool longFilledNow = strategy.position_size > 0 and nz(strategy.position_size[1]) <= 0 and lastFillBar != bar_index
+bool shortFilledNow = strategy.position_size < 0 and nz(strategy.position_size[1]) >= 0 and lastFillBar != bar_index
+
+if longFilledNow
+    tradesToday += 1
+    lastFillBar := bar_index
+    activeLongStop := not na(longPendingStop) ? longPendingStop : activeLongStop
+    activeLongTarget := not na(longPendingTarget) ? longPendingTarget : activeLongTarget
+    longPendingOrder := false
+    if shortPendingOrder
+        strategy.cancel(SHORT_ENTRY_ID)
+        shortPendingOrder := false
+    lastSignalReason := "Long filled"
+
+if shortFilledNow
+    tradesToday += 1
+    lastFillBar := bar_index
+    activeShortStop := not na(shortPendingStop) ? shortPendingStop : activeShortStop
+    activeShortTarget := not na(shortPendingTarget) ? shortPendingTarget : activeShortTarget
+    shortPendingOrder := false
+    if longPendingOrder
+        strategy.cancel(LONG_ENTRY_ID)
+        longPendingOrder := false
+    lastSignalReason := "Short filled"
+
+bool positionClosedNow = strategy.position_size == 0 and nz(strategy.position_size[1]) != 0
+if positionClosedNow
+    activeLongStop := na
+    activeLongTarget := na
+    activeShortStop := na
+    activeShortTarget := na
+    lastSignalReason := "Position closed"
+
+// Cancellation logic: unfilled stop entries are cancelled after the configured
+// age or if the planned stop breaks before entry. Same-bar entry/stop ambiguity
+// uses the requested arbitration mode when the fill state is still flat.
+if barstate.isconfirmed and strategy.position_size == 0
+    if longPendingOrder and bar_index > longPendingSignalBar
+        bool longEntryTouched = high >= longPendingEntry
+        bool longStopTouched = low <= longPendingStop
+        bool longBothTouched = longEntryTouched and longStopTouched
+        bool longStopCancel = longStopTouched and (not longEntryTouched or (longBothTouched and cancelWinsSameBar))
+        bool longAgeCancel = bar_index - longPendingSignalBar >= cancelUnfilledAfterBars
+        if longStopCancel or longAgeCancel
+            string cancelReason = longStopCancel ? "CXL Stop" : "CXL Age"
+            longOrderCancelledEvent := true
+            longCancelAlertEntry := longPendingEntry
+            longCancelAlertStop := longPendingStop
+            longCancelAlertTarget := longPendingTarget
+            longCancelAlertRisk := longPendingEntry - longPendingStop
+            longCancelAlertReasonCode := longStopCancel ? 2.0 : 1.0
+            strategy.cancel(LONG_ENTRY_ID)
+            if showCancellationLabels
+                f_addCancellationChartLabel(true, cancelReason)
+            alert(f_buildCancelAlertMessage("LONG", longPendingLocation, cancelReason, longPendingEntry, longPendingStop, longPendingTarget, longPendingEntry - longPendingStop, targetR), alert.freq_once_per_bar_close)
+            longPendingOrder := false
+            lastSignalReason := "Long " + cancelReason
+
+    if shortPendingOrder and bar_index > shortPendingSignalBar
+        bool shortEntryTouched = low <= shortPendingEntry
+        bool shortStopTouched = high >= shortPendingStop
+        bool shortBothTouched = shortEntryTouched and shortStopTouched
+        bool shortStopCancel = shortStopTouched and (not shortEntryTouched or (shortBothTouched and cancelWinsSameBar))
+        bool shortAgeCancel = bar_index - shortPendingSignalBar >= cancelUnfilledAfterBars
+        if shortStopCancel or shortAgeCancel
+            string cancelReason = shortStopCancel ? "CXL Stop" : "CXL Age"
+            shortOrderCancelledEvent := true
+            shortCancelAlertEntry := shortPendingEntry
+            shortCancelAlertStop := shortPendingStop
+            shortCancelAlertTarget := shortPendingTarget
+            shortCancelAlertRisk := shortPendingStop - shortPendingEntry
+            shortCancelAlertReasonCode := shortStopCancel ? 2.0 : 1.0
+            strategy.cancel(SHORT_ENTRY_ID)
+            if showCancellationLabels
+                f_addCancellationChartLabel(false, cancelReason)
+            alert(f_buildCancelAlertMessage("SHORT", shortPendingLocation, cancelReason, shortPendingEntry, shortPendingStop, shortPendingTarget, shortPendingStop - shortPendingEntry, targetR), alert.freq_once_per_bar_close)
+            shortPendingOrder := false
+            lastSignalReason := "Short " + cancelReason
+
+// ===================== Setup Evaluation =====================
+
+bool hasOpenPosition = strategy.position_size != 0
+bool anyPendingOrder = longPendingOrder or shortPendingOrder
+bool canEvaluateSignals = barstate.isconfirmed and enableStrategyBacktest and inRthSession and inAlertTradingWindow and openingRangeComplete and tradesToday < maxTradesPerDay
+bool canPlaceLongOrder = canEvaluateSignals and useLongs and strategy.position_size == 0 and not longPendingOrder and (not onlyOneActiveTradeOrOrder or not anyPendingOrder)
+bool canPlaceShortOrder = canEvaluateSignals and useShorts and strategy.position_size == 0 and not shortPendingOrder and (not onlyOneActiveTradeOrOrder or not anyPendingOrder)
+bool longBaseSetup = canPlaceLongOrder and longOpeningRangeBiasPass and longTrendPass and longLocationPass and longPullbackPass
+bool shortBaseSetup = canPlaceShortOrder and shortOpeningRangeBiasPass and shortTrendPass and shortLocationPass and shortPullbackPass
+bool longPrimarySetup = longBaseSetup and longTriggerQualityPass and longContracts >= 1
+bool shortPrimarySetup = shortBaseSetup and shortTriggerQualityPass and shortContracts >= 1
+
+// Delayed confirmation keeps a simple two-bar memory of a valid trend,
+// pullback, and location setup when the first trigger bar is not good enough.
+if not delayedEntryMode
+    pendingLongDelayedSetup := false
+    pendingShortDelayedSetup := false
+
+if delayedEntryMode and pendingLongDelayedSetup and bar_index - pendingLongDelayedSetupBar > 2
+    pendingLongDelayedSetup := false
+
+if delayedEntryMode and pendingShortDelayedSetup and bar_index - pendingShortDelayedSetupBar > 2
+    pendingShortDelayedSetup := false
+
+bool longDelayedBreakStarted = delayedEntryMode and pendingLongDelayedSetup and bar_index > pendingLongDelayedSetupBar and bar_index - pendingLongDelayedSetupBar <= 2 and high > pendingLongDelayedBreakPrice
+bool shortDelayedBreakStarted = delayedEntryMode and pendingShortDelayedSetup and bar_index > pendingShortDelayedSetupBar and bar_index - pendingShortDelayedSetupBar <= 2 and low < pendingShortDelayedBreakPrice
+bool longDelayedSetup = canPlaceLongOrder and longDelayedBreakStarted and longOpeningRangeBiasPass and longTrendPass and longTriggerQualityPass and longContracts >= 1
+bool shortDelayedSetup = canPlaceShortOrder and shortDelayedBreakStarted and shortOpeningRangeBiasPass and shortTrendPass and shortTriggerQualityPass and shortContracts >= 1
+
+// Stop-entry logic: a confirmed setup submits a buy stop one tick above the
+// trigger bar high, or a sell stop one tick below the trigger bar low.
+if longDelayedSetup
+    longPendingOrder := true
+    longPendingSignalBar := bar_index
+    longPendingEntry := longEntryPrice
+    longPendingStop := longStopPrice
+    longPendingTarget := longTargetPrice
+    longPendingContracts := longContracts
+    longPendingLocation := pendingLongDelayedLocation
+    activeLongStop := longStopPrice
+    activeLongTarget := longTargetPrice
+    longSetupPlacedEvent := true
+    longSetupAlertEntry := longEntryPrice
+    longSetupAlertStop := longStopPrice
+    longSetupAlertTarget := longTargetPrice
+    longSetupAlertRisk := longRiskPoints
+    longSetupAlertTargetR := targetR
+    longSetupAlertLocationCode := f_locationCode(pendingLongDelayedLocation)
+    string longAlertMessage = f_buildSetupAlertMessage("LONG", pendingLongDelayedLocation, longEntryPrice, longStopPrice, longTargetPrice, longRiskPoints, targetR, longContracts)
+    strategy.entry(LONG_ENTRY_ID, strategy.long, qty=longContracts, stop=longEntryPrice, alert_message=longAlertMessage)
+    alert(longAlertMessage, alert.freq_once_per_bar_close)
+    if alertLabelMode == "Compact" and showBullSignals
+        f_addSetupChartLabel(true, f_buildSetupLabelText("LONG", pendingLongDelayedLocation, longEntryPrice, longStopPrice, longTargetPrice, targetR))
+    pendingLongDelayedSetup := false
+    lastSignalReason := "Long delayed placed: " + pendingLongDelayedLocation
+
+if shortDelayedSetup and (not onlyOneActiveTradeOrOrder or not longPendingOrder)
+    shortPendingOrder := true
+    shortPendingSignalBar := bar_index
+    shortPendingEntry := shortEntryPrice
+    shortPendingStop := shortStopPrice
+    shortPendingTarget := shortTargetPrice
+    shortPendingContracts := shortContracts
+    shortPendingLocation := pendingShortDelayedLocation
+    activeShortStop := shortStopPrice
+    activeShortTarget := shortTargetPrice
+    shortSetupPlacedEvent := true
+    shortSetupAlertEntry := shortEntryPrice
+    shortSetupAlertStop := shortStopPrice
+    shortSetupAlertTarget := shortTargetPrice
+    shortSetupAlertRisk := shortRiskPoints
+    shortSetupAlertTargetR := targetR
+    shortSetupAlertLocationCode := f_locationCode(pendingShortDelayedLocation)
+    string shortAlertMessage = f_buildSetupAlertMessage("SHORT", pendingShortDelayedLocation, shortEntryPrice, shortStopPrice, shortTargetPrice, shortRiskPoints, targetR, shortContracts)
+    strategy.entry(SHORT_ENTRY_ID, strategy.short, qty=shortContracts, stop=shortEntryPrice, alert_message=shortAlertMessage)
+    alert(shortAlertMessage, alert.freq_once_per_bar_close)
+    if alertLabelMode == "Compact" and showBearSignals
+        f_addSetupChartLabel(false, f_buildSetupLabelText("SHORT", pendingShortDelayedLocation, shortEntryPrice, shortStopPrice, shortTargetPrice, targetR))
+    pendingShortDelayedSetup := false
+    lastSignalReason := "Short delayed placed: " + pendingShortDelayedLocation
+
+bool longPrimaryCanStillPlace = longPrimarySetup and not longPendingOrder and (not onlyOneActiveTradeOrOrder or not shortPendingOrder)
+bool shortPrimaryCanStillPlace = shortPrimarySetup and not shortPendingOrder and (not onlyOneActiveTradeOrOrder or not longPendingOrder)
+
+if longPrimaryCanStillPlace
+    longPendingOrder := true
+    longPendingSignalBar := bar_index
+    longPendingEntry := longEntryPrice
+    longPendingStop := longStopPrice
+    longPendingTarget := longTargetPrice
+    longPendingContracts := longContracts
+    longPendingLocation := longLocationName
+    activeLongStop := longStopPrice
+    activeLongTarget := longTargetPrice
+    longSetupPlacedEvent := true
+    longSetupAlertEntry := longEntryPrice
+    longSetupAlertStop := longStopPrice
+    longSetupAlertTarget := longTargetPrice
+    longSetupAlertRisk := longRiskPoints
+    longSetupAlertTargetR := targetR
+    longSetupAlertLocationCode := f_locationCode(longLocationName)
+    string longAlertMessage = f_buildSetupAlertMessage("LONG", longLocationName, longEntryPrice, longStopPrice, longTargetPrice, longRiskPoints, targetR, longContracts)
+    strategy.entry(LONG_ENTRY_ID, strategy.long, qty=longContracts, stop=longEntryPrice, alert_message=longAlertMessage)
+    alert(longAlertMessage, alert.freq_once_per_bar_close)
+    if alertLabelMode == "Compact" and showBullSignals
+        f_addSetupChartLabel(true, f_buildSetupLabelText("LONG", longLocationName, longEntryPrice, longStopPrice, longTargetPrice, targetR))
+    pendingLongDelayedSetup := false
+    lastSignalReason := "Long placed: " + longLocationName
+
+if shortPrimaryCanStillPlace and (not onlyOneActiveTradeOrOrder or not longPendingOrder)
+    shortPendingOrder := true
+    shortPendingSignalBar := bar_index
+    shortPendingEntry := shortEntryPrice
+    shortPendingStop := shortStopPrice
+    shortPendingTarget := shortTargetPrice
+    shortPendingContracts := shortContracts
+    shortPendingLocation := shortLocationName
+    activeShortStop := shortStopPrice
+    activeShortTarget := shortTargetPrice
+    shortSetupPlacedEvent := true
+    shortSetupAlertEntry := shortEntryPrice
+    shortSetupAlertStop := shortStopPrice
+    shortSetupAlertTarget := shortTargetPrice
+    shortSetupAlertRisk := shortRiskPoints
+    shortSetupAlertTargetR := targetR
+    shortSetupAlertLocationCode := f_locationCode(shortLocationName)
+    string shortAlertMessage = f_buildSetupAlertMessage("SHORT", shortLocationName, shortEntryPrice, shortStopPrice, shortTargetPrice, shortRiskPoints, targetR, shortContracts)
+    strategy.entry(SHORT_ENTRY_ID, strategy.short, qty=shortContracts, stop=shortEntryPrice, alert_message=shortAlertMessage)
+    alert(shortAlertMessage, alert.freq_once_per_bar_close)
+    if alertLabelMode == "Compact" and showBearSignals
+        f_addSetupChartLabel(false, f_buildSetupLabelText("SHORT", shortLocationName, shortEntryPrice, shortStopPrice, shortTargetPrice, targetR))
+    pendingShortDelayedSetup := false
+    lastSignalReason := "Short placed: " + shortLocationName
+
+if delayedEntryMode and longBaseSetup and not longPrimarySetup and not pendingLongDelayedSetup and not longPendingOrder
+    pendingLongDelayedSetup := true
+    pendingLongDelayedSetupBar := bar_index
+    pendingLongDelayedBreakPrice := high
+    pendingLongDelayedSetupStop := longStopPrice
+    pendingLongDelayedLocation := longLocationName
+    lastSignalReason := "Long delayed armed: " + longLocationName
+
+if delayedEntryMode and shortBaseSetup and not shortPrimarySetup and not pendingShortDelayedSetup and not shortPendingOrder
+    pendingShortDelayedSetup := true
+    pendingShortDelayedSetupBar := bar_index
+    pendingShortDelayedBreakPrice := low
+    pendingShortDelayedSetupStop := shortStopPrice
+    pendingShortDelayedLocation := shortLocationName
+    lastSignalReason := "Short delayed armed: " + shortLocationName
+
+if canEvaluateSignals and not longBaseSetup and not shortBaseSetup and not longSetupPlacedEvent and not shortSetupPlacedEvent
+    lastSignalReason := not useLongs and not useShorts ? "Directions disabled" :
+     not inAlertTradingWindow ? "Outside trading window" :
+     tradesToday >= maxTradesPerDay ? "Max trades reached" :
+     anyPendingOrder ? "Pending order active" :
+     hasOpenPosition ? "Position active" :
+     "No complete setup"
+
+// Fixed-R target logic: exits are attached to the stored stop and target and do
+// not use active management in v1.
+if longPendingOrder
+    strategy.exit(LONG_EXIT_ID, from_entry=LONG_ENTRY_ID, stop=longPendingStop, limit=longPendingTarget)
+if shortPendingOrder
+    strategy.exit(SHORT_EXIT_ID, from_entry=SHORT_ENTRY_ID, stop=shortPendingStop, limit=shortPendingTarget)
+if strategy.position_size > 0 and not na(activeLongStop) and not na(activeLongTarget)
+    strategy.exit(LONG_EXIT_ID, from_entry=LONG_ENTRY_ID, stop=activeLongStop, limit=activeLongTarget)
+if strategy.position_size < 0 and not na(activeShortStop) and not na(activeShortTarget)
+    strategy.exit(SHORT_EXIT_ID, from_entry=SHORT_ENTRY_ID, stop=activeShortStop, limit=activeShortTarget)
+
+// ===================== Alert Conditions =====================
+
+plot(longSetupPlacedEvent ? longSetupAlertEntry : na, "Long Setup Entry", display=display.none)
+plot(longSetupPlacedEvent ? longSetupAlertStop : na, "Long Setup Stop", display=display.none)
+plot(longSetupPlacedEvent ? longSetupAlertTarget : na, "Long Setup Target", display=display.none)
+plot(longSetupPlacedEvent ? longSetupAlertRisk : na, "Long Setup Risk", display=display.none)
+plot(longSetupPlacedEvent ? longSetupAlertTargetR : na, "Long Setup Target R", display=display.none)
+plot(longSetupPlacedEvent ? longSetupAlertLocationCode : na, "Long Setup Location Code", display=display.none)
+plot(shortSetupPlacedEvent ? shortSetupAlertEntry : na, "Short Setup Entry", display=display.none)
+plot(shortSetupPlacedEvent ? shortSetupAlertStop : na, "Short Setup Stop", display=display.none)
+plot(shortSetupPlacedEvent ? shortSetupAlertTarget : na, "Short Setup Target", display=display.none)
+plot(shortSetupPlacedEvent ? shortSetupAlertRisk : na, "Short Setup Risk", display=display.none)
+plot(shortSetupPlacedEvent ? shortSetupAlertTargetR : na, "Short Setup Target R", display=display.none)
+plot(shortSetupPlacedEvent ? shortSetupAlertLocationCode : na, "Short Setup Location Code", display=display.none)
+plot(longOrderCancelledEvent ? longCancelAlertEntry : na, "Long Cancel Entry", display=display.none)
+plot(longOrderCancelledEvent ? longCancelAlertStop : na, "Long Cancel Stop", display=display.none)
+plot(longOrderCancelledEvent ? longCancelAlertTarget : na, "Long Cancel Target", display=display.none)
+plot(longOrderCancelledEvent ? longCancelAlertRisk : na, "Long Cancel Risk", display=display.none)
+plot(longOrderCancelledEvent ? longCancelAlertReasonCode : na, "Long Cancel Reason Code", display=display.none)
+plot(shortOrderCancelledEvent ? shortCancelAlertEntry : na, "Short Cancel Entry", display=display.none)
+plot(shortOrderCancelledEvent ? shortCancelAlertStop : na, "Short Cancel Stop", display=display.none)
+plot(shortOrderCancelledEvent ? shortCancelAlertTarget : na, "Short Cancel Target", display=display.none)
+plot(shortOrderCancelledEvent ? shortCancelAlertRisk : na, "Short Cancel Risk", display=display.none)
+plot(shortOrderCancelledEvent ? shortCancelAlertReasonCode : na, "Short Cancel Reason Code", display=display.none)
+
+alertcondition(longSetupPlacedEvent, "Long setup placed", "EMA Level Pullback Break Strategy LONG {{ticker}} Entry {{plot(\"Long Setup Entry\")}} Stop {{plot(\"Long Setup Stop\")}} Target {{plot(\"Long Setup Target\")}} Risk {{plot(\"Long Setup Risk\")}} TargetR {{plot(\"Long Setup Target R\")}} LocationCode {{plot(\"Long Setup Location Code\")}}")
+alertcondition(shortSetupPlacedEvent, "Short setup placed", "EMA Level Pullback Break Strategy SHORT {{ticker}} Entry {{plot(\"Short Setup Entry\")}} Stop {{plot(\"Short Setup Stop\")}} Target {{plot(\"Short Setup Target\")}} Risk {{plot(\"Short Setup Risk\")}} TargetR {{plot(\"Short Setup Target R\")}} LocationCode {{plot(\"Short Setup Location Code\")}}")
+alertcondition(longOrderCancelledEvent, "Long order cancelled", "EMA Level Pullback Break Strategy LONG CANCEL {{ticker}} Entry {{plot(\"Long Cancel Entry\")}} Stop {{plot(\"Long Cancel Stop\")}} Target {{plot(\"Long Cancel Target\")}} Risk {{plot(\"Long Cancel Risk\")}} ReasonCode {{plot(\"Long Cancel Reason Code\")}}")
+alertcondition(shortOrderCancelledEvent, "Short order cancelled", "EMA Level Pullback Break Strategy SHORT CANCEL {{ticker}} Entry {{plot(\"Short Cancel Entry\")}} Stop {{plot(\"Short Cancel Stop\")}} Target {{plot(\"Short Cancel Target\")}} Risk {{plot(\"Short Cancel Risk\")}} ReasonCode {{plot(\"Short Cancel Reason Code\")}}")
+
+// ===================== Plots / Historical Markers =====================
+
+plot(ema9, "EMA 9", color=color.new(color.yellow, 0), linewidth=1)
+plot(ema20, "EMA 20", color=color.new(color.aqua, 0), linewidth=2)
+plot(ema50, "EMA 50", color=color.new(color.fuchsia, 0), linewidth=2)
+
+plot(showLevels and inRthSession ? activePrevDayHigh : na, "RTH Previous Day High", color=majorHighLevelColor, linewidth=2, style=plot.style_linebr)
+plot(showLevels and inRthSession ? activePrevDayLow : na, "RTH Previous Day Low", color=majorLowLevelColor, linewidth=2, style=plot.style_linebr)
+plot(showLevels and (inPremarketSession or inRthSession) ? (inPremarketSession ? autoPremarketHigh : activePremarketHigh) : na, "Premarket High", color=premarketLevelColor, linewidth=1, style=plot.style_linebr)
+plot(showLevels and (inPremarketSession or inRthSession) ? (inPremarketSession ? autoPremarketLow : activePremarketLow) : na, "Premarket Low", color=premarketLevelColor, linewidth=1, style=plot.style_linebr)
+plot(showLevels and inRthSession ? activeRthOpen : na, "RTH Open", color=openLevelColor, linewidth=2, style=plot.style_linebr)
+plot(showOpeningRange and inRthSession ? openingRangeDisplayHigh : na, "15m Opening Range High", color=openingRangeHighColor, linewidth=1, style=plot.style_linebr)
+plot(showOpeningRange and inRthSession ? openingRangeDisplayLow : na, "15m Opening Range Low", color=openingRangeLowColor, linewidth=1, style=plot.style_linebr)
+
+plotshape(alertLabelMode == "Marker Only" and showBullSignals and longSetupPlacedEvent, title="Long Marker", style=shape.triangleup, location=location.belowbar, color=bullSignalColor, size=size.tiny, text="L", textcolor=color.white)
+plotshape(alertLabelMode == "Marker Only" and showBearSignals and shortSetupPlacedEvent, title="Short Marker", style=shape.triangledown, location=location.abovebar, color=bearSignalColor, size=size.tiny, text="S", textcolor=color.white)
+
+if showStrategyDebugLabels and barstate.isconfirmed and (longBaseSetup or shortBaseSetup) and not longSetupPlacedEvent and not shortSetupPlacedEvent
+    string debugText = longBaseSetup ? "L blocked\nRisk " + f_boolText(longRiskPass) + "\nQuality " + f_boolText(longTriggerQualityPass) + "\nQty " + str.tostring(longContracts) : "S blocked\nRisk " + f_boolText(shortRiskPass) + "\nQuality " + f_boolText(shortTriggerQualityPass) + "\nQty " + str.tostring(shortContracts)
+    label.new(bar_index, longBaseSetup ? low : high, debugText, style=longBaseSetup ? label.style_label_up : label.style_label_down, textcolor=color.white, color=color.new(color.gray, 30), size=size.tiny)
+
+// ===================== Tables =====================
+
+f_addStatusRow(table _table, int _row, string _name, string _value, color _valueColor) =>
+    color rowBg = color.new(color.black, 82)
+    table.cell(_table, 0, _row, _name, text_color=color.rgb(190, 190, 190), bgcolor=rowBg, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(_table, 1, _row, _value, text_color=_valueColor, bgcolor=rowBg, text_size=size.tiny, text_halign=text.align_right)
+    _row + 1
+
+var table debugTable = table.new(position.bottom_right, 2, 22, bgcolor=color.new(color.black, 85), border_width=0)
+var table timeframeWarningTable = table.new(position.top_right, 1, 1, bgcolor=color.new(color.black, 85), border_width=1)
+
+if barstate.islast
+    if isFiveMinuteChart
+        table.cell(timeframeWarningTable, 0, 0, "", text_color=color.new(color.white, 100), bgcolor=color.new(color.black, 100), text_size=size.tiny)
+    else
+        table.cell(timeframeWarningTable, 0, 0, "Warning: designed for 5-minute ES/NQ/MES/MNQ charts", text_color=color.white, bgcolor=color.rgb(145, 0, 0), text_size=size.small)
+
+    if showDebugTable
+        bool currentAnyPendingOrder = longPendingOrder or shortPendingOrder
+        string pendingDirectionText = longPendingOrder and shortPendingOrder ? "LONG+SHORT" : longPendingOrder ? "LONG" : shortPendingOrder ? "SHORT" : "None"
+        string pendingEntryText = longPendingOrder and shortPendingOrder ? f_priceText(longPendingEntry) + " / " + f_priceText(shortPendingEntry) : longPendingOrder ? f_priceText(longPendingEntry) : shortPendingOrder ? f_priceText(shortPendingEntry) : "na"
+        string pendingStopText = longPendingOrder and shortPendingOrder ? f_priceText(longPendingStop) + " / " + f_priceText(shortPendingStop) : longPendingOrder ? f_priceText(longPendingStop) : shortPendingOrder ? f_priceText(shortPendingStop) : "na"
+        string pendingTargetText = longPendingOrder and shortPendingOrder ? f_priceText(longPendingTarget) + " / " + f_priceText(shortPendingTarget) : longPendingOrder ? f_priceText(longPendingTarget) : shortPendingOrder ? f_priceText(shortPendingTarget) : "na"
+        int row = 0
+        table.cell(debugTable, 0, row, "EMA LPB Status", text_color=color.white, bgcolor=color.rgb(35, 35, 35), text_size=size.tiny, text_halign=text.align_left)
+        table.cell(debugTable, 1, row, syminfo.ticker + " " + timeframe.period, text_color=color.white, bgcolor=color.rgb(35, 35, 35), text_size=size.tiny, text_halign=text.align_right)
+        row += 1
+        row := f_addStatusRow(debugTable, row, "Time Window", f_boolText(inAlertTradingWindow), f_boolColor(inAlertTradingWindow))
+        row := f_addStatusRow(debugTable, row, "Trades Today", str.tostring(tradesToday) + " / " + str.tostring(maxTradesPerDay), tradesToday < maxTradesPerDay ? color.lime : color.red)
+        row := f_addStatusRow(debugTable, row, "OR Complete", f_boolText(openingRangeComplete), f_boolColor(openingRangeComplete))
+        row := f_addStatusRow(debugTable, row, "OR Bias Filter", f_boolText(useOpeningRangeBiasFilter), useOpeningRangeBiasFilter ? color.yellow : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "OR Bull Closes", str.tostring(openingRangeBullishCloseCount) + " / " + str.tostring(requiredOpeningRangeBreakoutCloses), openingRangeBullishCloseCount >= requiredOpeningRangeBreakoutCloses ? color.lime : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "OR Bear Closes", str.tostring(openingRangeBearishCloseCount) + " / " + str.tostring(requiredOpeningRangeBreakoutCloses), openingRangeBearishCloseCount >= requiredOpeningRangeBreakoutCloses ? color.lime : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "OR Bias Pass", "L " + f_boolText(longOpeningRangeBiasPass) + " / S " + f_boolText(shortOpeningRangeBiasPass), longOpeningRangeBiasPass and shortOpeningRangeBiasPass ? color.lime : color.yellow)
+        row := f_addStatusRow(debugTable, row, "OR Entry Levels", f_boolText(useOpeningRangeLevelsForEntries), useOpeningRangeLevelsForEntries ? color.lime : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Long Trend", f_boolText(longTrendPass), f_boolColor(longTrendPass))
+        row := f_addStatusRow(debugTable, row, "Short Trend", f_boolText(shortTrendPass), f_boolColor(shortTrendPass))
+        row := f_addStatusRow(debugTable, row, "Long Location", f_boolText(longLocationPass) + " " + longLocationName, f_boolColor(longLocationPass))
+        row := f_addStatusRow(debugTable, row, "Short Location", f_boolText(shortLocationPass) + " " + shortLocationName, f_boolColor(shortLocationPass))
+        row := f_addStatusRow(debugTable, row, "Long Pullback", f_boolText(longPullbackPass), f_boolColor(longPullbackPass))
+        row := f_addStatusRow(debugTable, row, "Short Pullback", f_boolText(shortPullbackPass), f_boolColor(shortPullbackPass))
+        row := f_addStatusRow(debugTable, row, "Pending Direction", pendingDirectionText, currentAnyPendingOrder ? color.yellow : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Pending Entry", pendingEntryText, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Pending Stop", pendingStopText, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Pending Target", pendingTargetText, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Last Reason", lastSignalReason, color.rgb(220, 220, 220))
