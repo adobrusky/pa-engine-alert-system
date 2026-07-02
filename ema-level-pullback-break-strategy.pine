@@ -54,14 +54,12 @@ emaSlowLength = input.int(50, "Slow EMA Length", minval=1, group=groupEmaTrend)
 requireCloseBeyondFastEma = input.bool(true, "Require Close Beyond Fast EMA", group=groupEmaTrend)
 requireFastEmaBeyondMidEma = input.bool(true, "Require Fast EMA Beyond Mid EMA", group=groupEmaTrend)
 requireFastEmaBeyondSlowEma = input.bool(true, "Require Fast EMA Beyond Slow EMA", group=groupEmaTrend)
-requireMidEmaBeyondSlowEma = input.bool(false, "Require Mid EMA Beyond Slow EMA", group=groupEmaTrend)
+requireMidEmaBeyondSlowEma = input.bool(true, "Require Mid EMA Beyond Slow EMA", group=groupEmaTrend)
 emaSlopeLookbackBars = input.int(5, "EMA Slope Lookback Bars", minval=1, maxval=50, group=groupEmaTrend)
+useEmaSlopeFilter = input.bool(false, "Use EMA Slope Filter", group=groupEmaTrend)
 minMidEmaSlopeTicks = input.float(0.0, "Minimum Mid EMA Slope Ticks", minval=0.0, step=0.25, group=groupEmaTrend)
 useEmaChopFilter = input.bool(false, "Use EMA Chop Filter", group=groupEmaTrend)
 emaChopCompressionAtrMultiplier = input.float(0.20, "EMA Chop Compression ATR Multiplier", minval=0.0, step=0.05, group=groupEmaTrend)
-emaChopFlatSlopeTicks = input.float(0.25, "EMA Chop Flat Slope Ticks", minval=0.0, step=0.25, group=groupEmaTrend)
-emaChopOverlapLookbackBars = input.int(5, "EMA Chop Overlap Lookback Bars", minval=1, maxval=20, group=groupEmaTrend)
-emaChopMinOverlapBars = input.int(3, "EMA Chop Min Overlap Bars", minval=1, maxval=20, group=groupEmaTrend)
 useFiftyEmaRejectionSetup = input.bool(false, "Use 50 EMA Rejection Setup", group=groupEmaTrend)
 
 // 04. Location Filters
@@ -83,6 +81,7 @@ stopMode = input.string("Pullback Swing", "Stop Mode", options=["Trigger Bar", "
 pullbackStopLookbackBars = input.int(5, "Pullback Stop Lookback Bars", minval=1, maxval=20, group=groupRiskTargets)
 minStopAtrMultiplier = input.float(0.25, "Minimum Stop ATR Multiplier", minval=0.0, step=0.05, group=groupRiskTargets)
 maxStopAtrMultiplier = input.float(2.0, "Maximum Stop ATR Multiplier", minval=0.05, step=0.05, group=groupRiskTargets)
+maxTriggerBarAtrMultiplier = input.float(1.5, "Max Trigger Bar ATR Multiplier", minval=0.1, step=0.1, group=groupRiskTargets)
 targetR = input.float(1.5, "Target R", minval=0.1, step=0.1, group=groupRiskTargets)
 maxRiskDollars = input.float(5000.0, "Max Risk Dollars", minval=0.0, step=10.0, group=groupRiskTargets)
 useRiskBasedSizing = input.bool(true, "Use Risk-Based Sizing", group=groupRiskTargets)
@@ -257,17 +256,6 @@ f_countClosesAbove(float _ema, int _bars) =>
             count += 1
     count
 
-f_countEmaBodyOverlaps(float _emaA, float _emaB, float _emaC, int _lookbackBars) =>
-    int count = 0
-    for i = 0 to _lookbackBars - 1
-        float clusterLow = math.min(_emaA[i], math.min(_emaB[i], _emaC[i]))
-        float clusterHigh = math.max(_emaA[i], math.max(_emaB[i], _emaC[i]))
-        float bodyLow = math.min(open[i], close[i])
-        float bodyHigh = math.max(open[i], close[i])
-        if not na(clusterLow) and not na(clusterHigh) and bodyLow <= clusterHigh and bodyHigh >= clusterLow
-            count += 1
-    count
-
 f_longPullbackExists(int _lookbackBars) =>
     bool pullbackFound = false
     for i = 0 to _lookbackBars - 1
@@ -390,10 +378,6 @@ minMidEmaSlopePoints = minMidEmaSlopeTicks * tickSize
 emaClusterLow = math.min(ema9, math.min(ema20, ema50))
 emaClusterHigh = math.max(ema9, math.max(ema20, ema50))
 emaClusterCompression = not na(atrValue) and emaClusterHigh - emaClusterLow <= atrValue * emaChopCompressionAtrMultiplier
-emaChopFlatSlopeLimit = emaChopFlatSlopeTicks * tickSize
-emaChopFlatSlope = not na(ema20[emaSlopeLookbackBars]) and not na(ema50[emaSlopeLookbackBars]) and math.abs(ema20 - ema20[emaSlopeLookbackBars]) <= emaChopFlatSlopeLimit and math.abs(ema50 - ema50[emaSlopeLookbackBars]) <= emaChopFlatSlopeLimit
-emaChopBodyOverlapCount = f_countEmaBodyOverlaps(ema9, ema20, ema50, emaChopOverlapLookbackBars)
-emaChopBodyOverlap = emaChopBodyOverlapCount >= emaChopMinOverlapBars
 emaChopBlocked = useEmaChopFilter and emaClusterCompression
 longEmaChopBlocked = emaChopBlocked
 shortEmaChopBlocked = emaChopBlocked
@@ -406,8 +390,8 @@ longFastSlowEmaStackPass = not requireFastEmaBeyondSlowEma or f_geWithTolerance(
 shortFastSlowEmaStackPass = not requireFastEmaBeyondSlowEma or f_leWithTolerance(ema9, ema50)
 longMidSlowEmaStackPass = not requireMidEmaBeyondSlowEma or f_geWithTolerance(ema20, ema50)
 shortMidSlowEmaStackPass = not requireMidEmaBeyondSlowEma or f_leWithTolerance(ema20, ema50)
-longEmaSlopePass = minMidEmaSlopeTicks == 0.0 or midEmaSlope >= minMidEmaSlopePoints
-shortEmaSlopePass = minMidEmaSlopeTicks == 0.0 or midEmaSlope <= -minMidEmaSlopePoints
+longEmaSlopePass = not useEmaSlopeFilter or midEmaSlope >= minMidEmaSlopePoints
+shortEmaSlopePass = not useEmaSlopeFilter or midEmaSlope <= -minMidEmaSlopePoints
 longContextPass = longEmaSlopePass and longFastEmaStackPass and longFastSlowEmaStackPass and longMidSlowEmaStackPass and not longEmaChopBlocked
 shortContextPass = shortEmaSlopePass and shortFastEmaStackPass and shortFastSlowEmaStackPass and shortMidSlowEmaStackPass and not shortEmaChopBlocked
 longTrendPass = longContextPass and longFinalEmaClosePass
@@ -588,8 +572,9 @@ shortTargetPrice = shortEntryPrice - shortRiskPoints * targetR
 longContracts = f_positionSize(longRiskPoints)
 shortContracts = f_positionSize(shortRiskPoints)
 
-longTriggerQualityPass = not na(atrValue) and barRange <= atrValue * 1.5 and not closeInBottomQuarter and close >= ema20 - tickSize and longRiskPass
-shortTriggerQualityPass = not na(atrValue) and barRange <= atrValue * 1.5 and not closeInTopQuarter and close <= ema20 + tickSize and shortRiskPass
+triggerBarAtrRatio = not na(atrValue) and atrValue > 0 ? barRange / atrValue : na
+longTriggerQualityPass = not na(atrValue) and barRange <= atrValue * maxTriggerBarAtrMultiplier and not closeInBottomQuarter and close >= ema20 - tickSize and longRiskPass
+shortTriggerQualityPass = not na(atrValue) and barRange <= atrValue * maxTriggerBarAtrMultiplier and not closeInTopQuarter and close <= ema20 + tickSize and shortRiskPass
 
 // ===================== Strategy State =====================
 
@@ -858,39 +843,52 @@ float longConfirmationTargetPrice = longConfirmationEntryPrice + longConfirmatio
 float shortConfirmationTargetPrice = shortConfirmationEntryPrice - shortConfirmationRiskPoints * targetR
 int longConfirmationContracts = f_positionSize(longConfirmationRiskPoints)
 int shortConfirmationContracts = f_positionSize(shortConfirmationRiskPoints)
-bool longConfirmationTriggerQualityPass = not na(atrValue) and barRange <= atrValue * 1.5 and not closeInBottomQuarter and close >= ema20 - tickSize and longConfirmationRiskPass
-bool shortConfirmationTriggerQualityPass = not na(atrValue) and barRange <= atrValue * 1.5 and not closeInTopQuarter and close <= ema20 + tickSize and shortConfirmationRiskPass
+bool longConfirmationTriggerQualityPass = not na(atrValue) and barRange <= atrValue * maxTriggerBarAtrMultiplier and not closeInBottomQuarter and close >= ema20 - tickSize and longConfirmationRiskPass
+bool shortConfirmationTriggerQualityPass = not na(atrValue) and barRange <= atrValue * maxTriggerBarAtrMultiplier and not closeInTopQuarter and close <= ema20 + tickSize and shortConfirmationRiskPass
 
-bool longPullbackStructureGatePass = not requirePullback or longCurrentBarIsPullbackStructure
-bool shortPullbackStructureGatePass = not requirePullback or shortCurrentBarIsPullbackStructure
-bool longBaseSetup = canPlaceLongOrder and longOpeningRangeBiasPass and longContextPass and longLocationPass and longFinalEmaClosePass
-bool shortBaseSetup = canPlaceShortOrder and shortOpeningRangeBiasPass and shortContextPass and shortLocationPass and shortFinalEmaClosePass
-bool longCandidateSetup = longBaseSetup and longPullbackStructureGatePass and not longFirstBreakAttempted
-bool shortCandidateSetup = shortBaseSetup and shortPullbackStructureGatePass and not shortFirstBreakAttempted
-bool longPrimarySetup = longCandidateSetup and longTriggerQualityPass and longContracts >= 1
-bool shortPrimarySetup = shortCandidateSetup and shortTriggerQualityPass and shortContracts >= 1
-bool longFirstBreakConfirmationSetup = canPlaceLongOrder and longFirstBreakClosedBeyond and longOpeningRangeBiasPass and longContextPass and longLocationPass and longFinalEmaClosePass and longConfirmationTriggerQualityPass and longConfirmationContracts >= 1
-bool shortFirstBreakConfirmationSetup = canPlaceShortOrder and shortFirstBreakClosedBeyond and shortOpeningRangeBiasPass and shortContextPass and shortLocationPass and shortFinalEmaClosePass and shortConfirmationTriggerQualityPass and shortConfirmationContracts >= 1
-bool longFirstBreakFailed = longFirstBreakAttempted and not longFirstBreakConfirmationSetup
-bool shortFirstBreakFailed = shortFirstBreakAttempted and not shortFirstBreakConfirmationSetup
-bool longDelayedBreakStarted = longFirstBreakAttempted
-bool shortDelayedBreakStarted = shortFirstBreakAttempted
-bool longDelayedConfirmationSetup = longFirstBreakConfirmationSetup
-bool shortDelayedConfirmationSetup = shortFirstBreakConfirmationSetup
+bool longPullbackStructureGatePass = longCurrentBarIsPullbackStructure
+bool shortPullbackStructureGatePass = shortCurrentBarIsPullbackStructure
+
+bool longStandardSetupQualifies = canPlaceLongOrder and longOpeningRangeBiasPass and longContextPass and longLocationPass and longFinalEmaClosePass and longTriggerQualityPass and longContracts >= 1
+bool shortStandardSetupQualifies = canPlaceShortOrder and shortOpeningRangeBiasPass and shortContextPass and shortLocationPass and shortFinalEmaClosePass and shortTriggerQualityPass and shortContracts >= 1
+bool longStandardConfirmationQualifies = canPlaceLongOrder and longFirstBreakClosedBeyond and longOpeningRangeBiasPass and longContextPass and longLocationPass and longFinalEmaClosePass and longConfirmationTriggerQualityPass and longConfirmationContracts >= 1
+bool shortStandardConfirmationQualifies = canPlaceShortOrder and shortFirstBreakClosedBeyond and shortOpeningRangeBiasPass and shortContextPass and shortLocationPass and shortFinalEmaClosePass and shortConfirmationTriggerQualityPass and shortConfirmationContracts >= 1
+
 bool longFiftyRejectionStackPass = f_geWithTolerance(ema9, ema20) and f_geWithTolerance(ema20, ema50)
 bool shortFiftyRejectionStackPass = f_leWithTolerance(ema9, ema20) and f_leWithTolerance(ema20, ema50)
 bool longFiftyRejectionContextPass = longFiftyRejectionStackPass and longEmaSlopePass and not longEmaChopBlocked
 bool shortFiftyRejectionContextPass = shortFiftyRejectionStackPass and shortEmaSlopePass and not shortEmaChopBlocked
 bool longFiftyRejectionLocationPass = f_directionalPriceInteraction(ema50, open, high, low, close, atrValue, proximityAtrMultiplier, true)
 bool shortFiftyRejectionLocationPass = f_directionalPriceInteraction(ema50, open, high, low, close, atrValue, proximityAtrMultiplier, false)
-bool longFiftyRejectionCleanPullback = bodyHigh < ema9 and bodyHigh < ema20
-bool shortFiftyRejectionCleanPullback = bodyLow > ema9 and bodyLow > ema20
-bool longFiftyRejectionQualityPass = not na(atrValue) and barRange <= atrValue * 1.5 and not closeInBottomQuarter and longRiskPass
-bool shortFiftyRejectionQualityPass = not na(atrValue) and barRange <= atrValue * 1.5 and not closeInTopQuarter and shortRiskPass
-bool longFiftyRejectionPullbackPass = not requirePullback or f_longPullbackExists(pullbackLookbackBars)
-bool shortFiftyRejectionPullbackPass = not requirePullback or f_shortPullbackExists(pullbackLookbackBars)
-bool longFiftyRejectionSetup = useFiftyEmaRejectionSetup and canPlaceLongOrder and longOpeningRangeBiasPass and longFiftyRejectionContextPass and longFiftyRejectionLocationPass and longFiftyRejectionCleanPullback and longFiftyRejectionPullbackPass and longFiftyRejectionQualityPass and longContracts >= 1
-bool shortFiftyRejectionSetup = useFiftyEmaRejectionSetup and canPlaceShortOrder and shortOpeningRangeBiasPass and shortFiftyRejectionContextPass and shortFiftyRejectionLocationPass and shortFiftyRejectionCleanPullback and shortFiftyRejectionPullbackPass and shortFiftyRejectionQualityPass and shortContracts >= 1
+bool longFiftyRejectionCleanPullback = not na(ema9) and not na(ema20) and high < math.min(ema9, ema20) - tickSize * 0.05
+bool shortFiftyRejectionCleanPullback = not na(ema9) and not na(ema20) and low > math.max(ema9, ema20) + tickSize * 0.05
+bool longFiftyRejectionTriggerQualityPass = not na(atrValue) and barRange <= atrValue * maxTriggerBarAtrMultiplier and not closeInBottomQuarter and longRiskPass
+bool shortFiftyRejectionTriggerQualityPass = not na(atrValue) and barRange <= atrValue * maxTriggerBarAtrMultiplier and not closeInTopQuarter and shortRiskPass
+bool longFiftyRejectionConfirmationQualityPass = not na(atrValue) and barRange <= atrValue * maxTriggerBarAtrMultiplier and not closeInBottomQuarter and longConfirmationRiskPass
+bool shortFiftyRejectionConfirmationQualityPass = not na(atrValue) and barRange <= atrValue * maxTriggerBarAtrMultiplier and not closeInTopQuarter and shortConfirmationRiskPass
+bool longFiftyRejectionSetupQualifies = useFiftyEmaRejectionSetup and canPlaceLongOrder and longOpeningRangeBiasPass and longFiftyRejectionContextPass and longFiftyRejectionLocationPass and longFiftyRejectionCleanPullback and longFiftyRejectionTriggerQualityPass and longContracts >= 1
+bool shortFiftyRejectionSetupQualifies = useFiftyEmaRejectionSetup and canPlaceShortOrder and shortOpeningRangeBiasPass and shortFiftyRejectionContextPass and shortFiftyRejectionLocationPass and shortFiftyRejectionCleanPullback and shortFiftyRejectionTriggerQualityPass and shortContracts >= 1
+bool longFiftyRejectionConfirmationQualifies = useFiftyEmaRejectionSetup and canPlaceLongOrder and longFirstBreakClosedBeyond and longOpeningRangeBiasPass and longFiftyRejectionContextPass and longFiftyRejectionLocationPass and longFiftyRejectionCleanPullback and longFiftyRejectionConfirmationQualityPass and longConfirmationContracts >= 1
+bool shortFiftyRejectionConfirmationQualifies = useFiftyEmaRejectionSetup and canPlaceShortOrder and shortFirstBreakClosedBeyond and shortOpeningRangeBiasPass and shortFiftyRejectionContextPass and shortFiftyRejectionLocationPass and shortFiftyRejectionCleanPullback and shortFiftyRejectionConfirmationQualityPass and shortConfirmationContracts >= 1
+
+bool longAnySetupQualifies = longStandardSetupQualifies or longFiftyRejectionSetupQualifies
+bool shortAnySetupQualifies = shortStandardSetupQualifies or shortFiftyRejectionSetupQualifies
+bool longAnyConfirmationQualifies = longStandardConfirmationQualifies or longFiftyRejectionConfirmationQualifies
+bool shortAnyConfirmationQualifies = shortStandardConfirmationQualifies or shortFiftyRejectionConfirmationQualifies
+string longSetupType = longStandardSetupQualifies ? "STD" : longFiftyRejectionSetupQualifies ? "50R" : "N/A"
+string shortSetupType = shortStandardSetupQualifies ? "STD" : shortFiftyRejectionSetupQualifies ? "50R" : "N/A"
+string longConfirmationSetupType = longStandardConfirmationQualifies ? "STD" : longFiftyRejectionConfirmationQualifies ? "50R" : "N/A"
+string shortConfirmationSetupType = shortStandardConfirmationQualifies ? "STD" : shortFiftyRejectionConfirmationQualifies ? "50R" : "N/A"
+string longSetupLocation = longSetupType == "50R" ? "50EMA" : longLocationName
+string shortSetupLocation = shortSetupType == "50R" ? "50EMA" : shortLocationName
+string longConfirmationLocation = longConfirmationSetupType == "50R" ? "50EMA" : longLocationName
+string shortConfirmationLocation = shortConfirmationSetupType == "50R" ? "50EMA" : shortLocationName
+bool longCandidateSetup = longPullbackStructureGatePass and longAnySetupQualifies and not longFirstBreakAttempted
+bool shortCandidateSetup = shortPullbackStructureGatePass and shortAnySetupQualifies and not shortFirstBreakAttempted
+bool longDelayedConfirmationSetup = longFirstBreakClosedBeyond and longAnyConfirmationQualifies
+bool shortDelayedConfirmationSetup = shortFirstBreakClosedBeyond and shortAnyConfirmationQualifies
+bool longFirstBreakFailed = longFirstBreakAttempted and not longDelayedConfirmationSetup
+bool shortFirstBreakFailed = shortFirstBreakAttempted and not shortDelayedConfirmationSetup
 bool longChasingBlocked = requirePullback and canPlaceLongOrder and not longCurrentBarIsPullbackStructure and not longStoredPullbackCandidateActive and not na(high[1]) and high > high[1] and longPullbackPass
 bool shortChasingBlocked = requirePullback and canPlaceShortOrder and not shortCurrentBarIsPullbackStructure and not shortStoredPullbackCandidateActive and not na(low[1]) and low < low[1] and shortPullbackPass
 bool longDebugRiskPass = longFirstBreakAttempted ? longConfirmationRiskPass : longRiskPass
@@ -904,14 +902,14 @@ int shortDebugContracts = shortFirstBreakAttempted ? shortConfirmationContracts 
 
 // Stop-entry logic: a confirmed setup submits a buy stop one tick above the
 // trigger bar high, or a sell stop one tick below the trigger bar low.
-if longFirstBreakConfirmationSetup
+if longDelayedConfirmationSetup
     longPendingOrder := true
     longPendingSignalBar := bar_index
     longPendingEntry := longConfirmationEntryPrice
     longPendingStop := longConfirmationStopPrice
     longPendingTarget := longConfirmationTargetPrice
     longPendingContracts := longConfirmationContracts
-    longPendingLocation := longLocationName
+    longPendingLocation := longConfirmationLocation
     activeLongStop := longConfirmationStopPrice
     activeLongTarget := longConfirmationTargetPrice
     longSetupPlacedEvent := true
@@ -920,13 +918,13 @@ if longFirstBreakConfirmationSetup
     longSetupAlertTarget := longConfirmationTargetPrice
     longSetupAlertRisk := longConfirmationRiskPoints
     longSetupAlertTargetR := targetR
-    longSetupAlertLocationCode := f_locationCode(longLocationName)
-    string longAlertMessage = f_buildSetupAlertMessage("LONG", longLocationName, longConfirmationEntryPrice, longConfirmationStopPrice, longConfirmationTargetPrice, longConfirmationRiskPoints, targetR, longConfirmationContracts)
+    longSetupAlertLocationCode := f_locationCode(longConfirmationLocation)
+    string longAlertMessage = f_buildSetupAlertMessage("LONG", longConfirmationLocation, longConfirmationEntryPrice, longConfirmationStopPrice, longConfirmationTargetPrice, longConfirmationRiskPoints, targetR, longConfirmationContracts)
     strategy.entry(LONG_ENTRY_ID, strategy.long, qty=longConfirmationContracts, stop=longConfirmationEntryPrice, alert_message=longAlertMessage)
     alert(longAlertMessage, alert.freq_once_per_bar_close)
     if alertLabelMode == "Compact" and showBullSignals
-        f_addSetupChartLabel(true, f_buildSetupLabelText("LONG", longLocationName, longConfirmationEntryPrice, longConfirmationStopPrice, longConfirmationTargetPrice, targetR))
-    lastSignalReason := "Long first-break placed: " + longLocationName
+        f_addSetupChartLabel(true, f_buildSetupLabelText("LONG " + longConfirmationSetupType, longConfirmationLocation, longConfirmationEntryPrice, longConfirmationStopPrice, longConfirmationTargetPrice, targetR))
+    lastSignalReason := "Long first-break " + longConfirmationSetupType + " placed: " + longConfirmationLocation
     pendingLongDelayedSetup := false
     pendingLongDelayedSetupBar := na
     pendingLongDelayedSetupStop := na
@@ -934,14 +932,14 @@ if longFirstBreakConfirmationSetup
     pendingLongPullbackSwingLow := na
     pendingLongDelayedLocation := "N/A"
 
-if shortFirstBreakConfirmationSetup and (not onlyOneActiveTradeOrOrder or not longPendingOrder)
+if shortDelayedConfirmationSetup and (not onlyOneActiveTradeOrOrder or not longPendingOrder)
     shortPendingOrder := true
     shortPendingSignalBar := bar_index
     shortPendingEntry := shortConfirmationEntryPrice
     shortPendingStop := shortConfirmationStopPrice
     shortPendingTarget := shortConfirmationTargetPrice
     shortPendingContracts := shortConfirmationContracts
-    shortPendingLocation := shortLocationName
+    shortPendingLocation := shortConfirmationLocation
     activeShortStop := shortConfirmationStopPrice
     activeShortTarget := shortConfirmationTargetPrice
     shortSetupPlacedEvent := true
@@ -950,13 +948,13 @@ if shortFirstBreakConfirmationSetup and (not onlyOneActiveTradeOrOrder or not lo
     shortSetupAlertTarget := shortConfirmationTargetPrice
     shortSetupAlertRisk := shortConfirmationRiskPoints
     shortSetupAlertTargetR := targetR
-    shortSetupAlertLocationCode := f_locationCode(shortLocationName)
-    string shortAlertMessage = f_buildSetupAlertMessage("SHORT", shortLocationName, shortConfirmationEntryPrice, shortConfirmationStopPrice, shortConfirmationTargetPrice, shortConfirmationRiskPoints, targetR, shortConfirmationContracts)
+    shortSetupAlertLocationCode := f_locationCode(shortConfirmationLocation)
+    string shortAlertMessage = f_buildSetupAlertMessage("SHORT", shortConfirmationLocation, shortConfirmationEntryPrice, shortConfirmationStopPrice, shortConfirmationTargetPrice, shortConfirmationRiskPoints, targetR, shortConfirmationContracts)
     strategy.entry(SHORT_ENTRY_ID, strategy.short, qty=shortConfirmationContracts, stop=shortConfirmationEntryPrice, alert_message=shortAlertMessage)
     alert(shortAlertMessage, alert.freq_once_per_bar_close)
     if alertLabelMode == "Compact" and showBearSignals
-        f_addSetupChartLabel(false, f_buildSetupLabelText("SHORT", shortLocationName, shortConfirmationEntryPrice, shortConfirmationStopPrice, shortConfirmationTargetPrice, targetR))
-    lastSignalReason := "Short first-break placed: " + shortLocationName
+        f_addSetupChartLabel(false, f_buildSetupLabelText("SHORT " + shortConfirmationSetupType, shortConfirmationLocation, shortConfirmationEntryPrice, shortConfirmationStopPrice, shortConfirmationTargetPrice, targetR))
+    lastSignalReason := "Short first-break " + shortConfirmationSetupType + " placed: " + shortConfirmationLocation
     pendingShortDelayedSetup := false
     pendingShortDelayedSetupBar := na
     pendingShortDelayedSetupStop := na
@@ -964,17 +962,17 @@ if shortFirstBreakConfirmationSetup and (not onlyOneActiveTradeOrOrder or not lo
     pendingShortPullbackSwingHigh := na
     pendingShortDelayedLocation := "N/A"
 
-bool longPrimaryCanStillPlace = longPrimarySetup and not longPendingOrder and (not onlyOneActiveTradeOrOrder or not shortPendingOrder)
-bool shortPrimaryCanStillPlace = shortPrimarySetup and not shortPendingOrder and (not onlyOneActiveTradeOrOrder or not longPendingOrder)
+bool longImmediateCanStillPlace = longCandidateSetup and not longPendingOrder and (not onlyOneActiveTradeOrOrder or not shortPendingOrder)
+bool shortImmediateCanStillPlace = shortCandidateSetup and not shortPendingOrder and (not onlyOneActiveTradeOrOrder or not longPendingOrder)
 
-if longPrimaryCanStillPlace
+if longImmediateCanStillPlace
     longPendingOrder := true
     longPendingSignalBar := bar_index
     longPendingEntry := longEntryPrice
     longPendingStop := longStopPrice
     longPendingTarget := longTargetPrice
     longPendingContracts := longContracts
-    longPendingLocation := longLocationName
+    longPendingLocation := longSetupLocation
     activeLongStop := longStopPrice
     activeLongTarget := longTargetPrice
     longSetupPlacedEvent := true
@@ -983,28 +981,28 @@ if longPrimaryCanStillPlace
     longSetupAlertTarget := longTargetPrice
     longSetupAlertRisk := longRiskPoints
     longSetupAlertTargetR := targetR
-    longSetupAlertLocationCode := f_locationCode(longLocationName)
-    string longAlertMessage = f_buildSetupAlertMessage("LONG", longLocationName, longEntryPrice, longStopPrice, longTargetPrice, longRiskPoints, targetR, longContracts)
+    longSetupAlertLocationCode := f_locationCode(longSetupLocation)
+    string longAlertMessage = f_buildSetupAlertMessage("LONG", longSetupLocation, longEntryPrice, longStopPrice, longTargetPrice, longRiskPoints, targetR, longContracts)
     strategy.entry(LONG_ENTRY_ID, strategy.long, qty=longContracts, stop=longEntryPrice, alert_message=longAlertMessage)
     alert(longAlertMessage, alert.freq_once_per_bar_close)
     if alertLabelMode == "Compact" and showBullSignals
-        f_addSetupChartLabel(true, f_buildSetupLabelText("LONG", longLocationName, longEntryPrice, longStopPrice, longTargetPrice, targetR))
+        f_addSetupChartLabel(true, f_buildSetupLabelText("LONG " + longSetupType, longSetupLocation, longEntryPrice, longStopPrice, longTargetPrice, targetR))
     pendingLongDelayedSetup := false
     pendingLongDelayedSetupBar := na
     pendingLongDelayedSetupStop := na
     pendingLongDelayedBreakPrice := na
     pendingLongPullbackSwingLow := na
     pendingLongDelayedLocation := "N/A"
-    lastSignalReason := "Long placed: " + longLocationName
+    lastSignalReason := "Long " + longSetupType + " placed: " + longSetupLocation
 
-if shortPrimaryCanStillPlace and (not onlyOneActiveTradeOrOrder or not longPendingOrder)
+if shortImmediateCanStillPlace and (not onlyOneActiveTradeOrOrder or not longPendingOrder)
     shortPendingOrder := true
     shortPendingSignalBar := bar_index
     shortPendingEntry := shortEntryPrice
     shortPendingStop := shortStopPrice
     shortPendingTarget := shortTargetPrice
     shortPendingContracts := shortContracts
-    shortPendingLocation := shortLocationName
+    shortPendingLocation := shortSetupLocation
     activeShortStop := shortStopPrice
     activeShortTarget := shortTargetPrice
     shortSetupPlacedEvent := true
@@ -1013,82 +1011,19 @@ if shortPrimaryCanStillPlace and (not onlyOneActiveTradeOrOrder or not longPendi
     shortSetupAlertTarget := shortTargetPrice
     shortSetupAlertRisk := shortRiskPoints
     shortSetupAlertTargetR := targetR
-    shortSetupAlertLocationCode := f_locationCode(shortLocationName)
-    string shortAlertMessage = f_buildSetupAlertMessage("SHORT", shortLocationName, shortEntryPrice, shortStopPrice, shortTargetPrice, shortRiskPoints, targetR, shortContracts)
+    shortSetupAlertLocationCode := f_locationCode(shortSetupLocation)
+    string shortAlertMessage = f_buildSetupAlertMessage("SHORT", shortSetupLocation, shortEntryPrice, shortStopPrice, shortTargetPrice, shortRiskPoints, targetR, shortContracts)
     strategy.entry(SHORT_ENTRY_ID, strategy.short, qty=shortContracts, stop=shortEntryPrice, alert_message=shortAlertMessage)
     alert(shortAlertMessage, alert.freq_once_per_bar_close)
     if alertLabelMode == "Compact" and showBearSignals
-        f_addSetupChartLabel(false, f_buildSetupLabelText("SHORT", shortLocationName, shortEntryPrice, shortStopPrice, shortTargetPrice, targetR))
+        f_addSetupChartLabel(false, f_buildSetupLabelText("SHORT " + shortSetupType, shortSetupLocation, shortEntryPrice, shortStopPrice, shortTargetPrice, targetR))
     pendingShortDelayedSetup := false
     pendingShortDelayedSetupBar := na
     pendingShortDelayedSetupStop := na
     pendingShortDelayedBreakPrice := na
     pendingShortPullbackSwingHigh := na
     pendingShortDelayedLocation := "N/A"
-    lastSignalReason := "Short placed: " + shortLocationName
-
-bool longFiftyRejectionCanStillPlace = longFiftyRejectionSetup and not longPendingOrder and not longSetupPlacedEvent and not shortSetupPlacedEvent and (not onlyOneActiveTradeOrOrder or not shortPendingOrder)
-bool shortFiftyRejectionCanStillPlace = shortFiftyRejectionSetup and not shortPendingOrder and not longSetupPlacedEvent and not shortSetupPlacedEvent and (not onlyOneActiveTradeOrOrder or not longPendingOrder)
-
-if longFiftyRejectionCanStillPlace
-    longPendingOrder := true
-    longPendingSignalBar := bar_index
-    longPendingEntry := longEntryPrice
-    longPendingStop := longStopPrice
-    longPendingTarget := longTargetPrice
-    longPendingContracts := longContracts
-    longPendingLocation := "50EMA"
-    activeLongStop := longStopPrice
-    activeLongTarget := longTargetPrice
-    longSetupPlacedEvent := true
-    longSetupAlertEntry := longEntryPrice
-    longSetupAlertStop := longStopPrice
-    longSetupAlertTarget := longTargetPrice
-    longSetupAlertRisk := longRiskPoints
-    longSetupAlertTargetR := targetR
-    longSetupAlertLocationCode := f_locationCode("50EMA")
-    string longAlertMessage = f_buildSetupAlertMessage("LONG", "50EMA", longEntryPrice, longStopPrice, longTargetPrice, longRiskPoints, targetR, longContracts)
-    strategy.entry(LONG_ENTRY_ID, strategy.long, qty=longContracts, stop=longEntryPrice, alert_message=longAlertMessage)
-    alert(longAlertMessage, alert.freq_once_per_bar_close)
-    if alertLabelMode == "Compact" and showBullSignals
-        f_addSetupChartLabel(true, f_buildSetupLabelText("LONG", "50EMA", longEntryPrice, longStopPrice, longTargetPrice, targetR))
-    pendingLongDelayedSetup := false
-    pendingLongDelayedSetupBar := na
-    pendingLongDelayedSetupStop := na
-    pendingLongDelayedBreakPrice := na
-    pendingLongPullbackSwingLow := na
-    pendingLongDelayedLocation := "N/A"
-    lastSignalReason := "Long 50EMA rejection placed"
-
-if shortFiftyRejectionCanStillPlace and (not onlyOneActiveTradeOrOrder or not longPendingOrder)
-    shortPendingOrder := true
-    shortPendingSignalBar := bar_index
-    shortPendingEntry := shortEntryPrice
-    shortPendingStop := shortStopPrice
-    shortPendingTarget := shortTargetPrice
-    shortPendingContracts := shortContracts
-    shortPendingLocation := "50EMA"
-    activeShortStop := shortStopPrice
-    activeShortTarget := shortTargetPrice
-    shortSetupPlacedEvent := true
-    shortSetupAlertEntry := shortEntryPrice
-    shortSetupAlertStop := shortStopPrice
-    shortSetupAlertTarget := shortTargetPrice
-    shortSetupAlertRisk := shortRiskPoints
-    shortSetupAlertTargetR := targetR
-    shortSetupAlertLocationCode := f_locationCode("50EMA")
-    string shortAlertMessage = f_buildSetupAlertMessage("SHORT", "50EMA", shortEntryPrice, shortStopPrice, shortTargetPrice, shortRiskPoints, targetR, shortContracts)
-    strategy.entry(SHORT_ENTRY_ID, strategy.short, qty=shortContracts, stop=shortEntryPrice, alert_message=shortAlertMessage)
-    alert(shortAlertMessage, alert.freq_once_per_bar_close)
-    if alertLabelMode == "Compact" and showBearSignals
-        f_addSetupChartLabel(false, f_buildSetupLabelText("SHORT", "50EMA", shortEntryPrice, shortStopPrice, shortTargetPrice, targetR))
-    pendingShortDelayedSetup := false
-    pendingShortDelayedSetupBar := na
-    pendingShortDelayedSetupStop := na
-    pendingShortDelayedBreakPrice := na
-    pendingShortPullbackSwingHigh := na
-    pendingShortDelayedLocation := "N/A"
-    lastSignalReason := "Short 50EMA rejection placed"
+    lastSignalReason := "Short " + shortSetupType + " placed: " + shortSetupLocation
 
 if longFirstBreakAttempted and not longSetupPlacedEvent
     pendingLongDelayedSetup := false
@@ -1140,14 +1075,14 @@ if canEvaluateSignals and not longSetupPlacedEvent and not shortSetupPlacedEvent
         lastSignalReason := "Long chasing blocked"
     else if shortChasingBlocked
         lastSignalReason := "Short chasing blocked"
-    else if longCandidateSetup and not longPrimarySetup
+    else if longCurrentBarIsPullbackStructure and not longAnySetupQualifies
         lastSignalReason := "Long pullback bar blocked"
-    else if shortCandidateSetup and not shortPrimarySetup
+    else if shortCurrentBarIsPullbackStructure and not shortAnySetupQualifies
         lastSignalReason := "Short pullback bar blocked"
     else if longCurrentBarIsPullbackStructure and not longCandidateSetup
-        lastSignalReason := "Long structure lacks filters"
+        lastSignalReason := "Long structure lacks setup"
     else if shortCurrentBarIsPullbackStructure and not shortCandidateSetup
-        lastSignalReason := "Short structure lacks filters"
+        lastSignalReason := "Short structure lacks setup"
     else if not longCandidateSetup and not shortCandidateSetup
         lastSignalReason := not useLongs and not useShorts ? "Directions disabled" :
          not inAlertTradingWindow ? "Outside trading window" :
@@ -1224,12 +1159,14 @@ if showLongStrategyDebugLabel or showShortStrategyDebugLabel
      "F/M " + f_boolText(longFastEmaStackPass) + " F/S " + f_boolText(longFastSlowEmaStackPass) + " M/S " + f_boolText(longMidSlowEmaStackPass) + "\n" +
      "Struct " + f_boolText(longCurrentBarIsPullbackStructure) + " Stored " + f_boolText(longStoredPullbackCandidateActive) + "\n" +
      "Brk " + f_boolText(longFirstBreakAttempted) + " Fail " + f_boolText(longFirstBreakFailed) + " Chase " + f_boolText(longChasingBlocked) + "\n" +
+     "Type " + (longFirstBreakAttempted ? longConfirmationSetupType : longSetupType) + " Any " + f_boolText(longFirstBreakAttempted ? longAnyConfirmationQualifies : longAnySetupQualifies) + "\n" +
      "Stop " + f_boolText(longFirstBreakAttempted ? longConfirmationPullbackStopValid : longPullbackStopValid) + " Risk " + f_boolText(longDebugRiskPass) + " Q " + f_boolText(longDebugTriggerQualityPass) + " Qty " + str.tostring(longDebugContracts)
     string shortDebugText = "S dbg\n" +
      "Can " + f_boolText(canPlaceShortOrder) + " EMA " + f_boolText(shortFinalEmaClosePass) + "\n" +
      "F/M " + f_boolText(shortFastEmaStackPass) + " F/S " + f_boolText(shortFastSlowEmaStackPass) + " M/S " + f_boolText(shortMidSlowEmaStackPass) + "\n" +
      "Struct " + f_boolText(shortCurrentBarIsPullbackStructure) + " Stored " + f_boolText(shortStoredPullbackCandidateActive) + "\n" +
      "Brk " + f_boolText(shortFirstBreakAttempted) + " Fail " + f_boolText(shortFirstBreakFailed) + " Chase " + f_boolText(shortChasingBlocked) + "\n" +
+     "Type " + (shortFirstBreakAttempted ? shortConfirmationSetupType : shortSetupType) + " Any " + f_boolText(shortFirstBreakAttempted ? shortAnyConfirmationQualifies : shortAnySetupQualifies) + "\n" +
      "Stop " + f_boolText(shortFirstBreakAttempted ? shortConfirmationPullbackStopValid : shortPullbackStopValid) + " Risk " + f_boolText(shortDebugRiskPass) + " Q " + f_boolText(shortDebugTriggerQualityPass) + " Qty " + str.tostring(shortDebugContracts)
     string debugText = debugIsLong ? longDebugText : shortDebugText
     label.new(bar_index, debugIsLong ? low : high, debugText, style=debugIsLong ? label.style_label_up : label.style_label_down, textcolor=color.white, color=color.new(color.gray, 30), size=size.tiny)
@@ -1242,7 +1179,7 @@ f_addStatusRow(table _table, int _row, string _name, string _value, color _value
     table.cell(_table, 1, _row, _value, text_color=_valueColor, bgcolor=rowBg, text_size=size.tiny, text_halign=text.align_right)
     _row + 1
 
-var table debugTable = table.new(position.bottom_right, 2, 50, bgcolor=color.new(color.black, 85), border_width=0)
+var table debugTable = table.new(position.bottom_right, 2, 70, bgcolor=color.new(color.black, 85), border_width=0)
 var table timeframeWarningTable = table.new(position.top_right, 1, 1, bgcolor=color.new(color.black, 85), border_width=1)
 
 if barstate.islast
@@ -1276,32 +1213,41 @@ if barstate.islast
         row := f_addStatusRow(debugTable, row, "Fast/Mid Stack", f_pairBoolText(longFastEmaStackPass, shortFastEmaStackPass), f_pairBoolColor(longFastEmaStackPass, shortFastEmaStackPass))
         row := f_addStatusRow(debugTable, row, "Fast/Slow Stack", f_pairBoolText(longFastSlowEmaStackPass, shortFastSlowEmaStackPass), f_pairBoolColor(longFastSlowEmaStackPass, shortFastSlowEmaStackPass))
         row := f_addStatusRow(debugTable, row, "Mid/Slow Stack", f_pairBoolText(longMidSlowEmaStackPass, shortMidSlowEmaStackPass), f_pairBoolColor(longMidSlowEmaStackPass, shortMidSlowEmaStackPass))
+        row := f_addStatusRow(debugTable, row, "EMA Slope Filter", f_boolText(useEmaSlopeFilter), useEmaSlopeFilter ? color.yellow : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "EMA Slope", f_pairBoolText(longEmaSlopePass, shortEmaSlopePass), f_pairBoolColor(longEmaSlopePass, shortEmaSlopePass))
         row := f_addStatusRow(debugTable, row, "EMA Chop Blocked", f_pairBoolText(longEmaChopBlocked, shortEmaChopBlocked), not longEmaChopBlocked and not shortEmaChopBlocked ? color.lime : color.yellow)
         row := f_addStatusRow(debugTable, row, "EMA Compression", f_boolText(emaClusterCompression), emaClusterCompression ? color.yellow : color.rgb(220, 220, 220))
-        row := f_addStatusRow(debugTable, row, "EMA Flat Slope", f_boolText(emaChopFlatSlope), emaChopFlatSlope ? color.yellow : color.rgb(220, 220, 220))
-        row := f_addStatusRow(debugTable, row, "EMA Overlap", str.tostring(emaChopBodyOverlapCount) + " / " + str.tostring(emaChopMinOverlapBars), emaChopBodyOverlap ? color.yellow : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Max Trigger ATR", f_pointsText(maxTriggerBarAtrMultiplier), color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Bar / ATR", f_pointsText(triggerBarAtrRatio), not na(triggerBarAtrRatio) and triggerBarAtrRatio <= maxTriggerBarAtrMultiplier ? color.lime : color.red)
         row := f_addStatusRow(debugTable, row, "Location", "L " + f_boolText(longLocationPass) + " " + longLocationName + " / S " + f_boolText(shortLocationPass) + " " + shortLocationName, f_pairBoolColor(longLocationPass, shortLocationPass))
-        row := f_addStatusRow(debugTable, row, "Pullback Gate", f_pairBoolText(longPullbackPass, shortPullbackPass), f_pairBoolColor(longPullbackPass, shortPullbackPass))
+        row := f_addStatusRow(debugTable, row, "Pullback Gate", f_pairBoolText(longPullbackStructureGatePass, shortPullbackStructureGatePass), f_pairBoolColor(longPullbackStructureGatePass, shortPullbackStructureGatePass))
+        row := f_addStatusRow(debugTable, row, "Recent Pullback", f_pairBoolText(longPullbackPass, shortPullbackPass), f_pairBoolColor(longPullbackPass, shortPullbackPass))
         row := f_addStatusRow(debugTable, row, "Current Structure", f_pairBoolText(longCurrentBarIsPullbackStructure, shortCurrentBarIsPullbackStructure), f_pairBoolColor(longCurrentBarIsPullbackStructure, shortCurrentBarIsPullbackStructure))
         row := f_addStatusRow(debugTable, row, "Stored Candidate", f_pairBoolText(pendingLongDelayedSetup, pendingShortDelayedSetup), pendingLongDelayedSetup or pendingShortDelayedSetup ? color.yellow : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "First Break", f_pairBoolText(longFirstBreakAttempted, shortFirstBreakAttempted), f_pairBoolColor(longFirstBreakAttempted, shortFirstBreakAttempted))
+        row := f_addStatusRow(debugTable, row, "First Break Closed Beyond", f_pairBoolText(longFirstBreakClosedBeyond, shortFirstBreakClosedBeyond), f_pairBoolColor(longFirstBreakClosedBeyond, shortFirstBreakClosedBeyond))
         row := f_addStatusRow(debugTable, row, "First Break Fail", f_pairBoolText(longFirstBreakFailed, shortFirstBreakFailed), not longFirstBreakFailed and not shortFirstBreakFailed ? color.rgb(220, 220, 220) : color.red)
         row := f_addStatusRow(debugTable, row, "PB Stop Valid", f_pairBoolText(longPullbackStopValid, shortPullbackStopValid), f_pairBoolColor(longPullbackStopValid, shortPullbackStopValid))
         row := f_addStatusRow(debugTable, row, "Confirm Stop Valid", f_pairBoolText(longConfirmationPullbackStopValid, shortConfirmationPullbackStopValid), f_pairBoolColor(longConfirmationPullbackStopValid, shortConfirmationPullbackStopValid))
         row := f_addStatusRow(debugTable, row, "Chasing Blocked", f_pairBoolText(longChasingBlocked, shortChasingBlocked), longChasingBlocked or shortChasingBlocked ? color.red : color.rgb(220, 220, 220))
-        row := f_addStatusRow(debugTable, row, "50 Reject Stack", f_pairBoolText(longFiftyRejectionStackPass, shortFiftyRejectionStackPass), f_pairBoolColor(longFiftyRejectionStackPass, shortFiftyRejectionStackPass))
-        row := f_addStatusRow(debugTable, row, "50 Reject Context", f_pairBoolText(longFiftyRejectionContextPass, shortFiftyRejectionContextPass), f_pairBoolColor(longFiftyRejectionContextPass, shortFiftyRejectionContextPass))
-        row := f_addStatusRow(debugTable, row, "50 Reject Location", f_pairBoolText(longFiftyRejectionLocationPass, shortFiftyRejectionLocationPass), f_pairBoolColor(longFiftyRejectionLocationPass, shortFiftyRejectionLocationPass))
-        row := f_addStatusRow(debugTable, row, "50 Reject Clean", f_pairBoolText(longFiftyRejectionCleanPullback, shortFiftyRejectionCleanPullback), f_pairBoolColor(longFiftyRejectionCleanPullback, shortFiftyRejectionCleanPullback))
-        row := f_addStatusRow(debugTable, row, "50 Reject Pullback", f_pairBoolText(longFiftyRejectionPullbackPass, shortFiftyRejectionPullbackPass), f_pairBoolColor(longFiftyRejectionPullbackPass, shortFiftyRejectionPullbackPass))
-        row := f_addStatusRow(debugTable, row, "50 Reject Quality", f_pairBoolText(longFiftyRejectionQualityPass, shortFiftyRejectionQualityPass), f_pairBoolColor(longFiftyRejectionQualityPass, shortFiftyRejectionQualityPass))
-        row := f_addStatusRow(debugTable, row, "50 Reject Setup", f_pairBoolText(longFiftyRejectionSetup, shortFiftyRejectionSetup), f_pairBoolColor(longFiftyRejectionSetup, shortFiftyRejectionSetup))
+        row := f_addStatusRow(debugTable, row, "50R Stack", f_pairBoolText(longFiftyRejectionStackPass, shortFiftyRejectionStackPass), f_pairBoolColor(longFiftyRejectionStackPass, shortFiftyRejectionStackPass))
+        row := f_addStatusRow(debugTable, row, "50R Location", f_pairBoolText(longFiftyRejectionLocationPass, shortFiftyRejectionLocationPass), f_pairBoolColor(longFiftyRejectionLocationPass, shortFiftyRejectionLocationPass))
+        row := f_addStatusRow(debugTable, row, "50R Clean", f_pairBoolText(longFiftyRejectionCleanPullback, shortFiftyRejectionCleanPullback), f_pairBoolColor(longFiftyRejectionCleanPullback, shortFiftyRejectionCleanPullback))
+        row := f_addStatusRow(debugTable, row, "50R Trigger Qualifies", f_pairBoolText(longFiftyRejectionSetupQualifies, shortFiftyRejectionSetupQualifies), f_pairBoolColor(longFiftyRejectionSetupQualifies, shortFiftyRejectionSetupQualifies))
+        row := f_addStatusRow(debugTable, row, "50R Confirm Qualifies", f_pairBoolText(longFiftyRejectionConfirmationQualifies, shortFiftyRejectionConfirmationQualifies), f_pairBoolColor(longFiftyRejectionConfirmationQualifies, shortFiftyRejectionConfirmationQualifies))
+        row := f_addStatusRow(debugTable, row, "STD Trigger Qualifies", f_pairBoolText(longStandardSetupQualifies, shortStandardSetupQualifies), f_pairBoolColor(longStandardSetupQualifies, shortStandardSetupQualifies))
+        row := f_addStatusRow(debugTable, row, "STD Confirm Qualifies", f_pairBoolText(longStandardConfirmationQualifies, shortStandardConfirmationQualifies), f_pairBoolColor(longStandardConfirmationQualifies, shortStandardConfirmationQualifies))
+        row := f_addStatusRow(debugTable, row, "Any Trigger Qualifies", f_pairBoolText(longAnySetupQualifies, shortAnySetupQualifies), f_pairBoolColor(longAnySetupQualifies, shortAnySetupQualifies))
+        row := f_addStatusRow(debugTable, row, "Any Confirm Qualifies", f_pairBoolText(longAnyConfirmationQualifies, shortAnyConfirmationQualifies), f_pairBoolColor(longAnyConfirmationQualifies, shortAnyConfirmationQualifies))
+        row := f_addStatusRow(debugTable, row, "Setup Type", "L " + longSetupType + " / S " + shortSetupType, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Confirm Type", "L " + longConfirmationSetupType + " / S " + shortConfirmationSetupType, color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Risk", f_pairBoolText(longDebugRiskPass, shortDebugRiskPass), f_pairBoolColor(longDebugRiskPass, shortDebugRiskPass))
+        row := f_addStatusRow(debugTable, row, "Confirm Risk", f_pairBoolText(longConfirmationRiskPass, shortConfirmationRiskPass), f_pairBoolColor(longConfirmationRiskPass, shortConfirmationRiskPass))
         row := f_addStatusRow(debugTable, row, "Trigger Quality", f_pairBoolText(longDebugTriggerQualityPass, shortDebugTriggerQualityPass), f_pairBoolColor(longDebugTriggerQualityPass, shortDebugTriggerQualityPass))
+        row := f_addStatusRow(debugTable, row, "Confirm Quality", f_pairBoolText(longConfirmationTriggerQualityPass, shortConfirmationTriggerQualityPass), f_pairBoolColor(longConfirmationTriggerQualityPass, shortConfirmationTriggerQualityPass))
         row := f_addStatusRow(debugTable, row, "Contracts", "L " + str.tostring(longDebugContracts) + " / S " + str.tostring(shortDebugContracts), longDebugContracts >= 1 or shortDebugContracts >= 1 ? color.lime : color.red)
         row := f_addStatusRow(debugTable, row, "Risk Points", "L " + f_pointsText(longDebugRiskPoints) + " / S " + f_pointsText(shortDebugRiskPoints), color.rgb(220, 220, 220))
-        row := f_addStatusRow(debugTable, row, "First Break Confirm", f_pairBoolText(longFirstBreakConfirmationSetup, shortFirstBreakConfirmationSetup), f_pairBoolColor(longFirstBreakConfirmationSetup, shortFirstBreakConfirmationSetup))
+        row := f_addStatusRow(debugTable, row, "Delayed Confirm", f_pairBoolText(longDelayedConfirmationSetup, shortDelayedConfirmationSetup), f_pairBoolColor(longDelayedConfirmationSetup, shortDelayedConfirmationSetup))
         row := f_addStatusRow(debugTable, row, "RTH Flatten", f_boolText(rthCloseFlattenNow), rthCloseFlattenNow ? color.yellow : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Pending Direction", pendingDirectionText, currentAnyPendingOrder ? color.yellow : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Pending Entry", pendingEntryText, color.rgb(220, 220, 220))
