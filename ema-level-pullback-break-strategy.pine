@@ -58,10 +58,11 @@ requireMidEmaBeyondSlowEma = input.bool(true, "Require Mid EMA Beyond Slow EMA",
 emaSlopeLookbackBars = input.int(5, "EMA Slope Lookback Bars", minval=1, maxval=50, group=groupEmaTrend)
 useEmaSlopeFilter = input.bool(true, "Use EMA Slope Filter", group=groupEmaTrend)
 minMidEmaSlopeTicks = input.float(0.0, "Minimum Mid EMA Slope Ticks", minval=0.0, step=0.25, group=groupEmaTrend)
-emaChopFilterMode = input.string("20 EMA Bar Overlap", "EMA Chop Filter Mode", options=["Off", "EMA Compression", "20 EMA Bar Overlap"], group=groupEmaTrend)
+emaChopFilterMode = input.string("EMA Bar Overlap", "EMA Chop Filter Mode", options=["Off", "EMA Compression", "EMA Bar Overlap"], group=groupEmaTrend)
+emaChopOverlapSource = input.string("20 EMA", "EMA Chop Overlap Source", options=["20 EMA", "9 EMA"], group=groupEmaTrend)
 emaChopCompressionAtrMultiplier = input.float(0.20, "EMA Chop Compression ATR Multiplier", minval=0.0, step=0.05, group=groupEmaTrend)
-emaChopOverlapLookbackBars = input.int(4, "20 EMA Chop Overlap Lookback Bars", minval=2, maxval=10, group=groupEmaTrend)
-emaChopRequiredOverlapBars = input.int(3, "20 EMA Chop Required Overlap Bars", minval=1, maxval=10, group=groupEmaTrend)
+emaChopOverlapLookbackBars = input.int(4, "EMA Chop Overlap Lookback Bars", minval=2, maxval=10, group=groupEmaTrend)
+emaChopRequiredOverlapBars = input.int(3, "EMA Chop Required Overlap Bars", minval=1, maxval=10, group=groupEmaTrend)
 useFiftyEmaRejectionSetup = input.bool(false, "Use 50 EMA Rejection Setup", group=groupEmaTrend)
 
 // 04. Location Filters
@@ -118,6 +119,7 @@ showDebugTable = input.bool(true, "Show Debug Table", group=groupDisplayAlerts)
 
 // 09. Strategy Backtest / Debug
 showStrategyDebugLabels = input.bool(false, "Show Strategy Debug Labels", group=groupBacktestDebug)
+allowPendingEntryFillsAfterWindow = input.bool(false, "Allow Pending Entry Fills After Alert Window", group=groupBacktestDebug)
 
 // ===================== Constants / Colors =====================
 
@@ -304,6 +306,98 @@ f_trimContracts(int _contracts, float _trimPercent) =>
     trimContracts := int(math.max(1, math.min(trimContracts, _contracts - 1)))
     trimContracts
 
+f_trimStateIssueText(int _qty, float _stop, float _risk, float _oneRTarget, float _target, int _trimQty, int _runnerQty) =>
+    _qty < 2 ? "qty < 2" :
+     na(_stop) ? "missing stop" :
+     na(_target) ? "missing target" :
+     na(_risk) or _risk <= 0 ? "invalid risk" :
+     na(_oneRTarget) ? "missing 1R" :
+     na(_trimQty) ? "missing trim qty" :
+     na(_runnerQty) ? "missing runner qty" :
+     "unknown"
+
+f_addPendingCancellationDebugLabel(string _reason) =>
+    if showStrategyDebugLabels
+        label.new(bar_index, high, "Pending entry cancelled: " + _reason, style=label.style_label_down, textcolor=color.black, color=color.new(color.yellow, 0), size=size.tiny)
+
+f_cancelLongExitOrders() =>
+    strategy.cancel(LONG_EXIT_ID)
+    strategy.cancel(LONG_TRIM_EXIT_ID)
+    strategy.cancel(LONG_RUNNER_EXIT_ID)
+
+f_cancelShortExitOrders() =>
+    strategy.cancel(SHORT_EXIT_ID)
+    strategy.cancel(SHORT_TRIM_EXIT_ID)
+    strategy.cancel(SHORT_RUNNER_EXIT_ID)
+
+f_cancelAllExitOrders() =>
+    f_cancelLongExitOrders()
+    f_cancelShortExitOrders()
+
+f_cancelPendingEntryOrders() =>
+    strategy.cancel(LONG_ENTRY_ID)
+    strategy.cancel(SHORT_ENTRY_ID)
+
+f_manageLongExits(bool _trimMode, bool _trimEligible, bool _fixedFallback, bool _allowFixedExit, int _trimQty, int _runnerQty, float _originalStop, float _oneRTarget, float _runnerStop, float _finalTarget, bool _oneRReached) =>
+    bool trimSubmitted = false
+    bool runnerSubmitted = false
+    bool fixedSubmitted = false
+    bool validSplit = _trimMode and _trimEligible and not na(_trimQty) and not na(_runnerQty) and _trimQty >= 1 and _runnerQty >= 1 and not na(_originalStop) and not na(_oneRTarget) and not na(_runnerStop) and not na(_finalTarget)
+    if validSplit
+        strategy.cancel(LONG_EXIT_ID)
+        bool trimStillOpen = strategy.position_size > _runnerQty
+        if trimStillOpen
+            strategy.exit(LONG_TRIM_EXIT_ID, from_entry=LONG_ENTRY_ID, qty=_trimQty, stop=_originalStop, limit=_oneRTarget, comment="1R Trim", comment_profit="1R Trim", comment_loss="1R Trim")
+            trimSubmitted := true
+        else
+            strategy.cancel(LONG_TRIM_EXIT_ID)
+        if _oneRReached
+            strategy.exit(LONG_RUNNER_EXIT_ID, from_entry=LONG_ENTRY_ID, qty=_runnerQty, stop=_runnerStop, limit=_finalTarget, comment="Runner BE Stop", comment_profit="Runner Final Target", comment_loss="Runner BE Stop")
+        else
+            strategy.exit(LONG_RUNNER_EXIT_ID, from_entry=LONG_ENTRY_ID, qty=_runnerQty, stop=_runnerStop, limit=_finalTarget, comment="Runner Final Target", comment_profit="Runner Final Target", comment_loss="Runner Original Stop")
+        runnerSubmitted := true
+    else if _allowFixedExit
+        strategy.cancel(LONG_TRIM_EXIT_ID)
+        strategy.cancel(LONG_RUNNER_EXIT_ID)
+        if _fixedFallback
+            strategy.exit(LONG_EXIT_ID, from_entry=LONG_ENTRY_ID, stop=_originalStop, limit=_finalTarget, comment="Single Contract Fallback", comment_profit="Single Contract Fallback", comment_loss="Single Contract Fallback")
+        else
+            strategy.exit(LONG_EXIT_ID, from_entry=LONG_ENTRY_ID, stop=_originalStop, limit=_finalTarget, comment="Fixed R Exit", comment_profit="Fixed R Exit", comment_loss="Fixed R Exit")
+        fixedSubmitted := true
+    else
+        f_cancelLongExitOrders()
+    trimSubmitted or runnerSubmitted or fixedSubmitted
+
+f_manageShortExits(bool _trimMode, bool _trimEligible, bool _fixedFallback, bool _allowFixedExit, int _trimQty, int _runnerQty, float _originalStop, float _oneRTarget, float _runnerStop, float _finalTarget, bool _oneRReached) =>
+    bool trimSubmitted = false
+    bool runnerSubmitted = false
+    bool fixedSubmitted = false
+    bool validSplit = _trimMode and _trimEligible and not na(_trimQty) and not na(_runnerQty) and _trimQty >= 1 and _runnerQty >= 1 and not na(_originalStop) and not na(_oneRTarget) and not na(_runnerStop) and not na(_finalTarget)
+    if validSplit
+        strategy.cancel(SHORT_EXIT_ID)
+        bool trimStillOpen = math.abs(strategy.position_size) > _runnerQty
+        if trimStillOpen
+            strategy.exit(SHORT_TRIM_EXIT_ID, from_entry=SHORT_ENTRY_ID, qty=_trimQty, stop=_originalStop, limit=_oneRTarget, comment="1R Trim", comment_profit="1R Trim", comment_loss="1R Trim")
+            trimSubmitted := true
+        else
+            strategy.cancel(SHORT_TRIM_EXIT_ID)
+        if _oneRReached
+            strategy.exit(SHORT_RUNNER_EXIT_ID, from_entry=SHORT_ENTRY_ID, qty=_runnerQty, stop=_runnerStop, limit=_finalTarget, comment="Runner BE Stop", comment_profit="Runner Final Target", comment_loss="Runner BE Stop")
+        else
+            strategy.exit(SHORT_RUNNER_EXIT_ID, from_entry=SHORT_ENTRY_ID, qty=_runnerQty, stop=_runnerStop, limit=_finalTarget, comment="Runner Final Target", comment_profit="Runner Final Target", comment_loss="Runner Original Stop")
+        runnerSubmitted := true
+    else if _allowFixedExit
+        strategy.cancel(SHORT_TRIM_EXIT_ID)
+        strategy.cancel(SHORT_RUNNER_EXIT_ID)
+        if _fixedFallback
+            strategy.exit(SHORT_EXIT_ID, from_entry=SHORT_ENTRY_ID, stop=_originalStop, limit=_finalTarget, comment="Single Contract Fallback", comment_profit="Single Contract Fallback", comment_loss="Single Contract Fallback")
+        else
+            strategy.exit(SHORT_EXIT_ID, from_entry=SHORT_ENTRY_ID, stop=_originalStop, limit=_finalTarget, comment="Fixed R Exit", comment_profit="Fixed R Exit", comment_loss="Fixed R Exit")
+        fixedSubmitted := true
+    else
+        f_cancelShortExitOrders()
+    trimSubmitted or runnerSubmitted or fixedSubmitted
+
 f_pickLocationName(bool _ema20, bool _ema50, bool _ema9, bool _orh, bool _orl, bool _pdh, bool _pdl, bool _pmh, bool _pml, bool _rthOpen) =>
     _ema20 ? "20EMA" :
      _ema50 ? "50EMA" :
@@ -469,10 +563,11 @@ emaClusterLow = math.min(ema9, math.min(ema20, ema50))
 emaClusterHigh = math.max(ema9, math.max(ema20, ema50))
 emaClusterCompression = not na(atrValue) and emaClusterHigh - emaClusterLow <= atrValue * emaChopCompressionAtrMultiplier
 emaChopEffectiveRequiredOverlapBars = math.min(emaChopRequiredOverlapBars, emaChopOverlapLookbackBars)
-ema20OverlapCount = f_countSeriesTouchesFromOffset(ema20, 1, emaChopOverlapLookbackBars)
-ema20OverlapOffsetsText = f_seriesTouchOffsetsText(ema20, 1, emaChopOverlapLookbackBars)
-ema20OverlapChopBlocked = ema20OverlapCount >= emaChopEffectiveRequiredOverlapBars
-emaChopBlocked = emaChopFilterMode == "EMA Compression" ? emaClusterCompression : emaChopFilterMode == "20 EMA Bar Overlap" ? ema20OverlapChopBlocked : false
+emaChopOverlapSeries = emaChopOverlapSource == "9 EMA" ? ema9 : ema20
+emaChopOverlapCount = f_countSeriesTouchesFromOffset(emaChopOverlapSeries, 1, emaChopOverlapLookbackBars)
+emaChopOverlapOffsetsText = f_seriesTouchOffsetsText(emaChopOverlapSeries, 1, emaChopOverlapLookbackBars)
+emaChopOverlapChopBlocked = emaChopOverlapCount >= emaChopEffectiveRequiredOverlapBars
+emaChopBlocked = emaChopFilterMode == "EMA Compression" ? emaClusterCompression : emaChopFilterMode == "EMA Bar Overlap" ? emaChopOverlapChopBlocked : false
 longEmaChopBlocked = emaChopBlocked
 shortEmaChopBlocked = emaChopBlocked
 
@@ -756,6 +851,10 @@ var bool activeLongTrimManagementEligible = false
 var bool activeShortTrimManagementEligible = false
 var bool activeLongFixedRFallback = false
 var bool activeShortFixedRFallback = false
+var bool activeLongTrimFilled = false
+var bool activeShortTrimFilled = false
+var int activeLongFilledQty = na
+var int activeShortFilledQty = na
 var int activeLongTrimQty = na
 var int activeLongRunnerQty = na
 var int activeShortTrimQty = na
@@ -778,6 +877,16 @@ bool longSetupPlacedEvent = false
 bool shortSetupPlacedEvent = false
 bool longOrderCancelledEvent = false
 bool shortOrderCancelledEvent = false
+bool pendingCancelledOutsideWindow = false
+bool pendingCancelledNewSession = false
+bool pendingCancelledRthFlatten = false
+bool entryFilledOutsideWindow = false
+bool longTrimExitSubmitted = false
+bool longRunnerExitSubmitted = false
+bool longFixedExitSubmitted = false
+bool shortTrimExitSubmitted = false
+bool shortRunnerExitSubmitted = false
+bool shortFixedExitSubmitted = false
 float longSetupAlertEntry = na
 float longSetupAlertStop = na
 float longSetupAlertTarget = na
@@ -805,9 +914,19 @@ bool delayedEntryMode = entryMode == "Prior Bar Break Or Delayed Confirmation"
 bool cancelWinsSameBar = sameBarEntryVsCancelMode == "Cancel Wins"
 bool isFiveMinuteChart = timeframe.period == "5"
 bool rthCloseFlattenNow = flattenAtRthClose and barstate.isconfirmed and ((inRthSession and inRthCloseFlattenWindow) or (not inRthSession and wasInRthSession))
+bool longFilledNow = strategy.position_size > 0 and nz(strategy.position_size[1]) <= 0 and lastFillBar != bar_index
+bool shortFilledNow = strategy.position_size < 0 and nz(strategy.position_size[1]) >= 0 and lastFillBar != bar_index
 
 if newRthSession
     tradesToday := 0
+
+if newRthSession and not (longFilledNow or shortFilledNow)
+    bool hadPendingOnNewRth = longPendingOrder or shortPendingOrder or pendingLongDelayedSetup or pendingShortDelayedSetup
+    if hadPendingOnNewRth
+        pendingCancelledNewSession := true
+        f_cancelPendingEntryOrders()
+        f_cancelAllExitOrders()
+        f_addPendingCancellationDebugLabel("new session")
     pendingLongDelayedSetup := false
     pendingShortDelayedSetup := false
     pendingLongDelayedSetupBar := na
@@ -821,10 +940,8 @@ if newRthSession
     pendingLongDelayedLocation := "N/A"
     pendingShortDelayedLocation := "N/A"
     if longPendingOrder
-        strategy.cancel(LONG_ENTRY_ID)
         longPendingOrder := false
     if shortPendingOrder
-        strategy.cancel(SHORT_ENTRY_ID)
         shortPendingOrder := false
     longPendingSignalBar := na
     shortPendingSignalBar := na
@@ -862,17 +979,59 @@ if newRthSession
     activeShortTrimManagementEligible := false
     activeLongFixedRFallback := false
     activeShortFixedRFallback := false
+    activeLongTrimFilled := false
+    activeShortTrimFilled := false
+    activeLongFilledQty := na
+    activeShortFilledQty := na
     activeLongTrimQty := na
     activeLongRunnerQty := na
     activeShortTrimQty := na
     activeShortRunnerQty := na
     lastSignalReason := "New RTH session"
 
+bool pendingSessionResetNow = not (longFilledNow or shortFilledNow) and not newRthSession and (newPremarketSession or newNYSessionDate)
+if pendingSessionResetNow
+    bool hadPendingOnSessionReset = longPendingOrder or shortPendingOrder or pendingLongDelayedSetup or pendingShortDelayedSetup
+    if hadPendingOnSessionReset
+        pendingCancelledNewSession := true
+        f_cancelPendingEntryOrders()
+        f_cancelAllExitOrders()
+        f_addPendingCancellationDebugLabel("new session")
+    pendingLongDelayedSetup := false
+    pendingShortDelayedSetup := false
+    pendingLongDelayedSetupBar := na
+    pendingShortDelayedSetupBar := na
+    pendingLongDelayedSetupStop := na
+    pendingShortDelayedSetupStop := na
+    pendingLongPullbackSwingLow := na
+    pendingShortPullbackSwingHigh := na
+    pendingLongDelayedBreakPrice := na
+    pendingShortDelayedBreakPrice := na
+    pendingLongDelayedLocation := "N/A"
+    pendingShortDelayedLocation := "N/A"
+    longPendingOrder := false
+    shortPendingOrder := false
+    longPendingSignalBar := na
+    shortPendingSignalBar := na
+    longPendingEntry := na
+    longPendingStop := na
+    longPendingTarget := na
+    longPendingRisk := na
+    longPendingOneRTarget := na
+    shortPendingEntry := na
+    shortPendingStop := na
+    shortPendingTarget := na
+    shortPendingRisk := na
+    shortPendingOneRTarget := na
+    longPendingContracts := na
+    shortPendingContracts := na
+    longPendingLocation := "N/A"
+    shortPendingLocation := "N/A"
+    if hadPendingOnSessionReset
+        lastSignalReason := "Pending cancelled: new session"
+
 // Actual fill tracking: tradesToday increments only when the broker emulator
 // opens a position, not when a setup appears or a stop order is submitted.
-bool longFilledNow = strategy.position_size > 0 and nz(strategy.position_size[1]) <= 0 and lastFillBar != bar_index
-bool shortFilledNow = strategy.position_size < 0 and nz(strategy.position_size[1]) >= 0 and lastFillBar != bar_index
-
 if longFilledNow
     tradesToday += 1
     lastFillBar := bar_index
@@ -887,15 +1046,21 @@ if longFilledNow
     activeLongTarget := not na(longPendingTarget) ? longPendingTarget : plannedLongEntry + plannedLongRisk * targetR
     activeLongRunnerStop := activeLongStop
     int filledLongContracts = int(math.abs(strategy.position_size))
+    activeLongFilledQty := filledLongContracts
     activeLongTrimManagementEligible := managementMode == "Trim 1R + BE" and filledLongContracts >= 2 and not na(activeLongRisk) and activeLongRisk > 0
-    activeLongFixedRFallback := managementMode == "Trim 1R + BE" and not activeLongTrimManagementEligible
+    activeLongFixedRFallback := managementMode == "Trim 1R + BE" and filledLongContracts < 2
+    activeLongTrimFilled := false
     activeLongTrimQty := activeLongTrimManagementEligible ? f_trimContracts(filledLongContracts, trimAtOneRPercent) : na
     activeLongRunnerQty := activeLongTrimManagementEligible ? filledLongContracts - activeLongTrimQty : na
     longOneRReached := false
     activeShortTrimManagementEligible := false
     activeShortFixedRFallback := false
+    activeShortTrimFilled := false
+    activeShortFilledQty := na
     activeShortTrimQty := na
     activeShortRunnerQty := na
+    if activeLongTrimManagementEligible
+        strategy.cancel(LONG_EXIT_ID)
     longPendingOrder := false
     longPendingSignalBar := na
     longPendingEntry := na
@@ -918,7 +1083,8 @@ if longFilledNow
         shortPendingLocation := "N/A"
     lastSignalReason := "Long filled"
     if showStrategyDebugLabels
-        label.new(bar_index, low, "L fill\nPlan E " + f_priceText(activeLongEntry) + "\nStop " + f_priceText(activeLongStop) + "\n1R " + f_priceText(activeLongOneRTarget) + "\nQty " + str.tostring(filledLongContracts), style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 20), size=size.tiny)
+        string longFillDebugText = activeLongTrimManagementEligible ? "L trim fill\nQty " + str.tostring(filledLongContracts) + " T " + str.tostring(activeLongTrimQty) + " R " + str.tostring(activeLongRunnerQty) + "\nPlan " + f_priceText(activeLongEntry) + " Avg " + f_priceText(activeLongAverageFillPrice) + "\nStop " + f_priceText(activeLongStop) + " 1R " + f_priceText(activeLongOneRTarget) + "\nFinal " + f_priceText(activeLongTarget) + "\nFixed exit cancelled TRUE" : "L fill\nPlan E " + f_priceText(activeLongEntry) + "\nAvg " + f_priceText(activeLongAverageFillPrice) + "\nStop " + f_priceText(activeLongStop) + "\n1R " + f_priceText(activeLongOneRTarget) + "\nQty " + str.tostring(filledLongContracts)
+        label.new(bar_index, low, longFillDebugText, style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 20), size=size.tiny)
 
 if shortFilledNow
     tradesToday += 1
@@ -934,15 +1100,21 @@ if shortFilledNow
     activeShortTarget := not na(shortPendingTarget) ? shortPendingTarget : plannedShortEntry - plannedShortRisk * targetR
     activeShortRunnerStop := activeShortStop
     int filledShortContracts = int(math.abs(strategy.position_size))
+    activeShortFilledQty := filledShortContracts
     activeShortTrimManagementEligible := managementMode == "Trim 1R + BE" and filledShortContracts >= 2 and not na(activeShortRisk) and activeShortRisk > 0
-    activeShortFixedRFallback := managementMode == "Trim 1R + BE" and not activeShortTrimManagementEligible
+    activeShortFixedRFallback := managementMode == "Trim 1R + BE" and filledShortContracts < 2
+    activeShortTrimFilled := false
     activeShortTrimQty := activeShortTrimManagementEligible ? f_trimContracts(filledShortContracts, trimAtOneRPercent) : na
     activeShortRunnerQty := activeShortTrimManagementEligible ? filledShortContracts - activeShortTrimQty : na
     shortOneRReached := false
     activeLongTrimManagementEligible := false
     activeLongFixedRFallback := false
+    activeLongTrimFilled := false
+    activeLongFilledQty := na
     activeLongTrimQty := na
     activeLongRunnerQty := na
+    if activeShortTrimManagementEligible
+        strategy.cancel(SHORT_EXIT_ID)
     shortPendingOrder := false
     shortPendingSignalBar := na
     shortPendingEntry := na
@@ -965,9 +1137,58 @@ if shortFilledNow
         longPendingLocation := "N/A"
     lastSignalReason := "Short filled"
     if showStrategyDebugLabels
-        label.new(bar_index, high, "S fill\nPlan E " + f_priceText(activeShortEntry) + "\nStop " + f_priceText(activeShortStop) + "\n1R " + f_priceText(activeShortOneRTarget) + "\nQty " + str.tostring(filledShortContracts), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 20), size=size.tiny)
+        string shortFillDebugText = activeShortTrimManagementEligible ? "S trim fill\nQty " + str.tostring(filledShortContracts) + " T " + str.tostring(activeShortTrimQty) + " R " + str.tostring(activeShortRunnerQty) + "\nPlan " + f_priceText(activeShortEntry) + " Avg " + f_priceText(activeShortAverageFillPrice) + "\nStop " + f_priceText(activeShortStop) + " 1R " + f_priceText(activeShortOneRTarget) + "\nFinal " + f_priceText(activeShortTarget) + "\nFixed exit cancelled TRUE" : "S fill\nPlan E " + f_priceText(activeShortEntry) + "\nAvg " + f_priceText(activeShortAverageFillPrice) + "\nStop " + f_priceText(activeShortStop) + "\n1R " + f_priceText(activeShortOneRTarget) + "\nQty " + str.tostring(filledShortContracts)
+        label.new(bar_index, high, shortFillDebugText, style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 20), size=size.tiny)
+
+if not allowPendingEntryFillsAfterWindow and (longFilledNow or shortFilledNow) and not inAlertTradingWindow
+    entryFilledOutsideWindow := true
+    f_cancelAllExitOrders()
+    if longFilledNow
+        strategy.close(LONG_ENTRY_ID, comment="ERROR: Filled outside alert window")
+        if showStrategyDebugLabels
+            label.new(bar_index, high, "ERROR: Filled outside alert window\nLONG qty " + str.tostring(strategy.position_size), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.small)
+    if shortFilledNow
+        strategy.close(SHORT_ENTRY_ID, comment="ERROR: Filled outside alert window")
+        if showStrategyDebugLabels
+            label.new(bar_index, low, "ERROR: Filled outside alert window\nSHORT qty " + str.tostring(math.abs(strategy.position_size)), style=label.style_label_up, textcolor=color.white, color=color.new(color.red, 0), size=size.small)
+    lastSignalReason := "ERROR: Filled outside alert window"
+
+bool longTrimFilledNow = strategy.position_size > 0 and activeLongTrimManagementEligible and not activeLongTrimFilled and not na(activeLongRunnerQty) and int(math.abs(strategy.position_size)) <= activeLongRunnerQty
+bool shortTrimFilledNow = strategy.position_size < 0 and activeShortTrimManagementEligible and not activeShortTrimFilled and not na(activeShortRunnerQty) and int(math.abs(strategy.position_size)) <= activeShortRunnerQty
+if longTrimFilledNow
+    activeLongTrimFilled := true
+if shortTrimFilledNow
+    activeShortTrimFilled := true
 
 bool positionClosedNow = strategy.position_size == 0 and nz(strategy.position_size[1]) != 0
+float lastClosedTradeExitPrice = na
+if positionClosedNow and strategy.closedtrades > 0
+    lastClosedTradeExitPrice := strategy.closedtrades.exit_price(strategy.closedtrades - 1)
+int closedTradesSinceLastSync = strategy.closedtrades - trackedClosedTradesCount
+bool latestClosedWasLongTrim = positionClosedNow and strategy.closedtrades > 0 and strategy.closedtrades.exit_id(strategy.closedtrades - 1) == LONG_TRIM_EXIT_ID
+bool previousClosedWasLongTrim = positionClosedNow and closedTradesSinceLastSync >= 2 and strategy.closedtrades > 1 and strategy.closedtrades.exit_id(strategy.closedtrades - 2) == LONG_TRIM_EXIT_ID
+bool latestClosedWasShortTrim = positionClosedNow and strategy.closedtrades > 0 and strategy.closedtrades.exit_id(strategy.closedtrades - 1) == SHORT_TRIM_EXIT_ID
+bool previousClosedWasShortTrim = positionClosedNow and closedTradesSinceLastSync >= 2 and strategy.closedtrades > 1 and strategy.closedtrades.exit_id(strategy.closedtrades - 2) == SHORT_TRIM_EXIT_ID
+bool longTrimClosedInLatestBatch = latestClosedWasLongTrim or previousClosedWasLongTrim
+bool shortTrimClosedInLatestBatch = latestClosedWasShortTrim or previousClosedWasShortTrim
+bool longTrimAlreadyHandled = activeLongTrimFilled or longTrimClosedInLatestBatch
+bool shortTrimAlreadyHandled = activeShortTrimFilled or shortTrimClosedInLatestBatch
+bool longClosedFromOriginalQty = positionClosedNow and nz(strategy.position_size[1]) > 0 and activeLongTrimManagementEligible and not na(activeLongFilledQty) and int(math.abs(strategy.position_size[1])) >= activeLongFilledQty
+bool shortClosedFromOriginalQty = positionClosedNow and nz(strategy.position_size[1]) < 0 and activeShortTrimManagementEligible and not na(activeShortFilledQty) and int(math.abs(strategy.position_size[1])) >= activeShortFilledQty
+bool longFullExitAtFinalWithoutTrim = longClosedFromOriginalQty and not longTrimAlreadyHandled and not na(lastClosedTradeExitPrice) and not na(activeLongTarget) and lastClosedTradeExitPrice >= activeLongTarget - tickSize * 0.5
+bool shortFullExitAtFinalWithoutTrim = shortClosedFromOriginalQty and not shortTrimAlreadyHandled and not na(lastClosedTradeExitPrice) and not na(activeShortTarget) and lastClosedTradeExitPrice <= activeShortTarget + tickSize * 0.5
+bool longFullExitAtOriginalStopAfterOneR = longClosedFromOriginalQty and longOneRReached and not longTrimAlreadyHandled and not na(lastClosedTradeExitPrice) and not na(activeLongStop) and lastClosedTradeExitPrice <= activeLongStop + tickSize * 0.5
+bool shortFullExitAtOriginalStopAfterOneR = shortClosedFromOriginalQty and shortOneRReached and not shortTrimAlreadyHandled and not na(lastClosedTradeExitPrice) and not na(activeShortStop) and lastClosedTradeExitPrice >= activeShortStop - tickSize * 0.5
+if showStrategyDebugLabels and positionClosedNow and (longTrimClosedInLatestBatch or shortTrimClosedInLatestBatch) and not (activeLongTrimFilled or activeShortTrimFilled)
+    label.new(bar_index, close, "Same-bar split exit batch\nTradingView reported trim and close together", style=label.style_label_left, textcolor=color.white, color=color.new(color.gray, 20), size=size.tiny)
+if showStrategyDebugLabels and longFullExitAtFinalWithoutTrim
+    label.new(bar_index, high, "ERROR: Full qty exited final target without 1R trim\nQty " + str.tostring(activeLongFilledQty) + " Exit " + f_priceText(lastClosedTradeExitPrice) + "\n1R " + f_priceText(activeLongOneRTarget) + " Final " + f_priceText(activeLongTarget), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.small)
+if showStrategyDebugLabels and shortFullExitAtFinalWithoutTrim
+    label.new(bar_index, low, "ERROR: Full qty exited final target without 1R trim\nQty " + str.tostring(activeShortFilledQty) + " Exit " + f_priceText(lastClosedTradeExitPrice) + "\n1R " + f_priceText(activeShortOneRTarget) + " Final " + f_priceText(activeShortTarget), style=label.style_label_up, textcolor=color.white, color=color.new(color.red, 0), size=size.small)
+if showStrategyDebugLabels and longFullExitAtOriginalStopAfterOneR
+    label.new(bar_index, high, "ERROR: Full qty exited original stop after 1R\nQty " + str.tostring(activeLongFilledQty) + " Exit " + f_priceText(lastClosedTradeExitPrice) + "\nOld stop " + f_priceText(activeLongStop) + " BE stop " + f_priceText(activeLongRunnerStop), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.small)
+if showStrategyDebugLabels and shortFullExitAtOriginalStopAfterOneR
+    label.new(bar_index, low, "ERROR: Full qty exited original stop after 1R\nQty " + str.tostring(activeShortFilledQty) + " Exit " + f_priceText(lastClosedTradeExitPrice) + "\nOld stop " + f_priceText(activeShortStop) + " BE stop " + f_priceText(activeShortRunnerStop), style=label.style_label_up, textcolor=color.white, color=color.new(color.red, 0), size=size.small)
 if positionClosedNow
     activeLongStop := na
     activeLongTarget := na
@@ -989,6 +1210,10 @@ if positionClosedNow
     activeShortTrimManagementEligible := false
     activeLongFixedRFallback := false
     activeShortFixedRFallback := false
+    activeLongTrimFilled := false
+    activeShortTrimFilled := false
+    activeLongFilledQty := na
+    activeShortFilledQty := na
     activeLongTrimQty := na
     activeLongRunnerQty := na
     activeShortTrimQty := na
@@ -1003,8 +1228,8 @@ bool closedTradeCountIncreased = strategy.closedtrades > trackedClosedTradesCoun
 if closedTradeCountIncreased
     trackedClosedTradesCount := strategy.closedtrades
     if strategy.position_size == 0
-        strategy.cancel(LONG_ENTRY_ID)
-        strategy.cancel(SHORT_ENTRY_ID)
+        f_cancelPendingEntryOrders()
+        f_cancelAllExitOrders()
         longPendingOrder := false
         shortPendingOrder := false
         longPendingSignalBar := na
@@ -1055,6 +1280,10 @@ if closedTradeCountIncreased
         activeShortTrimManagementEligible := false
         activeLongFixedRFallback := false
         activeShortFixedRFallback := false
+        activeLongTrimFilled := false
+        activeShortTrimFilled := false
+        activeLongFilledQty := na
+        activeShortFilledQty := na
         activeLongTrimQty := na
         activeLongRunnerQty := na
         activeShortTrimQty := na
@@ -1063,8 +1292,12 @@ if closedTradeCountIncreased
             lastSignalReason := "Closed-trade sync"
 
 if rthCloseFlattenNow
-    strategy.cancel(LONG_ENTRY_ID)
-    strategy.cancel(SHORT_ENTRY_ID)
+    bool hadPendingOnRthFlatten = longPendingOrder or shortPendingOrder or pendingLongDelayedSetup or pendingShortDelayedSetup
+    if hadPendingOnRthFlatten
+        pendingCancelledRthFlatten := true
+        f_addPendingCancellationDebugLabel("RTH flatten")
+    f_cancelPendingEntryOrders()
+    f_cancelAllExitOrders()
     strategy.close(LONG_ENTRY_ID)
     strategy.close(SHORT_ENTRY_ID)
     longPendingOrder := false
@@ -1089,6 +1322,10 @@ if rthCloseFlattenNow
     activeShortTrimManagementEligible := false
     activeLongFixedRFallback := false
     activeShortFixedRFallback := false
+    activeLongTrimFilled := false
+    activeShortTrimFilled := false
+    activeLongFilledQty := na
+    activeShortFilledQty := na
     activeLongTrimQty := na
     activeLongRunnerQty := na
     activeShortTrimQty := na
@@ -1123,6 +1360,58 @@ if rthCloseFlattenNow
     pendingShortDelayedLocation := "N/A"
     lastSignalReason := "RTH close flatten"
 
+bool pendingInvalidOutsideWindowNow = barstate.isconfirmed and strategy.position_size == 0 and not allowPendingEntryFillsAfterWindow and not inAlertTradingWindow and (longPendingOrder or shortPendingOrder or pendingLongDelayedSetup or pendingShortDelayedSetup)
+if pendingInvalidOutsideWindowNow
+    pendingCancelledOutsideWindow := true
+    if longPendingOrder
+        longOrderCancelledEvent := true
+        longCancelAlertEntry := longPendingEntry
+        longCancelAlertStop := longPendingStop
+        longCancelAlertTarget := longPendingTarget
+        longCancelAlertRisk := longPendingEntry - longPendingStop
+        longCancelAlertReasonCode := 3.0
+    if shortPendingOrder
+        shortOrderCancelledEvent := true
+        shortCancelAlertEntry := shortPendingEntry
+        shortCancelAlertStop := shortPendingStop
+        shortCancelAlertTarget := shortPendingTarget
+        shortCancelAlertRisk := shortPendingStop - shortPendingEntry
+        shortCancelAlertReasonCode := 3.0
+    f_cancelPendingEntryOrders()
+    f_cancelAllExitOrders()
+    f_addPendingCancellationDebugLabel("outside alert window")
+    pendingLongDelayedSetup := false
+    pendingShortDelayedSetup := false
+    pendingLongDelayedSetupBar := na
+    pendingShortDelayedSetupBar := na
+    pendingLongDelayedBreakPrice := na
+    pendingShortDelayedBreakPrice := na
+    pendingLongDelayedSetupStop := na
+    pendingShortDelayedSetupStop := na
+    pendingLongPullbackSwingLow := na
+    pendingShortPullbackSwingHigh := na
+    pendingLongDelayedLocation := "N/A"
+    pendingShortDelayedLocation := "N/A"
+    longPendingOrder := false
+    shortPendingOrder := false
+    longPendingSignalBar := na
+    shortPendingSignalBar := na
+    longPendingEntry := na
+    longPendingStop := na
+    longPendingTarget := na
+    longPendingRisk := na
+    longPendingOneRTarget := na
+    shortPendingEntry := na
+    shortPendingStop := na
+    shortPendingTarget := na
+    shortPendingRisk := na
+    shortPendingOneRTarget := na
+    longPendingContracts := na
+    shortPendingContracts := na
+    longPendingLocation := "N/A"
+    shortPendingLocation := "N/A"
+    lastSignalReason := "Pending cancelled: outside alert window"
+
 // Cancellation logic: unfilled stop entries are cancelled after the configured
 // age or if the planned stop breaks before entry. Same-bar entry/stop ambiguity
 // uses the requested arbitration mode when the fill state is still flat.
@@ -1144,6 +1433,7 @@ if barstate.isconfirmed and strategy.position_size == 0
             longCancelAlertRisk := longPendingEntry - longPendingStop
             longCancelAlertReasonCode := longStopCancel ? 2.0 : 1.0
             strategy.cancel(LONG_ENTRY_ID)
+            f_cancelLongExitOrders()
             if showCancellationLabels
                 f_addCancellationChartLabel(true, cancelReason)
             alert(f_buildCancelAlertMessage("LONG", longPendingLocation, cancelReason, longPendingEntry, longPendingStop, longPendingTarget, longPendingEntry - longPendingStop, targetR), alert.freq_once_per_bar_close)
@@ -1175,6 +1465,7 @@ if barstate.isconfirmed and strategy.position_size == 0
             shortCancelAlertRisk := shortPendingStop - shortPendingEntry
             shortCancelAlertReasonCode := shortStopCancel ? 2.0 : 1.0
             strategy.cancel(SHORT_ENTRY_ID)
+            f_cancelShortExitOrders()
             if showCancellationLabels
                 f_addCancellationChartLabel(false, cancelReason)
             alert(f_buildCancelAlertMessage("SHORT", shortPendingLocation, cancelReason, shortPendingEntry, shortPendingStop, shortPendingTarget, shortPendingStop - shortPendingEntry, targetR), alert.freq_once_per_bar_close)
@@ -1531,6 +1822,72 @@ if canEvaluateSignals and not longSetupPlacedEvent and not shortSetupPlacedEvent
          hasOpenPosition ? "Position active" :
          "No complete setup"
 
+bool trimManagementMode = managementMode == "Trim 1R + BE"
+int activeLongPositionQty = strategy.position_size > 0 ? int(math.abs(strategy.position_size)) : 0
+int activeShortPositionQty = strategy.position_size < 0 ? int(math.abs(strategy.position_size)) : 0
+bool longTrimStateMissing = trimManagementMode and activeLongPositionQty >= 2 and (not activeLongTrimManagementEligible or na(activeLongTrimQty) or na(activeLongRunnerQty) or na(activeLongOneRTarget) or na(activeLongRunnerStop) or na(activeLongFilledQty))
+bool shortTrimStateMissing = trimManagementMode and activeShortPositionQty >= 2 and (not activeShortTrimManagementEligible or na(activeShortTrimQty) or na(activeShortRunnerQty) or na(activeShortOneRTarget) or na(activeShortRunnerStop) or na(activeShortFilledQty))
+bool longPositionNeedsActiveInit = strategy.position_size > 0 and (na(activeLongAverageFillPrice) or na(activeLongEntry) or na(activeLongStop) or na(activeLongTarget) or na(activeLongRisk) or activeLongRisk <= 0 or na(activeLongFilledQty) or longTrimStateMissing)
+bool shortPositionNeedsActiveInit = strategy.position_size < 0 and (na(activeShortAverageFillPrice) or na(activeShortEntry) or na(activeShortStop) or na(activeShortTarget) or na(activeShortRisk) or activeShortRisk <= 0 or na(activeShortFilledQty) or shortTrimStateMissing)
+
+if longPositionNeedsActiveInit
+    float recoveredLongAvg = strategy.position_avg_price
+    float recoveredLongEntry = not na(activeLongEntry) ? activeLongEntry : not na(longPendingEntry) ? longPendingEntry : recoveredLongAvg
+    float recoveredLongStop = not na(activeLongStop) ? activeLongStop : longPendingStop
+    float recoveredLongRisk = not na(activeLongRisk) and activeLongRisk > 0 ? activeLongRisk : not na(recoveredLongStop) ? recoveredLongAvg - recoveredLongStop : na
+    float recoveredLongOneR = not na(activeLongOneRTarget) ? activeLongOneRTarget : not na(longPendingOneRTarget) ? longPendingOneRTarget : not na(recoveredLongRisk) and recoveredLongRisk > 0 ? recoveredLongAvg + recoveredLongRisk : na
+    float recoveredLongTarget = not na(activeLongTarget) ? activeLongTarget : not na(longPendingTarget) ? longPendingTarget : not na(recoveredLongRisk) and recoveredLongRisk > 0 ? recoveredLongAvg + recoveredLongRisk * targetR : na
+    activeLongEntry := recoveredLongEntry
+    activeLongAverageFillPrice := recoveredLongAvg
+    activeLongStop := recoveredLongStop
+    activeLongRisk := recoveredLongRisk
+    activeLongOneRTarget := recoveredLongOneR
+    activeLongTarget := recoveredLongTarget
+    activeLongFilledQty := activeLongPositionQty
+    activeLongTrimManagementEligible := trimManagementMode and activeLongPositionQty >= 2 and not na(activeLongRisk) and activeLongRisk > 0 and not na(activeLongStop) and not na(activeLongOneRTarget) and not na(activeLongTarget)
+    activeLongFixedRFallback := trimManagementMode and activeLongPositionQty < 2
+    activeLongTrimQty := activeLongTrimManagementEligible ? f_trimContracts(activeLongPositionQty, trimAtOneRPercent) : na
+    activeLongRunnerQty := activeLongTrimManagementEligible ? activeLongPositionQty - activeLongTrimQty : na
+    activeLongRunnerStop := activeLongTrimManagementEligible ? (longOneRReached ? math.max(activeLongStop, recoveredLongAvg + tickSize) : activeLongStop) : activeLongStop
+    activeShortTrimManagementEligible := false
+    activeShortFixedRFallback := false
+    activeShortTrimQty := na
+    activeShortRunnerQty := na
+    string longRecoveryIssue = f_trimStateIssueText(activeLongPositionQty, activeLongStop, activeLongRisk, activeLongOneRTarget, activeLongTarget, activeLongTrimQty, activeLongRunnerQty)
+    if showStrategyDebugLabels and activeLongTrimManagementEligible
+        label.new(bar_index, low, "Recovered active long trim state\nQty " + str.tostring(activeLongPositionQty) + " T " + str.tostring(activeLongTrimQty) + " R " + str.tostring(activeLongRunnerQty) + "\nEntry " + f_priceText(activeLongEntry) + " Avg " + f_priceText(activeLongAverageFillPrice) + "\nStop " + f_priceText(activeLongStop) + " Risk " + f_pointsText(activeLongRisk) + "\n1R " + f_priceText(activeLongOneRTarget) + " Target " + f_priceText(activeLongTarget), style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 0), size=size.tiny)
+    if showStrategyDebugLabels and trimManagementMode and activeLongPositionQty >= 2 and not activeLongTrimManagementEligible
+        label.new(bar_index, high, "ERROR: Could not recover active long trim state\nReason: " + longRecoveryIssue + "\nQty " + str.tostring(activeLongPositionQty) + "\nEntry " + f_priceText(activeLongEntry) + " Avg " + f_priceText(activeLongAverageFillPrice) + "\nStop " + f_priceText(activeLongStop) + " Risk " + f_pointsText(activeLongRisk) + "\n1R " + f_priceText(activeLongOneRTarget) + " Target " + f_priceText(activeLongTarget), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.small)
+
+if shortPositionNeedsActiveInit
+    float recoveredShortAvg = strategy.position_avg_price
+    float recoveredShortEntry = not na(activeShortEntry) ? activeShortEntry : not na(shortPendingEntry) ? shortPendingEntry : recoveredShortAvg
+    float recoveredShortStop = not na(activeShortStop) ? activeShortStop : shortPendingStop
+    float recoveredShortRisk = not na(activeShortRisk) and activeShortRisk > 0 ? activeShortRisk : not na(recoveredShortStop) ? recoveredShortStop - recoveredShortAvg : na
+    float recoveredShortOneR = not na(activeShortOneRTarget) ? activeShortOneRTarget : not na(shortPendingOneRTarget) ? shortPendingOneRTarget : not na(recoveredShortRisk) and recoveredShortRisk > 0 ? recoveredShortAvg - recoveredShortRisk : na
+    float recoveredShortTarget = not na(activeShortTarget) ? activeShortTarget : not na(shortPendingTarget) ? shortPendingTarget : not na(recoveredShortRisk) and recoveredShortRisk > 0 ? recoveredShortAvg - recoveredShortRisk * targetR : na
+    activeShortEntry := recoveredShortEntry
+    activeShortAverageFillPrice := recoveredShortAvg
+    activeShortStop := recoveredShortStop
+    activeShortRisk := recoveredShortRisk
+    activeShortOneRTarget := recoveredShortOneR
+    activeShortTarget := recoveredShortTarget
+    activeShortFilledQty := activeShortPositionQty
+    activeShortTrimManagementEligible := trimManagementMode and activeShortPositionQty >= 2 and not na(activeShortRisk) and activeShortRisk > 0 and not na(activeShortStop) and not na(activeShortOneRTarget) and not na(activeShortTarget)
+    activeShortFixedRFallback := trimManagementMode and activeShortPositionQty < 2
+    activeShortTrimQty := activeShortTrimManagementEligible ? f_trimContracts(activeShortPositionQty, trimAtOneRPercent) : na
+    activeShortRunnerQty := activeShortTrimManagementEligible ? activeShortPositionQty - activeShortTrimQty : na
+    activeShortRunnerStop := activeShortTrimManagementEligible ? (shortOneRReached ? math.min(activeShortStop, recoveredShortAvg - tickSize) : activeShortStop) : activeShortStop
+    activeLongTrimManagementEligible := false
+    activeLongFixedRFallback := false
+    activeLongTrimQty := na
+    activeLongRunnerQty := na
+    string shortRecoveryIssue = f_trimStateIssueText(activeShortPositionQty, activeShortStop, activeShortRisk, activeShortOneRTarget, activeShortTarget, activeShortTrimQty, activeShortRunnerQty)
+    if showStrategyDebugLabels and activeShortTrimManagementEligible
+        label.new(bar_index, high, "Recovered active short trim state\nQty " + str.tostring(activeShortPositionQty) + " T " + str.tostring(activeShortTrimQty) + " R " + str.tostring(activeShortRunnerQty) + "\nEntry " + f_priceText(activeShortEntry) + " Avg " + f_priceText(activeShortAverageFillPrice) + "\nStop " + f_priceText(activeShortStop) + " Risk " + f_pointsText(activeShortRisk) + "\n1R " + f_priceText(activeShortOneRTarget) + " Target " + f_priceText(activeShortTarget), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.tiny)
+    if showStrategyDebugLabels and trimManagementMode and activeShortPositionQty >= 2 and not activeShortTrimManagementEligible
+        label.new(bar_index, low, "ERROR: Could not recover active short trim state\nReason: " + shortRecoveryIssue + "\nQty " + str.tostring(activeShortPositionQty) + "\nEntry " + f_priceText(activeShortEntry) + " Avg " + f_priceText(activeShortAverageFillPrice) + "\nStop " + f_priceText(activeShortStop) + " Risk " + f_pointsText(activeShortRisk) + "\n1R " + f_priceText(activeShortOneRTarget) + " Target " + f_priceText(activeShortTarget), style=label.style_label_up, textcolor=color.white, color=color.new(color.red, 0), size=size.small)
+
 // Historical bars cannot prove the true sequence when entry, 1R, and stop all
 // occur inside the same candle. With later-bar 1R touches, this moves the runner
 // stop on the confirmed bar after 1R/trim becomes available to the emulator.
@@ -1549,74 +1906,57 @@ activeShortRunnerStop := strategy.position_size < 0 and activeShortTrimManagemen
 bool longRunnerStopMovedNow = longOneRReachedNow and not na(activeLongRunnerStop) and not na(activeLongStop) and activeLongRunnerStop > activeLongStop
 bool shortRunnerStopMovedNow = shortOneRReachedNow and not na(activeShortRunnerStop) and not na(activeShortStop) and activeShortRunnerStop < activeShortStop
 
+bool longFullPositionOpenAfterOneR = longOneRReachedNow and not activeLongTrimFilled and not na(activeLongFilledQty) and int(math.abs(strategy.position_size)) >= activeLongFilledQty
+bool shortFullPositionOpenAfterOneR = shortOneRReachedNow and not activeShortTrimFilled and not na(activeShortFilledQty) and int(math.abs(strategy.position_size)) >= activeShortFilledQty
+
 if showStrategyDebugLabels and longOneRReachedNow
-    label.new(bar_index, high, "L 1R reached\n1R " + f_priceText(activeLongOneRTarget), style=label.style_label_down, textcolor=color.white, color=color.new(color.green, 10), size=size.tiny)
+    label.new(bar_index, high, "L 1R reached\n1R " + f_priceText(activeLongOneRTarget) + " Pos " + str.tostring(strategy.position_size) + "\nT " + str.tostring(activeLongTrimQty) + " R " + str.tostring(activeLongRunnerQty) + "\nOld stop " + f_priceText(activeLongStop) + "\nNew stop " + f_priceText(activeLongRunnerStop), style=label.style_label_down, textcolor=color.white, color=color.new(color.green, 10), size=size.tiny)
 if showStrategyDebugLabels and longRunnerStopMovedNow
-    label.new(bar_index, low, "L runner BE+1\nStop " + f_priceText(activeLongRunnerStop), style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 0), size=size.tiny)
+    label.new(bar_index, low, "L runner stop to BE\nSubmitting stop " + f_priceText(activeLongRunnerStop), style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 0), size=size.tiny)
+if showStrategyDebugLabels and longFullPositionOpenAfterOneR
+    string longFullOpenAfterOneRText = lastFillBar == bar_index ? "AMBIGUOUS: entry and 1R same bar\nFull qty still open after calculation" : "ERROR: 1R reached but full qty still open"
+    label.new(bar_index, high, longFullOpenAfterOneRText + "\nPos " + str.tostring(strategy.position_size) + " Original " + str.tostring(activeLongFilledQty) + "\nTrim eligible " + f_boolText(activeLongTrimManagementEligible), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.small)
 if showStrategyDebugLabels and shortOneRReachedNow
-    label.new(bar_index, low, "S 1R reached\n1R " + f_priceText(activeShortOneRTarget), style=label.style_label_up, textcolor=color.white, color=color.new(color.red, 10), size=size.tiny)
+    label.new(bar_index, low, "S 1R reached\n1R " + f_priceText(activeShortOneRTarget) + " Pos " + str.tostring(math.abs(strategy.position_size)) + "\nT " + str.tostring(activeShortTrimQty) + " R " + str.tostring(activeShortRunnerQty) + "\nOld stop " + f_priceText(activeShortStop) + "\nNew stop " + f_priceText(activeShortRunnerStop), style=label.style_label_up, textcolor=color.white, color=color.new(color.red, 10), size=size.tiny)
 if showStrategyDebugLabels and shortRunnerStopMovedNow
-    label.new(bar_index, high, "S runner BE-1\nStop " + f_priceText(activeShortRunnerStop), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.tiny)
+    label.new(bar_index, high, "S runner stop to BE\nSubmitting stop " + f_priceText(activeShortRunnerStop), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.tiny)
+if showStrategyDebugLabels and shortFullPositionOpenAfterOneR
+    string shortFullOpenAfterOneRText = lastFillBar == bar_index ? "AMBIGUOUS: entry and 1R same bar\nFull qty still open after calculation" : "ERROR: 1R reached but full qty still open"
+    label.new(bar_index, low, shortFullOpenAfterOneRText + "\nPos " + str.tostring(math.abs(strategy.position_size)) + " Original " + str.tostring(activeShortFilledQty) + "\nTrim eligible " + f_boolText(activeShortTrimManagementEligible), style=label.style_label_up, textcolor=color.white, color=color.new(color.red, 0), size=size.small)
 
-bool trimManagementMode = managementMode == "Trim 1R + BE"
-bool longPendingTrimExitEligible = trimManagementMode and longPendingOrder and not na(longPendingContracts) and longPendingContracts >= 2 and not na(longPendingEntry) and not na(longPendingStop) and longPendingEntry > longPendingStop
-bool shortPendingTrimExitEligible = trimManagementMode and shortPendingOrder and not na(shortPendingContracts) and shortPendingContracts >= 2 and not na(shortPendingEntry) and not na(shortPendingStop) and shortPendingStop > shortPendingEntry
+// Exit orders are managed from active fill state only. Pending stop entries do
+// not submit brackets, which prevents stale fixed exits from reserving quantity
+// against a later trim/runner trade.
+if strategy.position_size == 0
+    f_cancelAllExitOrders()
 
-// Fixed R keeps the original single full-position exit. Trim mode splits only
-// trades with at least two filled contracts; smaller trades fall back to Fixed R.
-if longPendingOrder
-    if longPendingTrimExitEligible
-        int pendingLongTrimQty = f_trimContracts(longPendingContracts, trimAtOneRPercent)
-        int pendingLongRunnerQty = longPendingContracts - pendingLongTrimQty
-        float pendingLongOneRTarget = not na(longPendingOneRTarget) ? longPendingOneRTarget : longPendingEntry + (longPendingEntry - longPendingStop)
-        strategy.cancel(LONG_EXIT_ID)
-        strategy.exit(LONG_TRIM_EXIT_ID, from_entry=LONG_ENTRY_ID, qty=pendingLongTrimQty, stop=longPendingStop, limit=pendingLongOneRTarget)
-        strategy.exit(LONG_RUNNER_EXIT_ID, from_entry=LONG_ENTRY_ID, qty=pendingLongRunnerQty, stop=longPendingStop, limit=longPendingTarget)
-    else
-        strategy.cancel(LONG_TRIM_EXIT_ID)
-        strategy.cancel(LONG_RUNNER_EXIT_ID)
-        strategy.exit(LONG_EXIT_ID, from_entry=LONG_ENTRY_ID, stop=longPendingStop, limit=longPendingTarget)
+bool canManageLongExits = not entryFilledOutsideWindow and strategy.position_size > 0 and not na(activeLongStop) and not na(activeLongTarget)
+bool validLongSplitExit = canManageLongExits and trimManagementMode and activeLongTrimManagementEligible and not na(activeLongTrimQty) and not na(activeLongRunnerQty) and activeLongTrimQty >= 1 and activeLongRunnerQty >= 1 and not na(activeLongOneRTarget) and not na(activeLongRunnerStop)
+string longFixedRReason = trimManagementMode ? f_trimStateIssueText(activeLongPositionQty, activeLongStop, activeLongRisk, activeLongOneRTarget, activeLongTarget, activeLongTrimQty, activeLongRunnerQty) : "Fixed R mode"
+bool longAllowFixedExit = canManageLongExits and (not trimManagementMode or activeLongPositionQty < 2 or (activeLongPositionQty >= 2 and (na(activeLongRisk) or activeLongRisk <= 0)))
+if canManageLongExits
+    longTrimExitSubmitted := validLongSplitExit and strategy.position_size > activeLongRunnerQty
+    longRunnerExitSubmitted := validLongSplitExit
+    longFixedExitSubmitted := not validLongSplitExit and longAllowFixedExit
+    if showStrategyDebugLabels and trimManagementMode and longFixedExitSubmitted
+        label.new(bar_index, high, "Fixed R submitted in Trim 1R + BE\nReason: " + longFixedRReason + "\nQty " + str.tostring(activeLongPositionQty) + "\nStop " + f_priceText(activeLongStop) + " Target " + f_priceText(activeLongTarget), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, activeLongPositionQty >= 2 ? 0 : 35), size=size.tiny)
+    if showStrategyDebugLabels and trimManagementMode and activeLongPositionQty >= 2 and not validLongSplitExit and not longAllowFixedExit
+        label.new(bar_index, high, "ERROR: Fixed R blocked in trim mode\nReason: " + longFixedRReason + "\nQty " + str.tostring(activeLongPositionQty) + " T " + str.tostring(activeLongTrimQty) + " R " + str.tostring(activeLongRunnerQty), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.small)
+    f_manageLongExits(trimManagementMode, activeLongTrimManagementEligible, activeLongFixedRFallback, longAllowFixedExit, activeLongTrimQty, activeLongRunnerQty, activeLongStop, activeLongOneRTarget, activeLongRunnerStop, activeLongTarget, longOneRReached)
 
-if shortPendingOrder
-    if shortPendingTrimExitEligible
-        int pendingShortTrimQty = f_trimContracts(shortPendingContracts, trimAtOneRPercent)
-        int pendingShortRunnerQty = shortPendingContracts - pendingShortTrimQty
-        float pendingShortOneRTarget = not na(shortPendingOneRTarget) ? shortPendingOneRTarget : shortPendingEntry - (shortPendingStop - shortPendingEntry)
-        strategy.cancel(SHORT_EXIT_ID)
-        strategy.exit(SHORT_TRIM_EXIT_ID, from_entry=SHORT_ENTRY_ID, qty=pendingShortTrimQty, stop=shortPendingStop, limit=pendingShortOneRTarget)
-        strategy.exit(SHORT_RUNNER_EXIT_ID, from_entry=SHORT_ENTRY_ID, qty=pendingShortRunnerQty, stop=shortPendingStop, limit=shortPendingTarget)
-    else
-        strategy.cancel(SHORT_TRIM_EXIT_ID)
-        strategy.cancel(SHORT_RUNNER_EXIT_ID)
-        strategy.exit(SHORT_EXIT_ID, from_entry=SHORT_ENTRY_ID, stop=shortPendingStop, limit=shortPendingTarget)
-
-if strategy.position_size > 0 and not na(activeLongStop) and not na(activeLongTarget)
-    if activeLongTrimManagementEligible
-        bool longTrimStillOpen = not na(activeLongRunnerQty) and strategy.position_size > activeLongRunnerQty
-        strategy.cancel(LONG_EXIT_ID)
-        if longTrimStillOpen and not na(activeLongTrimQty) and not na(activeLongOneRTarget)
-            strategy.exit(LONG_TRIM_EXIT_ID, from_entry=LONG_ENTRY_ID, qty=activeLongTrimQty, stop=activeLongStop, limit=activeLongOneRTarget)
-        else
-            strategy.cancel(LONG_TRIM_EXIT_ID)
-        strategy.exit(LONG_RUNNER_EXIT_ID, from_entry=LONG_ENTRY_ID, qty=activeLongRunnerQty, stop=activeLongRunnerStop, limit=activeLongTarget)
-    else
-        strategy.cancel(LONG_TRIM_EXIT_ID)
-        strategy.cancel(LONG_RUNNER_EXIT_ID)
-        strategy.exit(LONG_EXIT_ID, from_entry=LONG_ENTRY_ID, stop=activeLongStop, limit=activeLongTarget)
-
-if strategy.position_size < 0 and not na(activeShortStop) and not na(activeShortTarget)
-    if activeShortTrimManagementEligible
-        bool shortTrimStillOpen = not na(activeShortRunnerQty) and math.abs(strategy.position_size) > activeShortRunnerQty
-        strategy.cancel(SHORT_EXIT_ID)
-        if shortTrimStillOpen and not na(activeShortTrimQty) and not na(activeShortOneRTarget)
-            strategy.exit(SHORT_TRIM_EXIT_ID, from_entry=SHORT_ENTRY_ID, qty=activeShortTrimQty, stop=activeShortStop, limit=activeShortOneRTarget)
-        else
-            strategy.cancel(SHORT_TRIM_EXIT_ID)
-        strategy.exit(SHORT_RUNNER_EXIT_ID, from_entry=SHORT_ENTRY_ID, qty=activeShortRunnerQty, stop=activeShortRunnerStop, limit=activeShortTarget)
-    else
-        strategy.cancel(SHORT_TRIM_EXIT_ID)
-        strategy.cancel(SHORT_RUNNER_EXIT_ID)
-        strategy.exit(SHORT_EXIT_ID, from_entry=SHORT_ENTRY_ID, stop=activeShortStop, limit=activeShortTarget)
+bool canManageShortExits = not entryFilledOutsideWindow and strategy.position_size < 0 and not na(activeShortStop) and not na(activeShortTarget)
+bool validShortSplitExit = canManageShortExits and trimManagementMode and activeShortTrimManagementEligible and not na(activeShortTrimQty) and not na(activeShortRunnerQty) and activeShortTrimQty >= 1 and activeShortRunnerQty >= 1 and not na(activeShortOneRTarget) and not na(activeShortRunnerStop)
+string shortFixedRReason = trimManagementMode ? f_trimStateIssueText(activeShortPositionQty, activeShortStop, activeShortRisk, activeShortOneRTarget, activeShortTarget, activeShortTrimQty, activeShortRunnerQty) : "Fixed R mode"
+bool shortAllowFixedExit = canManageShortExits and (not trimManagementMode or activeShortPositionQty < 2 or (activeShortPositionQty >= 2 and (na(activeShortRisk) or activeShortRisk <= 0)))
+if canManageShortExits
+    shortTrimExitSubmitted := validShortSplitExit and math.abs(strategy.position_size) > activeShortRunnerQty
+    shortRunnerExitSubmitted := validShortSplitExit
+    shortFixedExitSubmitted := not validShortSplitExit and shortAllowFixedExit
+    if showStrategyDebugLabels and trimManagementMode and shortFixedExitSubmitted
+        label.new(bar_index, low, "Fixed R submitted in Trim 1R + BE\nReason: " + shortFixedRReason + "\nQty " + str.tostring(activeShortPositionQty) + "\nStop " + f_priceText(activeShortStop) + " Target " + f_priceText(activeShortTarget), style=label.style_label_up, textcolor=color.white, color=color.new(color.red, activeShortPositionQty >= 2 ? 0 : 35), size=size.tiny)
+    if showStrategyDebugLabels and trimManagementMode and activeShortPositionQty >= 2 and not validShortSplitExit and not shortAllowFixedExit
+        label.new(bar_index, low, "ERROR: Fixed R blocked in trim mode\nReason: " + shortFixedRReason + "\nQty " + str.tostring(activeShortPositionQty) + " T " + str.tostring(activeShortTrimQty) + " R " + str.tostring(activeShortRunnerQty), style=label.style_label_up, textcolor=color.white, color=color.new(color.red, 0), size=size.small)
+    f_manageShortExits(trimManagementMode, activeShortTrimManagementEligible, activeShortFixedRFallback, shortAllowFixedExit, activeShortTrimQty, activeShortRunnerQty, activeShortStop, activeShortOneRTarget, activeShortRunnerStop, activeShortTarget, shortOneRReached)
 
 // ===================== Alert Conditions =====================
 
@@ -1642,28 +1982,30 @@ plot(shortOrderCancelledEvent ? shortCancelAlertStop : na, "Short Cancel Stop", 
 plot(shortOrderCancelledEvent ? shortCancelAlertTarget : na, "Short Cancel Target", display=display.none)
 plot(shortOrderCancelledEvent ? shortCancelAlertRisk : na, "Short Cancel Risk", display=display.none)
 plot(shortOrderCancelledEvent ? shortCancelAlertReasonCode : na, "Short Cancel Reason Code", display=display.none)
-plot(strategy.position_size > 0 ? activeLongEntry : na, "Active Long Planned Entry", display=display.none)
-plot(strategy.position_size > 0 ? activeLongStop : na, "Active Long Original Stop", display=display.none)
-plot(strategy.position_size > 0 ? activeLongRisk : na, "Active Long Planned Risk", display=display.none)
-plot(strategy.position_size > 0 ? activeLongOneRTarget : na, "Active Long 1R Target", display=display.none)
-plot(strategy.position_size > 0 ? activeLongTarget : na, "Active Long Final Target", display=display.none)
-plot(strategy.position_size > 0 ? activeLongRunnerStop : na, "Active Long Runner Stop", display=display.none)
-plot(strategy.position_size > 0 ? float(activeLongTrimQty) : na, "Active Long Trim Qty", display=display.none)
-plot(strategy.position_size > 0 ? float(activeLongRunnerQty) : na, "Active Long Runner Qty", display=display.none)
-plot(strategy.position_size > 0 and activeLongTrimManagementEligible ? 1.0 : 0.0, "Active Long Trim Eligible", display=display.none)
-plot(strategy.position_size > 0 and longOneRReached ? 1.0 : 0.0, "Active Long 1R Reached", display=display.none)
-plot(strategy.position_size > 0 and activeLongFixedRFallback ? 1.0 : 0.0, "Active Long FixedR Fallback", display=display.none)
-plot(strategy.position_size < 0 ? activeShortEntry : na, "Active Short Planned Entry", display=display.none)
-plot(strategy.position_size < 0 ? activeShortStop : na, "Active Short Original Stop", display=display.none)
-plot(strategy.position_size < 0 ? activeShortRisk : na, "Active Short Planned Risk", display=display.none)
-plot(strategy.position_size < 0 ? activeShortOneRTarget : na, "Active Short 1R Target", display=display.none)
-plot(strategy.position_size < 0 ? activeShortTarget : na, "Active Short Final Target", display=display.none)
-plot(strategy.position_size < 0 ? activeShortRunnerStop : na, "Active Short Runner Stop", display=display.none)
-plot(strategy.position_size < 0 ? float(activeShortTrimQty) : na, "Active Short Trim Qty", display=display.none)
-plot(strategy.position_size < 0 ? float(activeShortRunnerQty) : na, "Active Short Runner Qty", display=display.none)
-plot(strategy.position_size < 0 and activeShortTrimManagementEligible ? 1.0 : 0.0, "Active Short Trim Eligible", display=display.none)
-plot(strategy.position_size < 0 and shortOneRReached ? 1.0 : 0.0, "Active Short 1R Reached", display=display.none)
-plot(strategy.position_size < 0 and activeShortFixedRFallback ? 1.0 : 0.0, "Active Short FixedR Fallback", display=display.none)
+plot(managementMode == "Trim 1R + BE" ? 1.0 : 0.0, "Management Mode Trim 1R BE", display=display.none)
+plot(inAlertTradingWindow ? 1.0 : 0.0, "In Alert Trading Window", display=display.none)
+plot(longPendingOrder ? 1.0 : 0.0, "Long Pending Order", display=display.none)
+plot(shortPendingOrder ? 1.0 : 0.0, "Short Pending Order", display=display.none)
+plot(pendingCancelledOutsideWindow ? 1.0 : 0.0, "Pending Cancelled Outside Window", display=display.none)
+plot(pendingCancelledNewSession ? 1.0 : 0.0, "Pending Cancelled New Session", display=display.none)
+plot(pendingCancelledRthFlatten ? 1.0 : 0.0, "Pending Cancelled RTH Flatten", display=display.none)
+plot(entryFilledOutsideWindow ? 1.0 : 0.0, "Entry Filled Outside Window", display=display.none)
+plot(strategy.position_size > 0 ? activeLongEntry : strategy.position_size < 0 ? activeShortEntry : na, "Active Planned Entry", display=display.none)
+plot(strategy.position_size > 0 ? activeLongAverageFillPrice : strategy.position_size < 0 ? activeShortAverageFillPrice : na, "Active Average Fill Price", display=display.none)
+plot(strategy.position_size > 0 ? activeLongStop : strategy.position_size < 0 ? activeShortStop : na, "Active Original Stop", display=display.none)
+plot(strategy.position_size > 0 ? activeLongRisk : strategy.position_size < 0 ? activeShortRisk : na, "Active Planned Risk", display=display.none)
+plot(strategy.position_size > 0 ? activeLongOneRTarget : strategy.position_size < 0 ? activeShortOneRTarget : na, "Active 1R Target", display=display.none)
+plot(strategy.position_size > 0 ? activeLongTarget : strategy.position_size < 0 ? activeShortTarget : na, "Active Final Target", display=display.none)
+plot(strategy.position_size > 0 ? activeLongRunnerStop : strategy.position_size < 0 ? activeShortRunnerStop : na, "Active Runner Stop", display=display.none)
+plot(strategy.position_size > 0 ? float(activeLongFilledQty) : strategy.position_size < 0 ? float(activeShortFilledQty) : na, "Active Filled Qty", display=display.none)
+plot(strategy.position_size > 0 ? float(activeLongTrimQty) : strategy.position_size < 0 ? float(activeShortTrimQty) : na, "Active Trim Qty", display=display.none)
+plot(strategy.position_size > 0 ? float(activeLongRunnerQty) : strategy.position_size < 0 ? float(activeShortRunnerQty) : na, "Active Runner Qty", display=display.none)
+plot((strategy.position_size > 0 and activeLongTrimManagementEligible) or (strategy.position_size < 0 and activeShortTrimManagementEligible) ? 1.0 : 0.0, "Active Trim Eligible", display=display.none)
+plot((strategy.position_size > 0 and longOneRReached) or (strategy.position_size < 0 and shortOneRReached) ? 1.0 : 0.0, "Active 1R Reached", display=display.none)
+plot((strategy.position_size > 0 and activeLongFixedRFallback) or (strategy.position_size < 0 and activeShortFixedRFallback) ? 1.0 : 0.0, "Active FixedR Fallback", display=display.none)
+plot(longTrimExitSubmitted or shortTrimExitSubmitted ? 1.0 : 0.0, "Trim Exit Submitted", display=display.none)
+plot(longRunnerExitSubmitted or shortRunnerExitSubmitted ? 1.0 : 0.0, "Runner Exit Submitted", display=display.none)
+plot(longFixedExitSubmitted or shortFixedExitSubmitted ? 1.0 : 0.0, "Fixed Exit Submitted", display=display.none)
 
 alertcondition(longSetupPlacedEvent, "Long setup placed", "EMA Level Pullback Break Strategy LONG {{ticker}} Entry {{plot(\"Long Setup Entry\")}} Stop {{plot(\"Long Setup Stop\")}} Target {{plot(\"Long Setup Target\")}} Risk {{plot(\"Long Setup Risk\")}} TargetR {{plot(\"Long Setup Target R\")}} LocationCode {{plot(\"Long Setup Location Code\")}}")
 alertcondition(shortSetupPlacedEvent, "Short setup placed", "EMA Level Pullback Break Strategy SHORT {{ticker}} Entry {{plot(\"Short Setup Entry\")}} Stop {{plot(\"Short Setup Stop\")}} Target {{plot(\"Short Setup Target\")}} Risk {{plot(\"Short Setup Risk\")}} TargetR {{plot(\"Short Setup Target R\")}} LocationCode {{plot(\"Short Setup Location Code\")}}")
@@ -1713,9 +2055,9 @@ if showLongStrategyDebugLabel or showShortStrategyDebugLabel
     string debugText = debugIsLong ? longDebugText : shortDebugText
     label.new(bar_index, debugIsLong ? low : high, debugText, style=debugIsLong ? label.style_label_up : label.style_label_down, textcolor=color.white, color=color.new(color.gray, 30), size=size.tiny)
 
-bool showEmaOverlapDebugLabel = showStrategyDebugLabels and barstate.isconfirmed and emaChopFilterMode == "20 EMA Bar Overlap" and canEvaluateSignals and (longCurrentBarIsPullbackStructure or shortCurrentBarIsPullbackStructure or longFirstBreakAttempted or shortFirstBreakAttempted)
+bool showEmaOverlapDebugLabel = showStrategyDebugLabels and barstate.isconfirmed and emaChopFilterMode == "EMA Bar Overlap" and canEvaluateSignals and (longCurrentBarIsPullbackStructure or shortCurrentBarIsPullbackStructure or longFirstBreakAttempted or shortFirstBreakAttempted)
 if showEmaOverlapDebugLabel
-    label.new(bar_index, high, "20EMA overlap prior\n" + str.tostring(ema20OverlapCount) + "/" + str.tostring(emaChopOverlapLookbackBars) + " bars [" + ema20OverlapOffsetsText + "]", style=label.style_label_down, textcolor=color.white, color=color.new(color.orange, 15), size=size.tiny)
+    label.new(bar_index, high, emaChopOverlapSource + " overlap prior\n" + str.tostring(emaChopOverlapCount) + "/" + str.tostring(emaChopOverlapLookbackBars) + " bars [" + emaChopOverlapOffsetsText + "]", style=label.style_label_down, textcolor=color.white, color=color.new(color.orange, 15), size=size.tiny)
 
 // ===================== Tables =====================
 
@@ -1743,22 +2085,31 @@ if barstate.islast
         string fastEmaLocationText = "On " + f_boolText(allowFastEmaLocation) + " L " + f_boolText(longTouchedEma9) + " / S " + f_boolText(shortTouchedEma9)
         string maxMidEmaDistanceText = useMaxDistanceFromMidEma ? "L " + f_boolText(longDebugMaxDistanceFromMidEmaPass) + " " + f_pointsText(longDebugDistanceFromMidEma) + " / S " + f_boolText(shortDebugMaxDistanceFromMidEmaPass) + " " + f_pointsText(shortDebugDistanceFromMidEma) : "Off"
         string activePlannedEntryText = strategy.position_size > 0 ? f_priceText(activeLongEntry) : strategy.position_size < 0 ? f_priceText(activeShortEntry) : "na"
+        string activeAverageFillText = strategy.position_size > 0 ? f_priceText(activeLongAverageFillPrice) : strategy.position_size < 0 ? f_priceText(activeShortAverageFillPrice) : "na"
         string activeOriginalStopText = strategy.position_size > 0 ? f_priceText(activeLongStop) : strategy.position_size < 0 ? f_priceText(activeShortStop) : "na"
         string activePlannedRiskText = strategy.position_size > 0 ? f_pointsText(activeLongRisk) : strategy.position_size < 0 ? f_pointsText(activeShortRisk) : "na"
         string activeOneRTargetText = strategy.position_size > 0 ? f_priceText(activeLongOneRTarget) : strategy.position_size < 0 ? f_priceText(activeShortOneRTarget) : "na"
         string activeFinalTargetText = strategy.position_size > 0 ? f_priceText(activeLongTarget) : strategy.position_size < 0 ? f_priceText(activeShortTarget) : "na"
         string activeRunnerStopText = strategy.position_size > 0 ? f_priceText(activeLongRunnerStop) : strategy.position_size < 0 ? f_priceText(activeShortRunnerStop) : "na"
+        string activeFilledQtyText = strategy.position_size > 0 ? str.tostring(activeLongFilledQty) : strategy.position_size < 0 ? str.tostring(activeShortFilledQty) : "na"
+        int activeTablePositionQty = int(math.abs(strategy.position_size))
+        bool activeTrimInvariantError = trimManagementMode and activeTablePositionQty >= 2 and ((strategy.position_size > 0 and (na(activeLongTrimQty) or na(activeLongRunnerQty) or not activeLongTrimManagementEligible)) or (strategy.position_size < 0 and (na(activeShortTrimQty) or na(activeShortRunnerQty) or not activeShortTrimManagementEligible)))
+        string activeTrimInvariantReason = strategy.position_size > 0 ? f_trimStateIssueText(activeTablePositionQty, activeLongStop, activeLongRisk, activeLongOneRTarget, activeLongTarget, activeLongTrimQty, activeLongRunnerQty) : strategy.position_size < 0 ? f_trimStateIssueText(activeTablePositionQty, activeShortStop, activeShortRisk, activeShortOneRTarget, activeShortTarget, activeShortTrimQty, activeShortRunnerQty) : "Flat"
         string activeTrimQtyText = strategy.position_size > 0 ? str.tostring(activeLongTrimQty) : strategy.position_size < 0 ? str.tostring(activeShortTrimQty) : "na"
         string activeRunnerQtyText = strategy.position_size > 0 ? str.tostring(activeLongRunnerQty) : strategy.position_size < 0 ? str.tostring(activeShortRunnerQty) : "na"
+        string trimRunnerQtyText = activeTrimInvariantError ? "ERROR: " + activeTrimInvariantReason : "T " + activeTrimQtyText + " / R " + activeRunnerQtyText
         string activeFallbackText = strategy.position_size > 0 ? f_boolText(activeLongFixedRFallback) : strategy.position_size < 0 ? f_boolText(activeShortFixedRFallback) : "FALSE"
         string oneRReachedText = strategy.position_size > 0 ? "L " + f_boolText(longOneRReached) : strategy.position_size < 0 ? "S " + f_boolText(shortOneRReached) : "Flat"
         string managementStateText = managementMode + (strategy.position_size > 0 ? " L eligible " + f_boolText(activeLongTrimManagementEligible) : strategy.position_size < 0 ? " S eligible " + f_boolText(activeShortTrimManagementEligible) : "")
+        string exitSubmittedText = strategy.position_size > 0 ? "F " + f_boolText(longFixedExitSubmitted) + " T " + f_boolText(longTrimExitSubmitted) + " R " + f_boolText(longRunnerExitSubmitted) : strategy.position_size < 0 ? "F " + f_boolText(shortFixedExitSubmitted) + " T " + f_boolText(shortTrimExitSubmitted) + " R " + f_boolText(shortRunnerExitSubmitted) : "Flat"
+        string pendingCancelDebugText = "Win " + f_boolText(pendingCancelledOutsideWindow) + " Sess " + f_boolText(pendingCancelledNewSession) + " RTH " + f_boolText(pendingCancelledRthFlatten)
         int row = 0
         table.cell(debugTable, 0, row, "EMA LPB Status", text_color=color.white, bgcolor=color.rgb(35, 35, 35), text_size=size.tiny, text_halign=text.align_left)
         table.cell(debugTable, 1, row, syminfo.ticker + " " + timeframe.period, text_color=color.white, bgcolor=color.rgb(35, 35, 35), text_size=size.tiny, text_halign=text.align_right)
         row += 1
         row := f_addStatusRow(debugTable, row, "Can Evaluate", f_boolText(canEvaluateSignals), f_boolColor(canEvaluateSignals))
         row := f_addStatusRow(debugTable, row, "Time Window", f_boolText(inAlertTradingWindow), f_boolColor(inAlertTradingWindow))
+        row := f_addStatusRow(debugTable, row, "Allow Pending After Window", f_boolText(allowPendingEntryFillsAfterWindow), allowPendingEntryFillsAfterWindow ? color.yellow : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Trades Today", str.tostring(tradesToday) + " / " + str.tostring(maxTradesPerDay), tradesToday < maxTradesPerDay ? color.lime : color.red)
         row := f_addStatusRow(debugTable, row, "OR Complete", f_boolText(openingRangeComplete), f_boolColor(openingRangeComplete))
         row := f_addStatusRow(debugTable, row, "OR Bias Filter", f_boolText(useOpeningRangeBiasFilter), useOpeningRangeBiasFilter ? color.yellow : color.rgb(220, 220, 220))
@@ -1776,7 +2127,7 @@ if barstate.islast
         row := f_addStatusRow(debugTable, row, "EMA Slope", f_pairBoolText(longEmaSlopePass, shortEmaSlopePass), f_pairBoolColor(longEmaSlopePass, shortEmaSlopePass))
         row := f_addStatusRow(debugTable, row, "EMA Chop Mode", emaChopFilterMode, emaChopFilterMode == "Off" ? color.rgb(220, 220, 220) : color.yellow)
         row := f_addStatusRow(debugTable, row, "EMA Compression", f_boolText(emaClusterCompression), emaClusterCompression ? color.yellow : color.rgb(220, 220, 220))
-        row := f_addStatusRow(debugTable, row, "20 EMA Overlap Count Prior Bars", str.tostring(ema20OverlapCount) + " / " + str.tostring(emaChopOverlapLookbackBars) + " req " + str.tostring(emaChopEffectiveRequiredOverlapBars), ema20OverlapChopBlocked ? color.yellow : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, emaChopOverlapSource + " Overlap Count Prior Bars", str.tostring(emaChopOverlapCount) + " / " + str.tostring(emaChopOverlapLookbackBars) + " req " + str.tostring(emaChopEffectiveRequiredOverlapBars), emaChopOverlapChopBlocked ? color.yellow : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "EMA Chop Blocked", f_pairBoolText(longEmaChopBlocked, shortEmaChopBlocked), not longEmaChopBlocked and not shortEmaChopBlocked ? color.lime : color.yellow)
         row := f_addStatusRow(debugTable, row, "Max Trigger ATR", f_pointsText(maxTriggerBarAtrMultiplier), color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Bar / ATR", f_pointsText(triggerBarAtrRatio), not na(triggerBarAtrRatio) and triggerBarAtrRatio <= maxTriggerBarAtrMultiplier ? color.lime : color.red)
@@ -1819,15 +2170,21 @@ if barstate.islast
         row := f_addStatusRow(debugTable, row, "Management Mode", managementStateText, managementMode == "Trim 1R + BE" ? color.yellow : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "OneR Reached", oneRReachedText, longOneRReached or shortOneRReached ? color.lime : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Active Planned Entry", activePlannedEntryText, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Active Average Fill", activeAverageFillText, color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Active Original Stop", activeOriginalStopText, color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Active Planned Risk", activePlannedRiskText, color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Active 1R Target", activeOneRTargetText, color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Active Final Target", activeFinalTargetText, color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Active Position Size", str.tostring(strategy.position_size), strategy.position_size != 0 ? color.yellow : color.rgb(220, 220, 220))
-        row := f_addStatusRow(debugTable, row, "Trim / Runner Qty", "T " + activeTrimQtyText + " / R " + activeRunnerQtyText, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Active Filled Qty", activeFilledQtyText, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Trim / Runner Qty", trimRunnerQtyText, activeTrimInvariantError ? color.red : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Trim State Invariant", activeTrimInvariantError ? "ERROR" : "OK", activeTrimInvariantError ? color.red : color.lime)
         row := f_addStatusRow(debugTable, row, "Active Runner Stop", activeRunnerStopText, longOneRReached or shortOneRReached ? color.lime : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Trim FixedR Fallback", activeFallbackText, activeLongFixedRFallback or activeShortFixedRFallback ? color.yellow : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Exit Submitted F/T/R", exitSubmittedText, longFixedExitSubmitted or longTrimExitSubmitted or longRunnerExitSubmitted or shortFixedExitSubmitted or shortTrimExitSubmitted or shortRunnerExitSubmitted ? color.lime : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "RTH Flatten", f_boolText(rthCloseFlattenNow), rthCloseFlattenNow ? color.yellow : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Pending Cancel Events", pendingCancelDebugText, pendingCancelledOutsideWindow or pendingCancelledNewSession or pendingCancelledRthFlatten ? color.yellow : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Outside Window Fill", f_boolText(entryFilledOutsideWindow), entryFilledOutsideWindow ? color.red : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Pending Direction", pendingDirectionText, currentAnyPendingOrder ? color.yellow : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Pending Entry", pendingEntryText, color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Pending Stop", pendingStopText, color.rgb(220, 220, 220))
