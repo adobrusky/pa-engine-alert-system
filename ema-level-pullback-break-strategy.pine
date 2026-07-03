@@ -35,8 +35,8 @@ groupBacktestDebug = "09. Strategy Backtest / Debug"
 enableStrategyBacktest = input.bool(true, "Enable Strategy Backtest", group=groupCore)
 useLongs = input.bool(true, "Use Longs", group=groupCore)
 useShorts = input.bool(true, "Use Shorts", group=groupCore)
-tickerInput = input.string("MNQ", "Ticker", options=["MES", "MNQ", "ES", "NQ"], group=groupCore)
-alertTradingWindow = input.session("0945-1130", "Alert Trading Window", group=groupCore)
+tickerInput = input.string("ES", "Ticker", options=["MES", "MNQ", "ES", "NQ"], group=groupCore)
+alertTradingWindow = input.session("0945-1200", "Alert Trading Window", group=groupCore)
 maxTradesPerDay = input.int(2, "Max Trades Per Day", minval=1, maxval=10, group=groupCore)
 onlyOneActiveTradeOrOrder = input.bool(true, "Only One Active Trade Or Order", group=groupCore)
 scalpTickSizeFallback = input.float(0.25, "Tick Size Fallback", minval=0.01, step=0.01, group=groupCore)
@@ -56,33 +56,41 @@ requireFastEmaBeyondMidEma = input.bool(true, "Require Fast EMA Beyond Mid EMA",
 requireFastEmaBeyondSlowEma = input.bool(true, "Require Fast EMA Beyond Slow EMA", group=groupEmaTrend)
 requireMidEmaBeyondSlowEma = input.bool(true, "Require Mid EMA Beyond Slow EMA", group=groupEmaTrend)
 emaSlopeLookbackBars = input.int(5, "EMA Slope Lookback Bars", minval=1, maxval=50, group=groupEmaTrend)
-useEmaSlopeFilter = input.bool(false, "Use EMA Slope Filter", group=groupEmaTrend)
+useEmaSlopeFilter = input.bool(true, "Use EMA Slope Filter", group=groupEmaTrend)
 minMidEmaSlopeTicks = input.float(0.0, "Minimum Mid EMA Slope Ticks", minval=0.0, step=0.25, group=groupEmaTrend)
-useEmaChopFilter = input.bool(false, "Use EMA Chop Filter", group=groupEmaTrend)
+emaChopFilterMode = input.string("20 EMA Bar Overlap", "EMA Chop Filter Mode", options=["Off", "EMA Compression", "20 EMA Bar Overlap"], group=groupEmaTrend)
 emaChopCompressionAtrMultiplier = input.float(0.20, "EMA Chop Compression ATR Multiplier", minval=0.0, step=0.05, group=groupEmaTrend)
+emaChopOverlapLookbackBars = input.int(4, "20 EMA Chop Overlap Lookback Bars", minval=2, maxval=10, group=groupEmaTrend)
+emaChopRequiredOverlapBars = input.int(3, "20 EMA Chop Required Overlap Bars", minval=1, maxval=10, group=groupEmaTrend)
 useFiftyEmaRejectionSetup = input.bool(false, "Use 50 EMA Rejection Setup", group=groupEmaTrend)
 
 // 04. Location Filters
 useEmaLocation = input.bool(true, "Use EMA Location", group=groupLocation)
+allowFastEmaLocation = input.bool(false, "Allow 9 EMA Location", group=groupLocation)
 useLevelLocation = input.bool(true, "Use Level Location", group=groupLocation)
-proximityAtrMultiplier = input.float(0.15, "Proximity ATR Multiplier", minval=0.0, step=0.05, group=groupLocation)
+proximityAtrMultiplier = input.float(0.25, "Proximity ATR Multiplier", minval=0.0, step=0.05, group=groupLocation)
 atrLength = input.int(14, "ATR Length", minval=1, group=groupLocation)
 locationLookbackBars = input.int(2, "Location Lookback Bars", minval=1, maxval=2, group=groupLocation)
+useMaxDistanceFromMidEma = input.bool(true, "Use Max Distance From 20 EMA", group=groupLocation)
+maxDistanceFromMidEmaAtrMultiplier = input.float(2.0, "Max Distance From 20 EMA ATR Multiplier", minval=0.0, step=0.05, group=groupLocation)
 
 // 05. Pullback / Entry
-pullbackLookbackBars = input.int(5, "Pullback Lookback Bars", minval=1, maxval=20, group=groupPullbackEntry)
+pullbackLookbackBars = input.int(3, "Pullback Lookback Bars", minval=1, maxval=20, group=groupPullbackEntry)
 requirePullback = input.bool(true, "Require Pullback", group=groupPullbackEntry)
 entryMode = input.string("Prior Bar Break Or Delayed Confirmation", "Entry Mode", options=["Prior Bar Break Only", "Prior Bar Break Or Delayed Confirmation"], group=groupPullbackEntry)
+delayedConfirmationCloseMode = input.string("Close Beyond Pullback Extreme", "Delayed Confirmation Close Mode", options=["Close Beyond Pullback Extreme", "Close Beyond Bar Midpoint"], group=groupPullbackEntry)
 cancelUnfilledAfterBars = input.int(3, "Cancel Unfilled After Bars", minval=1, maxval=20, group=groupPullbackEntry)
 sameBarEntryVsCancelMode = input.string("Cancel Wins", "Same-Bar Entry vs Cancel", options=["Cancel Wins", "Entry Wins"], group=groupPullbackEntry)
 
 // 06. Risk / Targets
 stopMode = input.string("Pullback Swing", "Stop Mode", options=["Trigger Bar", "Pullback Swing"], group=groupRiskTargets)
-pullbackStopLookbackBars = input.int(5, "Pullback Stop Lookback Bars", minval=1, maxval=20, group=groupRiskTargets)
+pullbackStopLookbackBars = input.int(3, "Pullback Stop Lookback Bars", minval=1, maxval=20, group=groupRiskTargets)
 minStopAtrMultiplier = input.float(0.25, "Minimum Stop ATR Multiplier", minval=0.0, step=0.05, group=groupRiskTargets)
 maxStopAtrMultiplier = input.float(2.0, "Maximum Stop ATR Multiplier", minval=0.05, step=0.05, group=groupRiskTargets)
-maxTriggerBarAtrMultiplier = input.float(1.5, "Max Trigger Bar ATR Multiplier", minval=0.1, step=0.1, group=groupRiskTargets)
+maxTriggerBarAtrMultiplier = input.float(2, "Max Trigger Bar ATR Multiplier", minval=0.1, step=0.1, group=groupRiskTargets)
 targetR = input.float(1.5, "Target R", minval=0.1, step=0.1, group=groupRiskTargets)
+managementMode = input.string("Trim 1R + BE", "Trade Management Mode", options=["Fixed R", "Trim 1R + BE"], group=groupRiskTargets)
+trimAtOneRPercent = input.float(50.0, "Trim Percent At 1R", minval=1.0, maxval=99.0, step=1.0, group=groupRiskTargets)
 maxRiskDollars = input.float(5000.0, "Max Risk Dollars", minval=0.0, step=10.0, group=groupRiskTargets)
 useRiskBasedSizing = input.bool(true, "Use Risk-Based Sizing", group=groupRiskTargets)
 fixedContracts = input.int(1, "Fixed Contracts", minval=1, maxval=100, group=groupRiskTargets)
@@ -121,6 +129,10 @@ string LONG_ENTRY_ID = "EMA LPB Long"
 string SHORT_ENTRY_ID = "EMA LPB Short"
 string LONG_EXIT_ID = "EMA LPB Long Exit"
 string SHORT_EXIT_ID = "EMA LPB Short Exit"
+string LONG_TRIM_EXIT_ID = "EMA LPB Long Trim Exit"
+string LONG_RUNNER_EXIT_ID = "EMA LPB Long Runner Exit"
+string SHORT_TRIM_EXIT_ID = "EMA LPB Short Trim Exit"
+string SHORT_RUNNER_EXIT_ID = "EMA LPB Short Runner Exit"
 
 float pointValue = tickerInput == "MES" ? 5.0 : tickerInput == "ES" ? 50.0 : tickerInput == "MNQ" ? 2.0 : 20.0
 float tickSize = useTickSizeFallback or syminfo.mintick <= 0 ? scalpTickSizeFallback : syminfo.mintick
@@ -169,8 +181,14 @@ f_geWithTolerance(float _a, float _b) =>
 f_leWithTolerance(float _a, float _b) =>
     _a <= _b + tickSize * 0.05
 
+f_priceTolerance() =>
+    tickSize * 0.05
+
 f_barTouchesPrice(float _price, float _low, float _high) =>
     not na(_price) and not na(_low) and not na(_high) and _low <= _price and _high >= _price
+
+f_barTouchesPriceWithTolerance(float _price, float _low, float _high) =>
+    not na(_price) and not na(_low) and not na(_high) and _low <= _price + f_priceTolerance() and _high >= _price - f_priceTolerance()
 
 f_bodyTouchesPrice(float _price, float _open, float _close) =>
     float bodyLow = math.min(_open, _close)
@@ -216,9 +234,80 @@ f_recentDirectionalStaticInteraction(float _price, int _lookbackBars, float _atr
         touched := touched or f_directionalPriceInteraction(_price, open[i], high[i], low[i], close[i], _atrSeries[i], _proximityMult, _isLong)
     touched
 
-f_pickLocationName(bool _ema20, bool _ema50, bool _orh, bool _orl, bool _pdh, bool _pdl, bool _pmh, bool _pml, bool _rthOpen) =>
+f_barFullyAbovePrice(float _price, int _offset) =>
+    not na(_price) and not na(low[_offset]) and low[_offset] > _price + f_priceTolerance()
+
+f_barFullyBelowPrice(float _price, int _offset) =>
+    not na(_price) and not na(high[_offset]) and high[_offset] < _price - f_priceTolerance()
+
+f_barTouchesPriceAtOffset(float _price, int _offset) =>
+    f_barTouchesPriceWithTolerance(_price, low[_offset], high[_offset])
+
+f_bodyTouchesPriceAtOffset(float _price, int _offset) =>
+    float bodyLowAtOffset = math.min(open[_offset], close[_offset])
+    float bodyHighAtOffset = math.max(open[_offset], close[_offset])
+    not na(_price) and not na(bodyLowAtOffset) and not na(bodyHighAtOffset) and bodyLowAtOffset <= _price + f_priceTolerance() and bodyHighAtOffset >= _price - f_priceTolerance()
+
+f_bodyFullyAbovePrice(float _price, int _offset) =>
+    float bodyLowAtOffset = math.min(open[_offset], close[_offset])
+    not na(_price) and not na(bodyLowAtOffset) and bodyLowAtOffset > _price + f_priceTolerance()
+
+f_bodyFullyBelowPrice(float _price, int _offset) =>
+    float bodyHighAtOffset = math.max(open[_offset], close[_offset])
+    not na(_price) and not na(bodyHighAtOffset) and bodyHighAtOffset < _price - f_priceTolerance()
+
+f_cleanLongLevelRetest(float _price) =>
+    bool currentClosesAbove = not na(_price) and not na(close) and close > _price
+    bool priorBarNotFullyBelow = not f_barFullyBelowPrice(_price, 1)
+    bool priorBarTouches = f_barTouchesPriceAtOffset(_price, 1)
+    bool setupBarPass = priorBarTouches ? f_barFullyAbovePrice(_price, 2) : f_bodyFullyAbovePrice(_price, 2)
+    currentClosesAbove and priorBarNotFullyBelow and setupBarPass
+
+f_cleanShortLevelRetest(float _price) =>
+    bool currentClosesBelow = not na(_price) and not na(close) and close < _price
+    bool priorBarNotFullyAbove = not f_barFullyAbovePrice(_price, 1)
+    bool priorBarTouches = f_barTouchesPriceAtOffset(_price, 1)
+    bool setupBarPass = priorBarTouches ? f_barFullyBelowPrice(_price, 2) : f_bodyFullyBelowPrice(_price, 2)
+    currentClosesBelow and priorBarNotFullyAbove and setupBarPass
+
+f_longCloseBeyondTouchedPrice(float _price) =>
+    not f_barTouchesPriceWithTolerance(_price, low, high) or close > _price
+
+f_shortCloseBeyondTouchedPrice(float _price) =>
+    not f_barTouchesPriceWithTolerance(_price, low, high) or close < _price
+
+f_longCloseBeyondTouchedSeries(float _series) =>
+    f_longCloseBeyondTouchedPrice(_series)
+
+f_shortCloseBeyondTouchedSeries(float _series) =>
+    f_shortCloseBeyondTouchedPrice(_series)
+
+f_countSeriesTouchesFromOffset(float _series, int _startOffset, int _lookbackBars) =>
+    int count = 0
+    for i = _startOffset to _startOffset + _lookbackBars - 1
+        if not na(_series[i]) and not na(low[i]) and not na(high[i]) and low[i] <= _series[i] and high[i] >= _series[i]
+            count += 1
+    count
+
+f_seriesTouchOffsetsText(float _series, int _startOffset, int _lookbackBars) =>
+    string offsetsText = ""
+    for i = _startOffset to _startOffset + _lookbackBars - 1
+        if not na(_series[i]) and not na(low[i]) and not na(high[i]) and low[i] <= _series[i] and high[i] >= _series[i]
+            offsetsText += (offsetsText != "" ? "," : "") + str.tostring(i)
+    offsetsText != "" ? offsetsText : "None"
+
+f_maxDistanceFromMidEmaPass(float _entryPrice, float _midEma, float _atr) =>
+    not useMaxDistanceFromMidEma or (not na(_entryPrice) and not na(_midEma) and not na(_atr) and math.abs(_entryPrice - _midEma) <= _atr * maxDistanceFromMidEmaAtrMultiplier)
+
+f_trimContracts(int _contracts, float _trimPercent) =>
+    int trimContracts = int(math.round(_contracts * _trimPercent * 0.01))
+    trimContracts := int(math.max(1, math.min(trimContracts, _contracts - 1)))
+    trimContracts
+
+f_pickLocationName(bool _ema20, bool _ema50, bool _ema9, bool _orh, bool _orl, bool _pdh, bool _pdl, bool _pmh, bool _pml, bool _rthOpen) =>
     _ema20 ? "20EMA" :
      _ema50 ? "50EMA" :
+     _ema9 ? "9EMA" :
      _orh ? "ORH" :
      _orl ? "ORL" :
      _pdh ? "PDH" :
@@ -238,6 +327,7 @@ f_locationCode(string _locationName) =>
      _locationName == "PMH" ? 7.0 :
      _locationName == "PML" ? 8.0 :
      _locationName == "RTH Open" ? 9.0 :
+     _locationName == "9EMA" ? 10.0 :
      0.0
 
 // ===================== Trend / Pullback / Risk Helpers =====================
@@ -378,7 +468,11 @@ minMidEmaSlopePoints = minMidEmaSlopeTicks * tickSize
 emaClusterLow = math.min(ema9, math.min(ema20, ema50))
 emaClusterHigh = math.max(ema9, math.max(ema20, ema50))
 emaClusterCompression = not na(atrValue) and emaClusterHigh - emaClusterLow <= atrValue * emaChopCompressionAtrMultiplier
-emaChopBlocked = useEmaChopFilter and emaClusterCompression
+emaChopEffectiveRequiredOverlapBars = math.min(emaChopRequiredOverlapBars, emaChopOverlapLookbackBars)
+ema20OverlapCount = f_countSeriesTouchesFromOffset(ema20, 1, emaChopOverlapLookbackBars)
+ema20OverlapOffsetsText = f_seriesTouchOffsetsText(ema20, 1, emaChopOverlapLookbackBars)
+ema20OverlapChopBlocked = ema20OverlapCount >= emaChopEffectiveRequiredOverlapBars
+emaChopBlocked = emaChopFilterMode == "EMA Compression" ? emaClusterCompression : emaChopFilterMode == "20 EMA Bar Overlap" ? ema20OverlapChopBlocked : false
 longEmaChopBlocked = emaChopBlocked
 shortEmaChopBlocked = emaChopBlocked
 
@@ -516,8 +610,10 @@ openingRangeDisplayLow = openingRangeComplete and f_validLevel(openingRangeLow) 
 
 // Location filter: the recent bars can qualify by touching/crossing or being
 // ATR-near a location, but longs must close above it and shorts below it.
+longTouchedEma9 = useEmaLocation and allowFastEmaLocation and f_recentDirectionalSeriesInteraction(ema9, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
 longTouchedEma20 = useEmaLocation and f_recentDirectionalSeriesInteraction(ema20, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
 longTouchedEma50 = useEmaLocation and f_recentDirectionalSeriesInteraction(ema50, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
+shortTouchedEma9 = useEmaLocation and allowFastEmaLocation and f_recentDirectionalSeriesInteraction(ema9, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
 shortTouchedEma20 = useEmaLocation and f_recentDirectionalSeriesInteraction(ema20, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
 shortTouchedEma50 = useEmaLocation and f_recentDirectionalSeriesInteraction(ema50, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
 
@@ -537,14 +633,55 @@ shortTouchedPmh = useLevelLocation and f_recentDirectionalStaticInteraction(acti
 shortTouchedPml = useLevelLocation and f_recentDirectionalStaticInteraction(activePremarketLow, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
 shortTouchedRthOpen = useLevelLocation and f_recentDirectionalStaticInteraction(activeRthOpen, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
 
+longCleanRetestOrh = useLevelLocation and f_cleanLongLevelRetest(activeOpeningRangeHigh)
+longCleanRetestOrl = useLevelLocation and f_cleanLongLevelRetest(activeOpeningRangeLow)
+longCleanRetestPdh = useLevelLocation and f_cleanLongLevelRetest(activePrevDayHigh)
+longCleanRetestPdl = useLevelLocation and f_cleanLongLevelRetest(activePrevDayLow)
+longCleanRetestPmh = useLevelLocation and f_cleanLongLevelRetest(activePremarketHigh)
+longCleanRetestPml = useLevelLocation and f_cleanLongLevelRetest(activePremarketLow)
+longCleanRetestRthOpen = useLevelLocation and f_cleanLongLevelRetest(activeRthOpen)
+
+shortCleanRetestOrh = useLevelLocation and f_cleanShortLevelRetest(activeOpeningRangeHigh)
+shortCleanRetestOrl = useLevelLocation and f_cleanShortLevelRetest(activeOpeningRangeLow)
+shortCleanRetestPdh = useLevelLocation and f_cleanShortLevelRetest(activePrevDayHigh)
+shortCleanRetestPdl = useLevelLocation and f_cleanShortLevelRetest(activePrevDayLow)
+shortCleanRetestPmh = useLevelLocation and f_cleanShortLevelRetest(activePremarketHigh)
+shortCleanRetestPml = useLevelLocation and f_cleanShortLevelRetest(activePremarketLow)
+shortCleanRetestRthOpen = useLevelLocation and f_cleanShortLevelRetest(activeRthOpen)
+
+longLevelLocationOrhPass = longTouchedOrh and longCleanRetestOrh
+longLevelLocationOrlPass = longTouchedOrl and longCleanRetestOrl
+longLevelLocationPdhPass = longTouchedPdh and longCleanRetestPdh
+longLevelLocationPdlPass = longTouchedPdl and longCleanRetestPdl
+longLevelLocationPmhPass = longTouchedPmh and longCleanRetestPmh
+longLevelLocationPmlPass = longTouchedPml and longCleanRetestPml
+longLevelLocationRthOpenPass = longTouchedRthOpen and longCleanRetestRthOpen
+
+shortLevelLocationOrhPass = shortTouchedOrh and shortCleanRetestOrh
+shortLevelLocationOrlPass = shortTouchedOrl and shortCleanRetestOrl
+shortLevelLocationPdhPass = shortTouchedPdh and shortCleanRetestPdh
+shortLevelLocationPdlPass = shortTouchedPdl and shortCleanRetestPdl
+shortLevelLocationPmhPass = shortTouchedPmh and shortCleanRetestPmh
+shortLevelLocationPmlPass = shortTouchedPml and shortCleanRetestPml
+shortLevelLocationRthOpenPass = shortTouchedRthOpen and shortCleanRetestRthOpen
+
 longTouchedLevel = longTouchedOrh or longTouchedOrl or longTouchedPdh or longTouchedPdl or longTouchedPmh or longTouchedPml or longTouchedRthOpen
 shortTouchedLevel = shortTouchedOrh or shortTouchedOrl or shortTouchedPdh or shortTouchedPdl or shortTouchedPmh or shortTouchedPml or shortTouchedRthOpen
+longLevelLocationPass = longLevelLocationOrhPass or longLevelLocationOrlPass or longLevelLocationPdhPass or longLevelLocationPdlPass or longLevelLocationPmhPass or longLevelLocationPmlPass or longLevelLocationRthOpenPass
+shortLevelLocationPass = shortLevelLocationOrhPass or shortLevelLocationOrlPass or shortLevelLocationPdhPass or shortLevelLocationPdlPass or shortLevelLocationPmhPass or shortLevelLocationPmlPass or shortLevelLocationRthOpenPass
+longCleanLevelRetestPass = not longTouchedLevel or longLevelLocationPass
+shortCleanLevelRetestPass = not shortTouchedLevel or shortLevelLocationPass
 
-longLocationName = f_pickLocationName(longTouchedEma20, longTouchedEma50, longTouchedOrh, longTouchedOrl, longTouchedPdh, longTouchedPdl, longTouchedPmh, longTouchedPml, longTouchedRthOpen)
-shortLocationName = f_pickLocationName(shortTouchedEma20, shortTouchedEma50, shortTouchedOrh, shortTouchedOrl, shortTouchedPdh, shortTouchedPdl, shortTouchedPmh, shortTouchedPml, shortTouchedRthOpen)
+longLocationName = f_pickLocationName(longTouchedEma20, longTouchedEma50, longTouchedEma9, longLevelLocationOrhPass, longLevelLocationOrlPass, longLevelLocationPdhPass, longLevelLocationPdlPass, longLevelLocationPmhPass, longLevelLocationPmlPass, longLevelLocationRthOpenPass)
+shortLocationName = f_pickLocationName(shortTouchedEma20, shortTouchedEma50, shortTouchedEma9, shortLevelLocationOrhPass, shortLevelLocationOrlPass, shortLevelLocationPdhPass, shortLevelLocationPdlPass, shortLevelLocationPmhPass, shortLevelLocationPmlPass, shortLevelLocationRthOpenPass)
 
-longLocationPass = (useEmaLocation and (longTouchedEma20 or longTouchedEma50)) or (useLevelLocation and longTouchedLevel)
-shortLocationPass = (useEmaLocation and (shortTouchedEma20 or shortTouchedEma50)) or (useLevelLocation and shortTouchedLevel)
+longEmaLocationPass = useEmaLocation and (longTouchedEma20 or longTouchedEma50 or longTouchedEma9)
+shortEmaLocationPass = useEmaLocation and (shortTouchedEma20 or shortTouchedEma50 or shortTouchedEma9)
+longLocationPass = longEmaLocationPass or (useLevelLocation and longLevelLocationPass)
+shortLocationPass = shortEmaLocationPass or (useLevelLocation and shortLevelLocationPass)
+
+longTouchedAcceptancePass = f_longCloseBeyondTouchedSeries(ema9) and f_longCloseBeyondTouchedSeries(ema20) and f_longCloseBeyondTouchedSeries(ema50) and f_longCloseBeyondTouchedPrice(activeOpeningRangeHigh) and f_longCloseBeyondTouchedPrice(activeOpeningRangeLow) and f_longCloseBeyondTouchedPrice(activePrevDayHigh) and f_longCloseBeyondTouchedPrice(activePrevDayLow) and f_longCloseBeyondTouchedPrice(activePremarketHigh) and f_longCloseBeyondTouchedPrice(activePremarketLow) and f_longCloseBeyondTouchedPrice(activeRthOpen)
+shortTouchedAcceptancePass = f_shortCloseBeyondTouchedSeries(ema9) and f_shortCloseBeyondTouchedSeries(ema20) and f_shortCloseBeyondTouchedSeries(ema50) and f_shortCloseBeyondTouchedPrice(activeOpeningRangeHigh) and f_shortCloseBeyondTouchedPrice(activeOpeningRangeLow) and f_shortCloseBeyondTouchedPrice(activePrevDayHigh) and f_shortCloseBeyondTouchedPrice(activePrevDayLow) and f_shortCloseBeyondTouchedPrice(activePremarketHigh) and f_shortCloseBeyondTouchedPrice(activePremarketLow) and f_shortCloseBeyondTouchedPrice(activeRthOpen)
 
 // ===================== Stop, Risk, and Target Calculations =====================
 
@@ -580,6 +717,7 @@ shortTriggerQualityPass = not na(atrValue) and barRange <= atrValue * maxTrigger
 
 var int tradesToday = 0
 var int lastFillBar = na
+var int trackedClosedTradesCount = 0
 var bool longPendingOrder = false
 var bool shortPendingOrder = false
 var int longPendingSignalBar = na
@@ -587,9 +725,13 @@ var int shortPendingSignalBar = na
 var float longPendingEntry = na
 var float longPendingStop = na
 var float longPendingTarget = na
+var float longPendingRisk = na
+var float longPendingOneRTarget = na
 var float shortPendingEntry = na
 var float shortPendingStop = na
 var float shortPendingTarget = na
+var float shortPendingRisk = na
+var float shortPendingOneRTarget = na
 var int longPendingContracts = na
 var int shortPendingContracts = na
 var string longPendingLocation = "N/A"
@@ -598,6 +740,26 @@ var float activeLongStop = na
 var float activeLongTarget = na
 var float activeShortStop = na
 var float activeShortTarget = na
+var float activeLongEntry = na
+var float activeShortEntry = na
+var float activeLongAverageFillPrice = na
+var float activeShortAverageFillPrice = na
+var float activeLongRisk = na
+var float activeShortRisk = na
+var float activeLongOneRTarget = na
+var float activeShortOneRTarget = na
+var float activeLongRunnerStop = na
+var float activeShortRunnerStop = na
+var bool longOneRReached = false
+var bool shortOneRReached = false
+var bool activeLongTrimManagementEligible = false
+var bool activeShortTrimManagementEligible = false
+var bool activeLongFixedRFallback = false
+var bool activeShortFixedRFallback = false
+var int activeLongTrimQty = na
+var int activeLongRunnerQty = na
+var int activeShortTrimQty = na
+var int activeShortRunnerQty = na
 var bool pendingLongDelayedSetup = false
 var bool pendingShortDelayedSetup = false
 var int pendingLongDelayedSetupBar = na
@@ -664,6 +826,46 @@ if newRthSession
     if shortPendingOrder
         strategy.cancel(SHORT_ENTRY_ID)
         shortPendingOrder := false
+    longPendingSignalBar := na
+    shortPendingSignalBar := na
+    longPendingEntry := na
+    longPendingStop := na
+    longPendingTarget := na
+    longPendingRisk := na
+    longPendingOneRTarget := na
+    shortPendingEntry := na
+    shortPendingStop := na
+    shortPendingTarget := na
+    shortPendingRisk := na
+    shortPendingOneRTarget := na
+    longPendingContracts := na
+    shortPendingContracts := na
+    longPendingLocation := "N/A"
+    shortPendingLocation := "N/A"
+    activeLongStop := na
+    activeLongTarget := na
+    activeShortStop := na
+    activeShortTarget := na
+    activeLongEntry := na
+    activeShortEntry := na
+    activeLongAverageFillPrice := na
+    activeShortAverageFillPrice := na
+    activeLongRisk := na
+    activeShortRisk := na
+    activeLongOneRTarget := na
+    activeShortOneRTarget := na
+    activeLongRunnerStop := na
+    activeShortRunnerStop := na
+    longOneRReached := false
+    shortOneRReached := false
+    activeLongTrimManagementEligible := false
+    activeShortTrimManagementEligible := false
+    activeLongFixedRFallback := false
+    activeShortFixedRFallback := false
+    activeLongTrimQty := na
+    activeLongRunnerQty := na
+    activeShortTrimQty := na
+    activeShortRunnerQty := na
     lastSignalReason := "New RTH session"
 
 // Actual fill tracking: tradesToday increments only when the broker emulator
@@ -674,24 +876,96 @@ bool shortFilledNow = strategy.position_size < 0 and nz(strategy.position_size[1
 if longFilledNow
     tradesToday += 1
     lastFillBar := bar_index
-    activeLongStop := not na(longPendingStop) ? longPendingStop : activeLongStop
-    activeLongTarget := not na(longPendingTarget) ? longPendingTarget : activeLongTarget
+    float plannedLongEntry = not na(longPendingEntry) ? longPendingEntry : strategy.position_avg_price
+    float plannedLongStop = not na(longPendingStop) ? longPendingStop : activeLongStop
+    float plannedLongRisk = not na(longPendingRisk) ? longPendingRisk : plannedLongEntry - plannedLongStop
+    activeLongEntry := plannedLongEntry
+    activeLongAverageFillPrice := strategy.position_avg_price
+    activeLongStop := plannedLongStop
+    activeLongRisk := plannedLongRisk
+    activeLongOneRTarget := not na(longPendingOneRTarget) ? longPendingOneRTarget : plannedLongEntry + plannedLongRisk
+    activeLongTarget := not na(longPendingTarget) ? longPendingTarget : plannedLongEntry + plannedLongRisk * targetR
+    activeLongRunnerStop := activeLongStop
+    int filledLongContracts = int(math.abs(strategy.position_size))
+    activeLongTrimManagementEligible := managementMode == "Trim 1R + BE" and filledLongContracts >= 2 and not na(activeLongRisk) and activeLongRisk > 0
+    activeLongFixedRFallback := managementMode == "Trim 1R + BE" and not activeLongTrimManagementEligible
+    activeLongTrimQty := activeLongTrimManagementEligible ? f_trimContracts(filledLongContracts, trimAtOneRPercent) : na
+    activeLongRunnerQty := activeLongTrimManagementEligible ? filledLongContracts - activeLongTrimQty : na
+    longOneRReached := false
+    activeShortTrimManagementEligible := false
+    activeShortFixedRFallback := false
+    activeShortTrimQty := na
+    activeShortRunnerQty := na
     longPendingOrder := false
+    longPendingSignalBar := na
+    longPendingEntry := na
+    longPendingStop := na
+    longPendingTarget := na
+    longPendingRisk := na
+    longPendingOneRTarget := na
+    longPendingContracts := na
+    longPendingLocation := "N/A"
     if shortPendingOrder
         strategy.cancel(SHORT_ENTRY_ID)
         shortPendingOrder := false
+        shortPendingSignalBar := na
+        shortPendingEntry := na
+        shortPendingStop := na
+        shortPendingTarget := na
+        shortPendingRisk := na
+        shortPendingOneRTarget := na
+        shortPendingContracts := na
+        shortPendingLocation := "N/A"
     lastSignalReason := "Long filled"
+    if showStrategyDebugLabels
+        label.new(bar_index, low, "L fill\nPlan E " + f_priceText(activeLongEntry) + "\nStop " + f_priceText(activeLongStop) + "\n1R " + f_priceText(activeLongOneRTarget) + "\nQty " + str.tostring(filledLongContracts), style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 20), size=size.tiny)
 
 if shortFilledNow
     tradesToday += 1
     lastFillBar := bar_index
-    activeShortStop := not na(shortPendingStop) ? shortPendingStop : activeShortStop
-    activeShortTarget := not na(shortPendingTarget) ? shortPendingTarget : activeShortTarget
+    float plannedShortEntry = not na(shortPendingEntry) ? shortPendingEntry : strategy.position_avg_price
+    float plannedShortStop = not na(shortPendingStop) ? shortPendingStop : activeShortStop
+    float plannedShortRisk = not na(shortPendingRisk) ? shortPendingRisk : plannedShortStop - plannedShortEntry
+    activeShortEntry := plannedShortEntry
+    activeShortAverageFillPrice := strategy.position_avg_price
+    activeShortStop := plannedShortStop
+    activeShortRisk := plannedShortRisk
+    activeShortOneRTarget := not na(shortPendingOneRTarget) ? shortPendingOneRTarget : plannedShortEntry - plannedShortRisk
+    activeShortTarget := not na(shortPendingTarget) ? shortPendingTarget : plannedShortEntry - plannedShortRisk * targetR
+    activeShortRunnerStop := activeShortStop
+    int filledShortContracts = int(math.abs(strategy.position_size))
+    activeShortTrimManagementEligible := managementMode == "Trim 1R + BE" and filledShortContracts >= 2 and not na(activeShortRisk) and activeShortRisk > 0
+    activeShortFixedRFallback := managementMode == "Trim 1R + BE" and not activeShortTrimManagementEligible
+    activeShortTrimQty := activeShortTrimManagementEligible ? f_trimContracts(filledShortContracts, trimAtOneRPercent) : na
+    activeShortRunnerQty := activeShortTrimManagementEligible ? filledShortContracts - activeShortTrimQty : na
+    shortOneRReached := false
+    activeLongTrimManagementEligible := false
+    activeLongFixedRFallback := false
+    activeLongTrimQty := na
+    activeLongRunnerQty := na
     shortPendingOrder := false
+    shortPendingSignalBar := na
+    shortPendingEntry := na
+    shortPendingStop := na
+    shortPendingTarget := na
+    shortPendingRisk := na
+    shortPendingOneRTarget := na
+    shortPendingContracts := na
+    shortPendingLocation := "N/A"
     if longPendingOrder
         strategy.cancel(LONG_ENTRY_ID)
         longPendingOrder := false
+        longPendingSignalBar := na
+        longPendingEntry := na
+        longPendingStop := na
+        longPendingTarget := na
+        longPendingRisk := na
+        longPendingOneRTarget := na
+        longPendingContracts := na
+        longPendingLocation := "N/A"
     lastSignalReason := "Short filled"
+    if showStrategyDebugLabels
+        label.new(bar_index, high, "S fill\nPlan E " + f_priceText(activeShortEntry) + "\nStop " + f_priceText(activeShortStop) + "\n1R " + f_priceText(activeShortOneRTarget) + "\nQty " + str.tostring(filledShortContracts), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 20), size=size.tiny)
 
 bool positionClosedNow = strategy.position_size == 0 and nz(strategy.position_size[1]) != 0
 if positionClosedNow
@@ -699,8 +973,94 @@ if positionClosedNow
     activeLongTarget := na
     activeShortStop := na
     activeShortTarget := na
+    activeLongEntry := na
+    activeShortEntry := na
+    activeLongAverageFillPrice := na
+    activeShortAverageFillPrice := na
+    activeLongRisk := na
+    activeShortRisk := na
+    activeLongOneRTarget := na
+    activeShortOneRTarget := na
+    activeLongRunnerStop := na
+    activeShortRunnerStop := na
+    longOneRReached := false
+    shortOneRReached := false
+    activeLongTrimManagementEligible := false
+    activeShortTrimManagementEligible := false
+    activeLongFixedRFallback := false
+    activeShortFixedRFallback := false
+    activeLongTrimQty := na
+    activeLongRunnerQty := na
+    activeShortTrimQty := na
+    activeShortRunnerQty := na
     if lastSignalReason != "RTH close flatten"
         lastSignalReason := "Position closed"
+
+// Closed-trade sync guard: if a stop entry filled and the whole trade closed
+// before stale pending flags were cleared, clear state silently before any age
+// cancellation branch can print or alert a false cancellation.
+bool closedTradeCountIncreased = strategy.closedtrades > trackedClosedTradesCount
+if closedTradeCountIncreased
+    trackedClosedTradesCount := strategy.closedtrades
+    if strategy.position_size == 0
+        strategy.cancel(LONG_ENTRY_ID)
+        strategy.cancel(SHORT_ENTRY_ID)
+        longPendingOrder := false
+        shortPendingOrder := false
+        longPendingSignalBar := na
+        shortPendingSignalBar := na
+        longPendingEntry := na
+        longPendingStop := na
+        longPendingTarget := na
+        longPendingRisk := na
+        longPendingOneRTarget := na
+        shortPendingEntry := na
+        shortPendingStop := na
+        shortPendingTarget := na
+        shortPendingRisk := na
+        shortPendingOneRTarget := na
+        longPendingContracts := na
+        shortPendingContracts := na
+        longPendingLocation := "N/A"
+        shortPendingLocation := "N/A"
+        pendingLongDelayedSetup := false
+        pendingShortDelayedSetup := false
+        pendingLongDelayedSetupBar := na
+        pendingShortDelayedSetupBar := na
+        pendingLongDelayedBreakPrice := na
+        pendingShortDelayedBreakPrice := na
+        pendingLongDelayedSetupStop := na
+        pendingShortDelayedSetupStop := na
+        pendingLongPullbackSwingLow := na
+        pendingShortPullbackSwingHigh := na
+        pendingLongDelayedLocation := "N/A"
+        pendingShortDelayedLocation := "N/A"
+        activeLongStop := na
+        activeLongTarget := na
+        activeShortStop := na
+        activeShortTarget := na
+        activeLongEntry := na
+        activeShortEntry := na
+        activeLongAverageFillPrice := na
+        activeShortAverageFillPrice := na
+        activeLongRisk := na
+        activeShortRisk := na
+        activeLongOneRTarget := na
+        activeShortOneRTarget := na
+        activeLongRunnerStop := na
+        activeShortRunnerStop := na
+        longOneRReached := false
+        shortOneRReached := false
+        activeLongTrimManagementEligible := false
+        activeShortTrimManagementEligible := false
+        activeLongFixedRFallback := false
+        activeShortFixedRFallback := false
+        activeLongTrimQty := na
+        activeLongRunnerQty := na
+        activeShortTrimQty := na
+        activeShortRunnerQty := na
+        if lastSignalReason != "RTH close flatten"
+            lastSignalReason := "Closed-trade sync"
 
 if rthCloseFlattenNow
     strategy.cancel(LONG_ENTRY_ID)
@@ -713,6 +1073,42 @@ if rthCloseFlattenNow
     activeLongTarget := na
     activeShortStop := na
     activeShortTarget := na
+    activeLongEntry := na
+    activeShortEntry := na
+    activeLongAverageFillPrice := na
+    activeShortAverageFillPrice := na
+    activeLongRisk := na
+    activeShortRisk := na
+    activeLongOneRTarget := na
+    activeShortOneRTarget := na
+    activeLongRunnerStop := na
+    activeShortRunnerStop := na
+    longOneRReached := false
+    shortOneRReached := false
+    activeLongTrimManagementEligible := false
+    activeShortTrimManagementEligible := false
+    activeLongFixedRFallback := false
+    activeShortFixedRFallback := false
+    activeLongTrimQty := na
+    activeLongRunnerQty := na
+    activeShortTrimQty := na
+    activeShortRunnerQty := na
+    longPendingSignalBar := na
+    shortPendingSignalBar := na
+    longPendingEntry := na
+    longPendingStop := na
+    longPendingTarget := na
+    longPendingRisk := na
+    longPendingOneRTarget := na
+    shortPendingEntry := na
+    shortPendingStop := na
+    shortPendingTarget := na
+    shortPendingRisk := na
+    shortPendingOneRTarget := na
+    longPendingContracts := na
+    shortPendingContracts := na
+    longPendingLocation := "N/A"
+    shortPendingLocation := "N/A"
     pendingLongDelayedSetup := false
     pendingShortDelayedSetup := false
     pendingLongDelayedSetupBar := na
@@ -731,12 +1127,14 @@ if rthCloseFlattenNow
 // age or if the planned stop breaks before entry. Same-bar entry/stop ambiguity
 // uses the requested arbitration mode when the fill state is still flat.
 if barstate.isconfirmed and strategy.position_size == 0
+    if longPendingOrder and (na(longPendingSignalBar) or na(longPendingEntry) or na(longPendingStop))
+        longPendingOrder := false
     if longPendingOrder and bar_index > longPendingSignalBar
         bool longEntryTouched = high >= longPendingEntry
         bool longStopTouched = low <= longPendingStop
         bool longBothTouched = longEntryTouched and longStopTouched
         bool longStopCancel = longStopTouched and (not longEntryTouched or (longBothTouched and cancelWinsSameBar))
-        bool longAgeCancel = bar_index - longPendingSignalBar >= cancelUnfilledAfterBars
+        bool longAgeCancel = not longEntryTouched and bar_index - longPendingSignalBar >= cancelUnfilledAfterBars
         if longStopCancel or longAgeCancel
             string cancelReason = longStopCancel ? "CXL Stop" : "CXL Age"
             longOrderCancelledEvent := true
@@ -750,14 +1148,24 @@ if barstate.isconfirmed and strategy.position_size == 0
                 f_addCancellationChartLabel(true, cancelReason)
             alert(f_buildCancelAlertMessage("LONG", longPendingLocation, cancelReason, longPendingEntry, longPendingStop, longPendingTarget, longPendingEntry - longPendingStop, targetR), alert.freq_once_per_bar_close)
             longPendingOrder := false
+            longPendingSignalBar := na
+            longPendingEntry := na
+            longPendingStop := na
+            longPendingTarget := na
+            longPendingRisk := na
+            longPendingOneRTarget := na
+            longPendingContracts := na
+            longPendingLocation := "N/A"
             lastSignalReason := "Long " + cancelReason
 
+    if shortPendingOrder and (na(shortPendingSignalBar) or na(shortPendingEntry) or na(shortPendingStop))
+        shortPendingOrder := false
     if shortPendingOrder and bar_index > shortPendingSignalBar
         bool shortEntryTouched = low <= shortPendingEntry
         bool shortStopTouched = high >= shortPendingStop
         bool shortBothTouched = shortEntryTouched and shortStopTouched
         bool shortStopCancel = shortStopTouched and (not shortEntryTouched or (shortBothTouched and cancelWinsSameBar))
-        bool shortAgeCancel = bar_index - shortPendingSignalBar >= cancelUnfilledAfterBars
+        bool shortAgeCancel = not shortEntryTouched and bar_index - shortPendingSignalBar >= cancelUnfilledAfterBars
         if shortStopCancel or shortAgeCancel
             string cancelReason = shortStopCancel ? "CXL Stop" : "CXL Age"
             shortOrderCancelledEvent := true
@@ -771,6 +1179,14 @@ if barstate.isconfirmed and strategy.position_size == 0
                 f_addCancellationChartLabel(false, cancelReason)
             alert(f_buildCancelAlertMessage("SHORT", shortPendingLocation, cancelReason, shortPendingEntry, shortPendingStop, shortPendingTarget, shortPendingStop - shortPendingEntry, targetR), alert.freq_once_per_bar_close)
             shortPendingOrder := false
+            shortPendingSignalBar := na
+            shortPendingEntry := na
+            shortPendingStop := na
+            shortPendingTarget := na
+            shortPendingRisk := na
+            shortPendingOneRTarget := na
+            shortPendingContracts := na
+            shortPendingLocation := "N/A"
             lastSignalReason := "Short " + cancelReason
 
 // ===================== Setup Evaluation =====================
@@ -820,8 +1236,10 @@ bool longStoredPullbackCandidateActive = delayedEntryMode and pendingLongDelayed
 bool shortStoredPullbackCandidateActive = delayedEntryMode and pendingShortDelayedSetup
 bool longFirstBreakAttempted = longStoredPullbackCandidateActive and bar_index > pendingLongDelayedSetupBar and high > pendingLongDelayedBreakPrice
 bool shortFirstBreakAttempted = shortStoredPullbackCandidateActive and bar_index > pendingShortDelayedSetupBar and low < pendingShortDelayedBreakPrice
-bool longFirstBreakClosedBeyond = longFirstBreakAttempted and close > pendingLongDelayedBreakPrice
-bool shortFirstBreakClosedBeyond = shortFirstBreakAttempted and close < pendingShortDelayedBreakPrice
+float delayedConfirmationBarMidpoint = (high + low) / 2.0
+bool useDelayedMidpointClose = delayedConfirmationCloseMode == "Close Beyond Bar Midpoint"
+bool longDelayedClosePass = longFirstBreakAttempted and (useDelayedMidpointClose ? close > delayedConfirmationBarMidpoint : close > pendingLongDelayedBreakPrice)
+bool shortDelayedClosePass = shortFirstBreakAttempted and (useDelayedMidpointClose ? close < delayedConfirmationBarMidpoint : close < pendingShortDelayedBreakPrice)
 bool longConfirmationMadeNewSwingLow = longFirstBreakAttempted and not na(low[1]) and low < low[1]
 bool shortConfirmationMadeNewSwingHigh = shortFirstBreakAttempted and not na(high[1]) and high > high[1]
 
@@ -846,13 +1264,23 @@ int shortConfirmationContracts = f_positionSize(shortConfirmationRiskPoints)
 bool longConfirmationTriggerQualityPass = not na(atrValue) and barRange <= atrValue * maxTriggerBarAtrMultiplier and not closeInBottomQuarter and close >= ema20 - tickSize and longConfirmationRiskPass
 bool shortConfirmationTriggerQualityPass = not na(atrValue) and barRange <= atrValue * maxTriggerBarAtrMultiplier and not closeInTopQuarter and close <= ema20 + tickSize and shortConfirmationRiskPass
 
+float maxDistanceFromMidEmaThreshold = not na(atrValue) ? atrValue * maxDistanceFromMidEmaAtrMultiplier : na
+float longDistanceFromMidEma = math.abs(longEntryPrice - ema20)
+float shortDistanceFromMidEma = math.abs(shortEntryPrice - ema20)
+float longConfirmationDistanceFromMidEma = math.abs(longConfirmationEntryPrice - ema20)
+float shortConfirmationDistanceFromMidEma = math.abs(shortConfirmationEntryPrice - ema20)
+bool longMaxDistanceFromMidEmaPass = f_maxDistanceFromMidEmaPass(longEntryPrice, ema20, atrValue)
+bool shortMaxDistanceFromMidEmaPass = f_maxDistanceFromMidEmaPass(shortEntryPrice, ema20, atrValue)
+bool longConfirmationMaxDistanceFromMidEmaPass = f_maxDistanceFromMidEmaPass(longConfirmationEntryPrice, ema20, atrValue)
+bool shortConfirmationMaxDistanceFromMidEmaPass = f_maxDistanceFromMidEmaPass(shortConfirmationEntryPrice, ema20, atrValue)
+
 bool longPullbackStructureGatePass = longCurrentBarIsPullbackStructure
 bool shortPullbackStructureGatePass = shortCurrentBarIsPullbackStructure
 
-bool longStandardSetupQualifies = canPlaceLongOrder and longOpeningRangeBiasPass and longContextPass and longLocationPass and longFinalEmaClosePass and longTriggerQualityPass and longContracts >= 1
-bool shortStandardSetupQualifies = canPlaceShortOrder and shortOpeningRangeBiasPass and shortContextPass and shortLocationPass and shortFinalEmaClosePass and shortTriggerQualityPass and shortContracts >= 1
-bool longStandardConfirmationQualifies = canPlaceLongOrder and longFirstBreakClosedBeyond and longOpeningRangeBiasPass and longContextPass and longLocationPass and longFinalEmaClosePass and longConfirmationTriggerQualityPass and longConfirmationContracts >= 1
-bool shortStandardConfirmationQualifies = canPlaceShortOrder and shortFirstBreakClosedBeyond and shortOpeningRangeBiasPass and shortContextPass and shortLocationPass and shortFinalEmaClosePass and shortConfirmationTriggerQualityPass and shortConfirmationContracts >= 1
+bool longStandardSetupQualifies = canPlaceLongOrder and longOpeningRangeBiasPass and longContextPass and longLocationPass and longFinalEmaClosePass and longTouchedAcceptancePass and longMaxDistanceFromMidEmaPass and longTriggerQualityPass and longContracts >= 1
+bool shortStandardSetupQualifies = canPlaceShortOrder and shortOpeningRangeBiasPass and shortContextPass and shortLocationPass and shortFinalEmaClosePass and shortTouchedAcceptancePass and shortMaxDistanceFromMidEmaPass and shortTriggerQualityPass and shortContracts >= 1
+bool longStandardConfirmationQualifies = canPlaceLongOrder and longDelayedClosePass and longOpeningRangeBiasPass and longContextPass and longLocationPass and longFinalEmaClosePass and longTouchedAcceptancePass and longConfirmationMaxDistanceFromMidEmaPass and longConfirmationTriggerQualityPass and longConfirmationContracts >= 1
+bool shortStandardConfirmationQualifies = canPlaceShortOrder and shortDelayedClosePass and shortOpeningRangeBiasPass and shortContextPass and shortLocationPass and shortFinalEmaClosePass and shortTouchedAcceptancePass and shortConfirmationMaxDistanceFromMidEmaPass and shortConfirmationTriggerQualityPass and shortConfirmationContracts >= 1
 
 bool longFiftyRejectionStackPass = f_geWithTolerance(ema9, ema20) and f_geWithTolerance(ema20, ema50)
 bool shortFiftyRejectionStackPass = f_leWithTolerance(ema9, ema20) and f_leWithTolerance(ema20, ema50)
@@ -866,10 +1294,10 @@ bool longFiftyRejectionTriggerQualityPass = not na(atrValue) and barRange <= atr
 bool shortFiftyRejectionTriggerQualityPass = not na(atrValue) and barRange <= atrValue * maxTriggerBarAtrMultiplier and not closeInTopQuarter and shortRiskPass
 bool longFiftyRejectionConfirmationQualityPass = not na(atrValue) and barRange <= atrValue * maxTriggerBarAtrMultiplier and not closeInBottomQuarter and longConfirmationRiskPass
 bool shortFiftyRejectionConfirmationQualityPass = not na(atrValue) and barRange <= atrValue * maxTriggerBarAtrMultiplier and not closeInTopQuarter and shortConfirmationRiskPass
-bool longFiftyRejectionSetupQualifies = useFiftyEmaRejectionSetup and canPlaceLongOrder and longOpeningRangeBiasPass and longFiftyRejectionContextPass and longFiftyRejectionLocationPass and longFiftyRejectionCleanPullback and longFiftyRejectionTriggerQualityPass and longContracts >= 1
-bool shortFiftyRejectionSetupQualifies = useFiftyEmaRejectionSetup and canPlaceShortOrder and shortOpeningRangeBiasPass and shortFiftyRejectionContextPass and shortFiftyRejectionLocationPass and shortFiftyRejectionCleanPullback and shortFiftyRejectionTriggerQualityPass and shortContracts >= 1
-bool longFiftyRejectionConfirmationQualifies = useFiftyEmaRejectionSetup and canPlaceLongOrder and longFirstBreakClosedBeyond and longOpeningRangeBiasPass and longFiftyRejectionContextPass and longFiftyRejectionLocationPass and longFiftyRejectionCleanPullback and longFiftyRejectionConfirmationQualityPass and longConfirmationContracts >= 1
-bool shortFiftyRejectionConfirmationQualifies = useFiftyEmaRejectionSetup and canPlaceShortOrder and shortFirstBreakClosedBeyond and shortOpeningRangeBiasPass and shortFiftyRejectionContextPass and shortFiftyRejectionLocationPass and shortFiftyRejectionCleanPullback and shortFiftyRejectionConfirmationQualityPass and shortConfirmationContracts >= 1
+bool longFiftyRejectionSetupQualifies = useFiftyEmaRejectionSetup and canPlaceLongOrder and longOpeningRangeBiasPass and longFiftyRejectionContextPass and longFiftyRejectionLocationPass and longFiftyRejectionCleanPullback and longTouchedAcceptancePass and longMaxDistanceFromMidEmaPass and longFiftyRejectionTriggerQualityPass and longContracts >= 1
+bool shortFiftyRejectionSetupQualifies = useFiftyEmaRejectionSetup and canPlaceShortOrder and shortOpeningRangeBiasPass and shortFiftyRejectionContextPass and shortFiftyRejectionLocationPass and shortFiftyRejectionCleanPullback and shortTouchedAcceptancePass and shortMaxDistanceFromMidEmaPass and shortFiftyRejectionTriggerQualityPass and shortContracts >= 1
+bool longFiftyRejectionConfirmationQualifies = useFiftyEmaRejectionSetup and canPlaceLongOrder and longDelayedClosePass and longOpeningRangeBiasPass and longFiftyRejectionContextPass and longFiftyRejectionLocationPass and longFiftyRejectionCleanPullback and longTouchedAcceptancePass and longConfirmationMaxDistanceFromMidEmaPass and longFiftyRejectionConfirmationQualityPass and longConfirmationContracts >= 1
+bool shortFiftyRejectionConfirmationQualifies = useFiftyEmaRejectionSetup and canPlaceShortOrder and shortDelayedClosePass and shortOpeningRangeBiasPass and shortFiftyRejectionContextPass and shortFiftyRejectionLocationPass and shortFiftyRejectionCleanPullback and shortTouchedAcceptancePass and shortConfirmationMaxDistanceFromMidEmaPass and shortFiftyRejectionConfirmationQualityPass and shortConfirmationContracts >= 1
 
 bool longAnySetupQualifies = longStandardSetupQualifies or longFiftyRejectionSetupQualifies
 bool shortAnySetupQualifies = shortStandardSetupQualifies or shortFiftyRejectionSetupQualifies
@@ -885,8 +1313,8 @@ string longConfirmationLocation = longConfirmationSetupType == "50R" ? "50EMA" :
 string shortConfirmationLocation = shortConfirmationSetupType == "50R" ? "50EMA" : shortLocationName
 bool longCandidateSetup = longPullbackStructureGatePass and longAnySetupQualifies and not longFirstBreakAttempted
 bool shortCandidateSetup = shortPullbackStructureGatePass and shortAnySetupQualifies and not shortFirstBreakAttempted
-bool longDelayedConfirmationSetup = longFirstBreakClosedBeyond and longAnyConfirmationQualifies
-bool shortDelayedConfirmationSetup = shortFirstBreakClosedBeyond and shortAnyConfirmationQualifies
+bool longDelayedConfirmationSetup = longDelayedClosePass and longAnyConfirmationQualifies
+bool shortDelayedConfirmationSetup = shortDelayedClosePass and shortAnyConfirmationQualifies
 bool longFirstBreakFailed = longFirstBreakAttempted and not longDelayedConfirmationSetup
 bool shortFirstBreakFailed = shortFirstBreakAttempted and not shortDelayedConfirmationSetup
 bool longChasingBlocked = requirePullback and canPlaceLongOrder and not longCurrentBarIsPullbackStructure and not longStoredPullbackCandidateActive and not na(high[1]) and high > high[1] and longPullbackPass
@@ -899,6 +1327,10 @@ float longDebugRiskPoints = longFirstBreakAttempted ? longConfirmationRiskPoints
 float shortDebugRiskPoints = shortFirstBreakAttempted ? shortConfirmationRiskPoints : shortRiskPoints
 int longDebugContracts = longFirstBreakAttempted ? longConfirmationContracts : longContracts
 int shortDebugContracts = shortFirstBreakAttempted ? shortConfirmationContracts : shortContracts
+bool longDebugMaxDistanceFromMidEmaPass = longFirstBreakAttempted ? longConfirmationMaxDistanceFromMidEmaPass : longMaxDistanceFromMidEmaPass
+bool shortDebugMaxDistanceFromMidEmaPass = shortFirstBreakAttempted ? shortConfirmationMaxDistanceFromMidEmaPass : shortMaxDistanceFromMidEmaPass
+float longDebugDistanceFromMidEma = longFirstBreakAttempted ? longConfirmationDistanceFromMidEma : longDistanceFromMidEma
+float shortDebugDistanceFromMidEma = shortFirstBreakAttempted ? shortConfirmationDistanceFromMidEma : shortDistanceFromMidEma
 
 // Stop-entry logic: a confirmed setup submits a buy stop one tick above the
 // trigger bar high, or a sell stop one tick below the trigger bar low.
@@ -908,6 +1340,8 @@ if longDelayedConfirmationSetup
     longPendingEntry := longConfirmationEntryPrice
     longPendingStop := longConfirmationStopPrice
     longPendingTarget := longConfirmationTargetPrice
+    longPendingRisk := longConfirmationRiskPoints
+    longPendingOneRTarget := longConfirmationEntryPrice + longConfirmationRiskPoints
     longPendingContracts := longConfirmationContracts
     longPendingLocation := longConfirmationLocation
     activeLongStop := longConfirmationStopPrice
@@ -938,6 +1372,8 @@ if shortDelayedConfirmationSetup and (not onlyOneActiveTradeOrOrder or not longP
     shortPendingEntry := shortConfirmationEntryPrice
     shortPendingStop := shortConfirmationStopPrice
     shortPendingTarget := shortConfirmationTargetPrice
+    shortPendingRisk := shortConfirmationRiskPoints
+    shortPendingOneRTarget := shortConfirmationEntryPrice - shortConfirmationRiskPoints
     shortPendingContracts := shortConfirmationContracts
     shortPendingLocation := shortConfirmationLocation
     activeShortStop := shortConfirmationStopPrice
@@ -971,6 +1407,8 @@ if longImmediateCanStillPlace
     longPendingEntry := longEntryPrice
     longPendingStop := longStopPrice
     longPendingTarget := longTargetPrice
+    longPendingRisk := longRiskPoints
+    longPendingOneRTarget := longEntryPrice + longRiskPoints
     longPendingContracts := longContracts
     longPendingLocation := longSetupLocation
     activeLongStop := longStopPrice
@@ -1001,6 +1439,8 @@ if shortImmediateCanStillPlace and (not onlyOneActiveTradeOrOrder or not longPen
     shortPendingEntry := shortEntryPrice
     shortPendingStop := shortStopPrice
     shortPendingTarget := shortTargetPrice
+    shortPendingRisk := shortRiskPoints
+    shortPendingOneRTarget := shortEntryPrice - shortRiskPoints
     shortPendingContracts := shortContracts
     shortPendingLocation := shortSetupLocation
     activeShortStop := shortStopPrice
@@ -1091,16 +1531,92 @@ if canEvaluateSignals and not longSetupPlacedEvent and not shortSetupPlacedEvent
          hasOpenPosition ? "Position active" :
          "No complete setup"
 
-// Fixed-R target logic: exits are attached to the stored stop and target and do
-// not use active management in v1.
+// Historical bars cannot prove the true sequence when entry, 1R, and stop all
+// occur inside the same candle. With later-bar 1R touches, this moves the runner
+// stop on the confirmed bar after 1R/trim becomes available to the emulator.
+bool longOneRReachedNow = barstate.isconfirmed and strategy.position_size > 0 and activeLongTrimManagementEligible and not longOneRReached and not na(activeLongOneRTarget) and high >= activeLongOneRTarget
+bool shortOneRReachedNow = barstate.isconfirmed and strategy.position_size < 0 and activeShortTrimManagementEligible and not shortOneRReached and not na(activeShortOneRTarget) and low <= activeShortOneRTarget
+
+if longOneRReachedNow
+    longOneRReached := true
+if shortOneRReachedNow
+    shortOneRReached := true
+
+float longBreakEvenStop = not na(activeLongAverageFillPrice) ? activeLongAverageFillPrice + tickSize : activeLongEntry + tickSize
+float shortBreakEvenStop = not na(activeShortAverageFillPrice) ? activeShortAverageFillPrice - tickSize : activeShortEntry - tickSize
+activeLongRunnerStop := strategy.position_size > 0 and activeLongTrimManagementEligible ? (longOneRReached ? math.max(activeLongStop, longBreakEvenStop) : activeLongStop) : activeLongStop
+activeShortRunnerStop := strategy.position_size < 0 and activeShortTrimManagementEligible ? (shortOneRReached ? math.min(activeShortStop, shortBreakEvenStop) : activeShortStop) : activeShortStop
+bool longRunnerStopMovedNow = longOneRReachedNow and not na(activeLongRunnerStop) and not na(activeLongStop) and activeLongRunnerStop > activeLongStop
+bool shortRunnerStopMovedNow = shortOneRReachedNow and not na(activeShortRunnerStop) and not na(activeShortStop) and activeShortRunnerStop < activeShortStop
+
+if showStrategyDebugLabels and longOneRReachedNow
+    label.new(bar_index, high, "L 1R reached\n1R " + f_priceText(activeLongOneRTarget), style=label.style_label_down, textcolor=color.white, color=color.new(color.green, 10), size=size.tiny)
+if showStrategyDebugLabels and longRunnerStopMovedNow
+    label.new(bar_index, low, "L runner BE+1\nStop " + f_priceText(activeLongRunnerStop), style=label.style_label_up, textcolor=color.white, color=color.new(color.green, 0), size=size.tiny)
+if showStrategyDebugLabels and shortOneRReachedNow
+    label.new(bar_index, low, "S 1R reached\n1R " + f_priceText(activeShortOneRTarget), style=label.style_label_up, textcolor=color.white, color=color.new(color.red, 10), size=size.tiny)
+if showStrategyDebugLabels and shortRunnerStopMovedNow
+    label.new(bar_index, high, "S runner BE-1\nStop " + f_priceText(activeShortRunnerStop), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.tiny)
+
+bool trimManagementMode = managementMode == "Trim 1R + BE"
+bool longPendingTrimExitEligible = trimManagementMode and longPendingOrder and not na(longPendingContracts) and longPendingContracts >= 2 and not na(longPendingEntry) and not na(longPendingStop) and longPendingEntry > longPendingStop
+bool shortPendingTrimExitEligible = trimManagementMode and shortPendingOrder and not na(shortPendingContracts) and shortPendingContracts >= 2 and not na(shortPendingEntry) and not na(shortPendingStop) and shortPendingStop > shortPendingEntry
+
+// Fixed R keeps the original single full-position exit. Trim mode splits only
+// trades with at least two filled contracts; smaller trades fall back to Fixed R.
 if longPendingOrder
-    strategy.exit(LONG_EXIT_ID, from_entry=LONG_ENTRY_ID, stop=longPendingStop, limit=longPendingTarget)
+    if longPendingTrimExitEligible
+        int pendingLongTrimQty = f_trimContracts(longPendingContracts, trimAtOneRPercent)
+        int pendingLongRunnerQty = longPendingContracts - pendingLongTrimQty
+        float pendingLongOneRTarget = not na(longPendingOneRTarget) ? longPendingOneRTarget : longPendingEntry + (longPendingEntry - longPendingStop)
+        strategy.cancel(LONG_EXIT_ID)
+        strategy.exit(LONG_TRIM_EXIT_ID, from_entry=LONG_ENTRY_ID, qty=pendingLongTrimQty, stop=longPendingStop, limit=pendingLongOneRTarget)
+        strategy.exit(LONG_RUNNER_EXIT_ID, from_entry=LONG_ENTRY_ID, qty=pendingLongRunnerQty, stop=longPendingStop, limit=longPendingTarget)
+    else
+        strategy.cancel(LONG_TRIM_EXIT_ID)
+        strategy.cancel(LONG_RUNNER_EXIT_ID)
+        strategy.exit(LONG_EXIT_ID, from_entry=LONG_ENTRY_ID, stop=longPendingStop, limit=longPendingTarget)
+
 if shortPendingOrder
-    strategy.exit(SHORT_EXIT_ID, from_entry=SHORT_ENTRY_ID, stop=shortPendingStop, limit=shortPendingTarget)
+    if shortPendingTrimExitEligible
+        int pendingShortTrimQty = f_trimContracts(shortPendingContracts, trimAtOneRPercent)
+        int pendingShortRunnerQty = shortPendingContracts - pendingShortTrimQty
+        float pendingShortOneRTarget = not na(shortPendingOneRTarget) ? shortPendingOneRTarget : shortPendingEntry - (shortPendingStop - shortPendingEntry)
+        strategy.cancel(SHORT_EXIT_ID)
+        strategy.exit(SHORT_TRIM_EXIT_ID, from_entry=SHORT_ENTRY_ID, qty=pendingShortTrimQty, stop=shortPendingStop, limit=pendingShortOneRTarget)
+        strategy.exit(SHORT_RUNNER_EXIT_ID, from_entry=SHORT_ENTRY_ID, qty=pendingShortRunnerQty, stop=shortPendingStop, limit=shortPendingTarget)
+    else
+        strategy.cancel(SHORT_TRIM_EXIT_ID)
+        strategy.cancel(SHORT_RUNNER_EXIT_ID)
+        strategy.exit(SHORT_EXIT_ID, from_entry=SHORT_ENTRY_ID, stop=shortPendingStop, limit=shortPendingTarget)
+
 if strategy.position_size > 0 and not na(activeLongStop) and not na(activeLongTarget)
-    strategy.exit(LONG_EXIT_ID, from_entry=LONG_ENTRY_ID, stop=activeLongStop, limit=activeLongTarget)
+    if activeLongTrimManagementEligible
+        bool longTrimStillOpen = not na(activeLongRunnerQty) and strategy.position_size > activeLongRunnerQty
+        strategy.cancel(LONG_EXIT_ID)
+        if longTrimStillOpen and not na(activeLongTrimQty) and not na(activeLongOneRTarget)
+            strategy.exit(LONG_TRIM_EXIT_ID, from_entry=LONG_ENTRY_ID, qty=activeLongTrimQty, stop=activeLongStop, limit=activeLongOneRTarget)
+        else
+            strategy.cancel(LONG_TRIM_EXIT_ID)
+        strategy.exit(LONG_RUNNER_EXIT_ID, from_entry=LONG_ENTRY_ID, qty=activeLongRunnerQty, stop=activeLongRunnerStop, limit=activeLongTarget)
+    else
+        strategy.cancel(LONG_TRIM_EXIT_ID)
+        strategy.cancel(LONG_RUNNER_EXIT_ID)
+        strategy.exit(LONG_EXIT_ID, from_entry=LONG_ENTRY_ID, stop=activeLongStop, limit=activeLongTarget)
+
 if strategy.position_size < 0 and not na(activeShortStop) and not na(activeShortTarget)
-    strategy.exit(SHORT_EXIT_ID, from_entry=SHORT_ENTRY_ID, stop=activeShortStop, limit=activeShortTarget)
+    if activeShortTrimManagementEligible
+        bool shortTrimStillOpen = not na(activeShortRunnerQty) and math.abs(strategy.position_size) > activeShortRunnerQty
+        strategy.cancel(SHORT_EXIT_ID)
+        if shortTrimStillOpen and not na(activeShortTrimQty) and not na(activeShortOneRTarget)
+            strategy.exit(SHORT_TRIM_EXIT_ID, from_entry=SHORT_ENTRY_ID, qty=activeShortTrimQty, stop=activeShortStop, limit=activeShortOneRTarget)
+        else
+            strategy.cancel(SHORT_TRIM_EXIT_ID)
+        strategy.exit(SHORT_RUNNER_EXIT_ID, from_entry=SHORT_ENTRY_ID, qty=activeShortRunnerQty, stop=activeShortRunnerStop, limit=activeShortTarget)
+    else
+        strategy.cancel(SHORT_TRIM_EXIT_ID)
+        strategy.cancel(SHORT_RUNNER_EXIT_ID)
+        strategy.exit(SHORT_EXIT_ID, from_entry=SHORT_ENTRY_ID, stop=activeShortStop, limit=activeShortTarget)
 
 // ===================== Alert Conditions =====================
 
@@ -1126,6 +1642,28 @@ plot(shortOrderCancelledEvent ? shortCancelAlertStop : na, "Short Cancel Stop", 
 plot(shortOrderCancelledEvent ? shortCancelAlertTarget : na, "Short Cancel Target", display=display.none)
 plot(shortOrderCancelledEvent ? shortCancelAlertRisk : na, "Short Cancel Risk", display=display.none)
 plot(shortOrderCancelledEvent ? shortCancelAlertReasonCode : na, "Short Cancel Reason Code", display=display.none)
+plot(strategy.position_size > 0 ? activeLongEntry : na, "Active Long Planned Entry", display=display.none)
+plot(strategy.position_size > 0 ? activeLongStop : na, "Active Long Original Stop", display=display.none)
+plot(strategy.position_size > 0 ? activeLongRisk : na, "Active Long Planned Risk", display=display.none)
+plot(strategy.position_size > 0 ? activeLongOneRTarget : na, "Active Long 1R Target", display=display.none)
+plot(strategy.position_size > 0 ? activeLongTarget : na, "Active Long Final Target", display=display.none)
+plot(strategy.position_size > 0 ? activeLongRunnerStop : na, "Active Long Runner Stop", display=display.none)
+plot(strategy.position_size > 0 ? float(activeLongTrimQty) : na, "Active Long Trim Qty", display=display.none)
+plot(strategy.position_size > 0 ? float(activeLongRunnerQty) : na, "Active Long Runner Qty", display=display.none)
+plot(strategy.position_size > 0 and activeLongTrimManagementEligible ? 1.0 : 0.0, "Active Long Trim Eligible", display=display.none)
+plot(strategy.position_size > 0 and longOneRReached ? 1.0 : 0.0, "Active Long 1R Reached", display=display.none)
+plot(strategy.position_size > 0 and activeLongFixedRFallback ? 1.0 : 0.0, "Active Long FixedR Fallback", display=display.none)
+plot(strategy.position_size < 0 ? activeShortEntry : na, "Active Short Planned Entry", display=display.none)
+plot(strategy.position_size < 0 ? activeShortStop : na, "Active Short Original Stop", display=display.none)
+plot(strategy.position_size < 0 ? activeShortRisk : na, "Active Short Planned Risk", display=display.none)
+plot(strategy.position_size < 0 ? activeShortOneRTarget : na, "Active Short 1R Target", display=display.none)
+plot(strategy.position_size < 0 ? activeShortTarget : na, "Active Short Final Target", display=display.none)
+plot(strategy.position_size < 0 ? activeShortRunnerStop : na, "Active Short Runner Stop", display=display.none)
+plot(strategy.position_size < 0 ? float(activeShortTrimQty) : na, "Active Short Trim Qty", display=display.none)
+plot(strategy.position_size < 0 ? float(activeShortRunnerQty) : na, "Active Short Runner Qty", display=display.none)
+plot(strategy.position_size < 0 and activeShortTrimManagementEligible ? 1.0 : 0.0, "Active Short Trim Eligible", display=display.none)
+plot(strategy.position_size < 0 and shortOneRReached ? 1.0 : 0.0, "Active Short 1R Reached", display=display.none)
+plot(strategy.position_size < 0 and activeShortFixedRFallback ? 1.0 : 0.0, "Active Short FixedR Fallback", display=display.none)
 
 alertcondition(longSetupPlacedEvent, "Long setup placed", "EMA Level Pullback Break Strategy LONG {{ticker}} Entry {{plot(\"Long Setup Entry\")}} Stop {{plot(\"Long Setup Stop\")}} Target {{plot(\"Long Setup Target\")}} Risk {{plot(\"Long Setup Risk\")}} TargetR {{plot(\"Long Setup Target R\")}} LocationCode {{plot(\"Long Setup Location Code\")}}")
 alertcondition(shortSetupPlacedEvent, "Short setup placed", "EMA Level Pullback Break Strategy SHORT {{ticker}} Entry {{plot(\"Short Setup Entry\")}} Stop {{plot(\"Short Setup Stop\")}} Target {{plot(\"Short Setup Target\")}} Risk {{plot(\"Short Setup Risk\")}} TargetR {{plot(\"Short Setup Target R\")}} LocationCode {{plot(\"Short Setup Location Code\")}}")
@@ -1159,6 +1697,8 @@ if showLongStrategyDebugLabel or showShortStrategyDebugLabel
      "F/M " + f_boolText(longFastEmaStackPass) + " F/S " + f_boolText(longFastSlowEmaStackPass) + " M/S " + f_boolText(longMidSlowEmaStackPass) + "\n" +
      "Struct " + f_boolText(longCurrentBarIsPullbackStructure) + " Stored " + f_boolText(longStoredPullbackCandidateActive) + "\n" +
      "Brk " + f_boolText(longFirstBreakAttempted) + " Fail " + f_boolText(longFirstBreakFailed) + " Chase " + f_boolText(longChasingBlocked) + "\n" +
+     "Loc " + f_boolText(longLocationPass) + " Ret " + f_boolText(longCleanLevelRetestPass) + " Touch " + f_boolText(longTouchedAcceptancePass) + "\n" +
+     "DCls " + f_boolText(longDelayedClosePass) + " D20 " + f_boolText(longDebugMaxDistanceFromMidEmaPass) + "\n" +
      "Type " + (longFirstBreakAttempted ? longConfirmationSetupType : longSetupType) + " Any " + f_boolText(longFirstBreakAttempted ? longAnyConfirmationQualifies : longAnySetupQualifies) + "\n" +
      "Stop " + f_boolText(longFirstBreakAttempted ? longConfirmationPullbackStopValid : longPullbackStopValid) + " Risk " + f_boolText(longDebugRiskPass) + " Q " + f_boolText(longDebugTriggerQualityPass) + " Qty " + str.tostring(longDebugContracts)
     string shortDebugText = "S dbg\n" +
@@ -1166,10 +1706,16 @@ if showLongStrategyDebugLabel or showShortStrategyDebugLabel
      "F/M " + f_boolText(shortFastEmaStackPass) + " F/S " + f_boolText(shortFastSlowEmaStackPass) + " M/S " + f_boolText(shortMidSlowEmaStackPass) + "\n" +
      "Struct " + f_boolText(shortCurrentBarIsPullbackStructure) + " Stored " + f_boolText(shortStoredPullbackCandidateActive) + "\n" +
      "Brk " + f_boolText(shortFirstBreakAttempted) + " Fail " + f_boolText(shortFirstBreakFailed) + " Chase " + f_boolText(shortChasingBlocked) + "\n" +
+     "Loc " + f_boolText(shortLocationPass) + " Ret " + f_boolText(shortCleanLevelRetestPass) + " Touch " + f_boolText(shortTouchedAcceptancePass) + "\n" +
+     "DCls " + f_boolText(shortDelayedClosePass) + " D20 " + f_boolText(shortDebugMaxDistanceFromMidEmaPass) + "\n" +
      "Type " + (shortFirstBreakAttempted ? shortConfirmationSetupType : shortSetupType) + " Any " + f_boolText(shortFirstBreakAttempted ? shortAnyConfirmationQualifies : shortAnySetupQualifies) + "\n" +
      "Stop " + f_boolText(shortFirstBreakAttempted ? shortConfirmationPullbackStopValid : shortPullbackStopValid) + " Risk " + f_boolText(shortDebugRiskPass) + " Q " + f_boolText(shortDebugTriggerQualityPass) + " Qty " + str.tostring(shortDebugContracts)
     string debugText = debugIsLong ? longDebugText : shortDebugText
     label.new(bar_index, debugIsLong ? low : high, debugText, style=debugIsLong ? label.style_label_up : label.style_label_down, textcolor=color.white, color=color.new(color.gray, 30), size=size.tiny)
+
+bool showEmaOverlapDebugLabel = showStrategyDebugLabels and barstate.isconfirmed and emaChopFilterMode == "20 EMA Bar Overlap" and canEvaluateSignals and (longCurrentBarIsPullbackStructure or shortCurrentBarIsPullbackStructure or longFirstBreakAttempted or shortFirstBreakAttempted)
+if showEmaOverlapDebugLabel
+    label.new(bar_index, high, "20EMA overlap prior\n" + str.tostring(ema20OverlapCount) + "/" + str.tostring(emaChopOverlapLookbackBars) + " bars [" + ema20OverlapOffsetsText + "]", style=label.style_label_down, textcolor=color.white, color=color.new(color.orange, 15), size=size.tiny)
 
 // ===================== Tables =====================
 
@@ -1179,7 +1725,7 @@ f_addStatusRow(table _table, int _row, string _name, string _value, color _value
     table.cell(_table, 1, _row, _value, text_color=_valueColor, bgcolor=rowBg, text_size=size.tiny, text_halign=text.align_right)
     _row + 1
 
-var table debugTable = table.new(position.bottom_right, 2, 70, bgcolor=color.new(color.black, 85), border_width=0)
+var table debugTable = table.new(position.bottom_right, 2, 90, bgcolor=color.new(color.black, 85), border_width=0)
 var table timeframeWarningTable = table.new(position.top_right, 1, 1, bgcolor=color.new(color.black, 85), border_width=1)
 
 if barstate.islast
@@ -1194,6 +1740,19 @@ if barstate.islast
         string pendingEntryText = longPendingOrder and shortPendingOrder ? f_priceText(longPendingEntry) + " / " + f_priceText(shortPendingEntry) : longPendingOrder ? f_priceText(longPendingEntry) : shortPendingOrder ? f_priceText(shortPendingEntry) : "na"
         string pendingStopText = longPendingOrder and shortPendingOrder ? f_priceText(longPendingStop) + " / " + f_priceText(shortPendingStop) : longPendingOrder ? f_priceText(longPendingStop) : shortPendingOrder ? f_priceText(shortPendingStop) : "na"
         string pendingTargetText = longPendingOrder and shortPendingOrder ? f_priceText(longPendingTarget) + " / " + f_priceText(shortPendingTarget) : longPendingOrder ? f_priceText(longPendingTarget) : shortPendingOrder ? f_priceText(shortPendingTarget) : "na"
+        string fastEmaLocationText = "On " + f_boolText(allowFastEmaLocation) + " L " + f_boolText(longTouchedEma9) + " / S " + f_boolText(shortTouchedEma9)
+        string maxMidEmaDistanceText = useMaxDistanceFromMidEma ? "L " + f_boolText(longDebugMaxDistanceFromMidEmaPass) + " " + f_pointsText(longDebugDistanceFromMidEma) + " / S " + f_boolText(shortDebugMaxDistanceFromMidEmaPass) + " " + f_pointsText(shortDebugDistanceFromMidEma) : "Off"
+        string activePlannedEntryText = strategy.position_size > 0 ? f_priceText(activeLongEntry) : strategy.position_size < 0 ? f_priceText(activeShortEntry) : "na"
+        string activeOriginalStopText = strategy.position_size > 0 ? f_priceText(activeLongStop) : strategy.position_size < 0 ? f_priceText(activeShortStop) : "na"
+        string activePlannedRiskText = strategy.position_size > 0 ? f_pointsText(activeLongRisk) : strategy.position_size < 0 ? f_pointsText(activeShortRisk) : "na"
+        string activeOneRTargetText = strategy.position_size > 0 ? f_priceText(activeLongOneRTarget) : strategy.position_size < 0 ? f_priceText(activeShortOneRTarget) : "na"
+        string activeFinalTargetText = strategy.position_size > 0 ? f_priceText(activeLongTarget) : strategy.position_size < 0 ? f_priceText(activeShortTarget) : "na"
+        string activeRunnerStopText = strategy.position_size > 0 ? f_priceText(activeLongRunnerStop) : strategy.position_size < 0 ? f_priceText(activeShortRunnerStop) : "na"
+        string activeTrimQtyText = strategy.position_size > 0 ? str.tostring(activeLongTrimQty) : strategy.position_size < 0 ? str.tostring(activeShortTrimQty) : "na"
+        string activeRunnerQtyText = strategy.position_size > 0 ? str.tostring(activeLongRunnerQty) : strategy.position_size < 0 ? str.tostring(activeShortRunnerQty) : "na"
+        string activeFallbackText = strategy.position_size > 0 ? f_boolText(activeLongFixedRFallback) : strategy.position_size < 0 ? f_boolText(activeShortFixedRFallback) : "FALSE"
+        string oneRReachedText = strategy.position_size > 0 ? "L " + f_boolText(longOneRReached) : strategy.position_size < 0 ? "S " + f_boolText(shortOneRReached) : "Flat"
+        string managementStateText = managementMode + (strategy.position_size > 0 ? " L eligible " + f_boolText(activeLongTrimManagementEligible) : strategy.position_size < 0 ? " S eligible " + f_boolText(activeShortTrimManagementEligible) : "")
         int row = 0
         table.cell(debugTable, 0, row, "EMA LPB Status", text_color=color.white, bgcolor=color.rgb(35, 35, 35), text_size=size.tiny, text_halign=text.align_left)
         table.cell(debugTable, 1, row, syminfo.ticker + " " + timeframe.period, text_color=color.white, bgcolor=color.rgb(35, 35, 35), text_size=size.tiny, text_halign=text.align_right)
@@ -1215,17 +1774,26 @@ if barstate.islast
         row := f_addStatusRow(debugTable, row, "Mid/Slow Stack", f_pairBoolText(longMidSlowEmaStackPass, shortMidSlowEmaStackPass), f_pairBoolColor(longMidSlowEmaStackPass, shortMidSlowEmaStackPass))
         row := f_addStatusRow(debugTable, row, "EMA Slope Filter", f_boolText(useEmaSlopeFilter), useEmaSlopeFilter ? color.yellow : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "EMA Slope", f_pairBoolText(longEmaSlopePass, shortEmaSlopePass), f_pairBoolColor(longEmaSlopePass, shortEmaSlopePass))
-        row := f_addStatusRow(debugTable, row, "EMA Chop Blocked", f_pairBoolText(longEmaChopBlocked, shortEmaChopBlocked), not longEmaChopBlocked and not shortEmaChopBlocked ? color.lime : color.yellow)
+        row := f_addStatusRow(debugTable, row, "EMA Chop Mode", emaChopFilterMode, emaChopFilterMode == "Off" ? color.rgb(220, 220, 220) : color.yellow)
         row := f_addStatusRow(debugTable, row, "EMA Compression", f_boolText(emaClusterCompression), emaClusterCompression ? color.yellow : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "20 EMA Overlap Count Prior Bars", str.tostring(ema20OverlapCount) + " / " + str.tostring(emaChopOverlapLookbackBars) + " req " + str.tostring(emaChopEffectiveRequiredOverlapBars), ema20OverlapChopBlocked ? color.yellow : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "EMA Chop Blocked", f_pairBoolText(longEmaChopBlocked, shortEmaChopBlocked), not longEmaChopBlocked and not shortEmaChopBlocked ? color.lime : color.yellow)
         row := f_addStatusRow(debugTable, row, "Max Trigger ATR", f_pointsText(maxTriggerBarAtrMultiplier), color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Bar / ATR", f_pointsText(triggerBarAtrRatio), not na(triggerBarAtrRatio) and triggerBarAtrRatio <= maxTriggerBarAtrMultiplier ? color.lime : color.red)
         row := f_addStatusRow(debugTable, row, "Location", "L " + f_boolText(longLocationPass) + " " + longLocationName + " / S " + f_boolText(shortLocationPass) + " " + shortLocationName, f_pairBoolColor(longLocationPass, shortLocationPass))
+        row := f_addStatusRow(debugTable, row, "Level Retest Refined", f_pairBoolText(longCleanLevelRetestPass, shortCleanLevelRetestPass), f_pairBoolColor(longCleanLevelRetestPass, shortCleanLevelRetestPass))
+        row := f_addStatusRow(debugTable, row, "Touched Acceptance", f_pairBoolText(longTouchedAcceptancePass, shortTouchedAcceptancePass), f_pairBoolColor(longTouchedAcceptancePass, shortTouchedAcceptancePass))
+        row := f_addStatusRow(debugTable, row, "9 EMA Location", fastEmaLocationText, allowFastEmaLocation ? f_pairBoolColor(longTouchedEma9, shortTouchedEma9) : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "20 EMA Distance", "L " + f_pointsText(longDebugDistanceFromMidEma) + " / S " + f_pointsText(shortDebugDistanceFromMidEma), color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Max Dist From 20EMA", maxMidEmaDistanceText, useMaxDistanceFromMidEma ? f_pairBoolColor(longDebugMaxDistanceFromMidEmaPass, shortDebugMaxDistanceFromMidEmaPass) : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "20 EMA Distance Threshold", useMaxDistanceFromMidEma ? f_pointsText(maxDistanceFromMidEmaThreshold) : "Off", useMaxDistanceFromMidEma ? color.rgb(220, 220, 220) : color.rgb(160, 160, 160))
         row := f_addStatusRow(debugTable, row, "Pullback Gate", f_pairBoolText(longPullbackStructureGatePass, shortPullbackStructureGatePass), f_pairBoolColor(longPullbackStructureGatePass, shortPullbackStructureGatePass))
         row := f_addStatusRow(debugTable, row, "Recent Pullback", f_pairBoolText(longPullbackPass, shortPullbackPass), f_pairBoolColor(longPullbackPass, shortPullbackPass))
         row := f_addStatusRow(debugTable, row, "Current Structure", f_pairBoolText(longCurrentBarIsPullbackStructure, shortCurrentBarIsPullbackStructure), f_pairBoolColor(longCurrentBarIsPullbackStructure, shortCurrentBarIsPullbackStructure))
         row := f_addStatusRow(debugTable, row, "Stored Candidate", f_pairBoolText(pendingLongDelayedSetup, pendingShortDelayedSetup), pendingLongDelayedSetup or pendingShortDelayedSetup ? color.yellow : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "First Break", f_pairBoolText(longFirstBreakAttempted, shortFirstBreakAttempted), f_pairBoolColor(longFirstBreakAttempted, shortFirstBreakAttempted))
-        row := f_addStatusRow(debugTable, row, "First Break Closed Beyond", f_pairBoolText(longFirstBreakClosedBeyond, shortFirstBreakClosedBeyond), f_pairBoolColor(longFirstBreakClosedBeyond, shortFirstBreakClosedBeyond))
+        row := f_addStatusRow(debugTable, row, "Delayed Close Mode", delayedConfirmationCloseMode, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Delayed Close Pass", f_pairBoolText(longDelayedClosePass, shortDelayedClosePass), f_pairBoolColor(longDelayedClosePass, shortDelayedClosePass))
         row := f_addStatusRow(debugTable, row, "First Break Fail", f_pairBoolText(longFirstBreakFailed, shortFirstBreakFailed), not longFirstBreakFailed and not shortFirstBreakFailed ? color.rgb(220, 220, 220) : color.red)
         row := f_addStatusRow(debugTable, row, "PB Stop Valid", f_pairBoolText(longPullbackStopValid, shortPullbackStopValid), f_pairBoolColor(longPullbackStopValid, shortPullbackStopValid))
         row := f_addStatusRow(debugTable, row, "Confirm Stop Valid", f_pairBoolText(longConfirmationPullbackStopValid, shortConfirmationPullbackStopValid), f_pairBoolColor(longConfirmationPullbackStopValid, shortConfirmationPullbackStopValid))
@@ -1248,6 +1816,17 @@ if barstate.islast
         row := f_addStatusRow(debugTable, row, "Contracts", "L " + str.tostring(longDebugContracts) + " / S " + str.tostring(shortDebugContracts), longDebugContracts >= 1 or shortDebugContracts >= 1 ? color.lime : color.red)
         row := f_addStatusRow(debugTable, row, "Risk Points", "L " + f_pointsText(longDebugRiskPoints) + " / S " + f_pointsText(shortDebugRiskPoints), color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Delayed Confirm", f_pairBoolText(longDelayedConfirmationSetup, shortDelayedConfirmationSetup), f_pairBoolColor(longDelayedConfirmationSetup, shortDelayedConfirmationSetup))
+        row := f_addStatusRow(debugTable, row, "Management Mode", managementStateText, managementMode == "Trim 1R + BE" ? color.yellow : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "OneR Reached", oneRReachedText, longOneRReached or shortOneRReached ? color.lime : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Active Planned Entry", activePlannedEntryText, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Active Original Stop", activeOriginalStopText, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Active Planned Risk", activePlannedRiskText, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Active 1R Target", activeOneRTargetText, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Active Final Target", activeFinalTargetText, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Active Position Size", str.tostring(strategy.position_size), strategy.position_size != 0 ? color.yellow : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Trim / Runner Qty", "T " + activeTrimQtyText + " / R " + activeRunnerQtyText, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Active Runner Stop", activeRunnerStopText, longOneRReached or shortOneRReached ? color.lime : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Trim FixedR Fallback", activeFallbackText, activeLongFixedRFallback or activeShortFixedRFallback ? color.yellow : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "RTH Flatten", f_boolText(rthCloseFlattenNow), rthCloseFlattenNow ? color.yellow : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Pending Direction", pendingDirectionText, currentAnyPendingOrder ? color.yellow : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Pending Entry", pendingEntryText, color.rgb(220, 220, 220))
