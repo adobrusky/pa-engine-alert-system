@@ -30,6 +30,8 @@ groupRiskTargets = "06. Risk / Targets"
 groupLevels = "07. Levels"
 groupDisplayAlerts = "08. Display / Alerts"
 groupBacktestDebug = "09. Strategy Backtest / Debug"
+groupExcursionStats = "10. MFE / MAE Stats"
+groupLevelRoles = "11. Level Roles / Blockers"
 
 // 01. Core Controls
 enableStrategyBacktest = input.bool(true, "Enable Strategy Backtest", group=groupCore)
@@ -52,6 +54,8 @@ emaFastLength = input.int(9, "Fast EMA Length", minval=1, group=groupEmaTrend)
 emaMidLength = input.int(20, "Mid EMA Length", minval=1, group=groupEmaTrend)
 emaSlowLength = input.int(50, "Slow EMA Length", minval=1, group=groupEmaTrend)
 requireCloseBeyondFastEma = input.bool(true, "Require Close Beyond Fast EMA", group=groupEmaTrend)
+emaCloseRequirementMode = input.string("Close Beyond All Required EMAs", "EMA Close Requirement Mode", options=["Close Beyond All Required EMAs", "Close Beyond Touched EMAs Only"], group=groupEmaTrend)
+emaTouchedCloseLookbackBars = input.int(1, "Touched EMA Close Lookback Bars", minval=1, maxval=2, group=groupEmaTrend)
 requireFastEmaBeyondMidEma = input.bool(true, "Require Fast EMA Beyond Mid EMA", group=groupEmaTrend)
 requireFastEmaBeyondSlowEma = input.bool(true, "Require Fast EMA Beyond Slow EMA", group=groupEmaTrend)
 requireMidEmaBeyondSlowEma = input.bool(true, "Require Mid EMA Beyond Slow EMA", group=groupEmaTrend)
@@ -63,6 +67,10 @@ emaChopOverlapSource = input.string("20 EMA", "EMA Chop Overlap Source", options
 emaChopCompressionAtrMultiplier = input.float(0.20, "EMA Chop Compression ATR Multiplier", minval=0.0, step=0.05, group=groupEmaTrend)
 emaChopOverlapLookbackBars = input.int(4, "EMA Chop Overlap Lookback Bars", minval=2, maxval=10, group=groupEmaTrend)
 emaChopRequiredOverlapBars = input.int(3, "EMA Chop Required Overlap Bars", minval=1, maxval=10, group=groupEmaTrend)
+useTwentyEmaCrossChopFilter = input.bool(false, "Use 20 EMA Cross Chop Filter", group=groupEmaTrend)
+twentyEmaCrossChopMode = input.string("Close Side Flips", "20 EMA Cross Chop Mode", options=["Close Side Flips", "Bar Touches", "Either"], group=groupEmaTrend)
+twentyEmaCrossChopLookbackBars = input.int(10, "20 EMA Cross Chop Lookback Bars", minval=3, maxval=50, group=groupEmaTrend)
+twentyEmaCrossChopMaxEvents = input.int(5, "Max 20 EMA Cross/Touch Events", minval=1, maxval=50, group=groupEmaTrend)
 useFiftyEmaRejectionSetup = input.bool(false, "Use 50 EMA Rejection Setup", group=groupEmaTrend)
 
 // 04. Location Filters
@@ -121,6 +129,37 @@ showDebugTable = input.bool(true, "Show Debug Table", group=groupDisplayAlerts)
 showStrategyDebugLabels = input.bool(false, "Show Strategy Debug Labels", group=groupBacktestDebug)
 allowPendingEntryFillsAfterWindow = input.bool(false, "Allow Pending Entry Fills After Alert Window", group=groupBacktestDebug)
 
+// 10. MFE / MAE Stats
+showExcursionStats = input.bool(true, "Show MFE / MAE Stats", group=groupExcursionStats)
+showExcursionDebugLabels = input.bool(false, "Show Closed Trade MFE Labels", group=groupExcursionStats)
+excursionBasisMode = input.string("Planned Entry / Planned Risk", "Excursion Basis", options=["Planned Entry / Planned Risk", "Average Fill / Actual Stop Risk"], group=groupExcursionStats)
+showSetupBreakdown = input.bool(true, "Show Setup Breakdown", group=groupExcursionStats)
+showLocationBreakdown = input.bool(true, "Show Location Breakdown", group=groupExcursionStats)
+showDirectionBreakdown = input.bool(true, "Show Direction Breakdown", group=groupExcursionStats)
+excursionTableMode = input.string("Summary", "MFE Table Mode", options=["Summary", "Full"], group=groupExcursionStats)
+
+// 11. Level Roles / Blockers
+usePdhAsContinuationEntry = input.bool(true, "Use PDH As Continuation Entry", group=groupLevelRoles)
+usePdlAsContinuationEntry = input.bool(true, "Use PDL As Continuation Entry", group=groupLevelRoles)
+useRthOpenAsContinuationEntry = input.bool(true, "Use RTH Open As Continuation Entry", group=groupLevelRoles)
+usePmhAsContinuationEntry = input.bool(true, "Use PMH As Continuation Entry", group=groupLevelRoles)
+usePmlAsContinuationEntry = input.bool(true, "Use PML As Continuation Entry", group=groupLevelRoles)
+useOrhAsContinuationEntry = input.bool(true, "Use ORH As Continuation Entry", group=groupLevelRoles)
+useOrlAsContinuationEntry = input.bool(true, "Use ORL As Continuation Entry", group=groupLevelRoles)
+usePdhAsBlocker = input.bool(true, "Use PDH As Blocker", group=groupLevelRoles)
+usePdlAsBlocker = input.bool(true, "Use PDL As Blocker", group=groupLevelRoles)
+useRthOpenAsBlocker = input.bool(true, "Use RTH Open As Blocker", group=groupLevelRoles)
+usePmhAsBlocker = input.bool(true, "Use PMH As Blocker", group=groupLevelRoles)
+usePmlAsBlocker = input.bool(true, "Use PML As Blocker", group=groupLevelRoles)
+useOrhAsBlocker = input.bool(true, "Use ORH As Blocker", group=groupLevelRoles)
+useOrlAsBlocker = input.bool(true, "Use ORL As Blocker", group=groupLevelRoles)
+useBadLevelContinuationBlocker = input.bool(false, "Block Continuation Into Nearby Blocker Level", group=groupLevelRoles)
+badLevelBlockerDistanceMode = input.string("R Multiple", "Bad Level Blocker Distance Mode", options=["R Multiple", "ATR Multiple", "Ticks"], group=groupLevelRoles)
+badLevelBlockerDistanceR = input.float(1.0, "Bad Level Blocker Distance R", minval=0.0, step=0.1, group=groupLevelRoles)
+badLevelBlockerDistanceAtr = input.float(0.5, "Bad Level Blocker Distance ATR", minval=0.0, step=0.05, group=groupLevelRoles)
+badLevelBlockerDistanceTicks = input.int(8, "Bad Level Blocker Distance Ticks", minval=1, group=groupLevelRoles)
+showBadLevelBlockerDebug = input.bool(false, "Show Bad Level Blocker Debug", group=groupLevelRoles)
+
 // ===================== Constants / Colors =====================
 
 string TZ = "America/New_York"
@@ -159,6 +198,18 @@ f_pointsText(float _points) =>
 
 f_rText(float _r) =>
     na(_r) ? "na" : str.tostring(_r, "#.##") + "R"
+
+f_pct(int _num, int _den) =>
+    _den > 0 ? _num * 100.0 / _den : na
+
+f_avg(float _sum, int _count) =>
+    _count > 0 ? _sum / _count : na
+
+f_pctText(float _value) =>
+    na(_value) ? "na" : str.tostring(_value, "#.##") + "%"
+
+f_numText(float _value) =>
+    na(_value) ? "na" : str.tostring(_value, "#.##")
 
 f_boolText(bool _value) =>
     _value ? "TRUE" : "FALSE"
@@ -298,8 +349,36 @@ f_seriesTouchOffsetsText(float _series, int _startOffset, int _lookbackBars) =>
             offsetsText += (offsetsText != "" ? "," : "") + str.tostring(i)
     offsetsText != "" ? offsetsText : "None"
 
+f_recentEmaTouched(float _ema, int _lookbackBars) =>
+    bool touched = false
+    for i = 0 to _lookbackBars - 1
+        touched := touched or (not na(_ema[i]) and not na(low[i]) and not na(high[i]) and low[i] <= _ema[i] + f_priceTolerance() and high[i] >= _ema[i] - f_priceTolerance())
+    touched
+
+f_closeSideFlipCount(float _ema, int _lookbackBars) =>
+    int count = 0
+    for i = 1 to _lookbackBars
+        bool valid = not na(close[i]) and not na(close[i + 1]) and not na(_ema[i]) and not na(_ema[i + 1])
+        bool currentAbove = close[i] > _ema[i]
+        bool priorAbove = close[i + 1] > _ema[i + 1]
+        if valid and currentAbove != priorAbove
+            count += 1
+    count
+
+f_barTouchCount(float _ema, int _lookbackBars) =>
+    int count = 0
+    for i = 1 to _lookbackBars
+        if not na(_ema[i]) and not na(low[i]) and not na(high[i]) and low[i] <= _ema[i] and high[i] >= _ema[i]
+            count += 1
+    count
+
 f_maxDistanceFromMidEmaPass(float _entryPrice, float _midEma, float _atr) =>
     not useMaxDistanceFromMidEma or (not na(_entryPrice) and not na(_midEma) and not na(_atr) and math.abs(_entryPrice - _midEma) <= _atr * maxDistanceFromMidEmaAtrMultiplier)
+
+f_badLevelBlockDistance(float _riskPoints, float _atr) =>
+    badLevelBlockerDistanceMode == "R Multiple" ? _riskPoints * badLevelBlockerDistanceR :
+     badLevelBlockerDistanceMode == "ATR Multiple" ? _atr * badLevelBlockerDistanceAtr :
+     badLevelBlockerDistanceTicks * tickSize
 
 f_trimContracts(int _contracts, float _trimPercent) =>
     int trimContracts = int(math.round(_contracts * _trimPercent * 0.01))
@@ -571,8 +650,23 @@ emaChopBlocked = emaChopFilterMode == "EMA Compression" ? emaClusterCompression 
 longEmaChopBlocked = emaChopBlocked
 shortEmaChopBlocked = emaChopBlocked
 
-longFinalEmaClosePass = close > ema20 and close > ema50 and (not requireCloseBeyondFastEma or close > ema9)
-shortFinalEmaClosePass = close < ema20 and close < ema50 and (not requireCloseBeyondFastEma or close < ema9)
+twentyEmaCloseSideFlipCount = f_closeSideFlipCount(ema20, twentyEmaCrossChopLookbackBars)
+twentyEmaBarTouchCount = f_barTouchCount(ema20, twentyEmaCrossChopLookbackBars)
+twentyEmaCrossChopEventCount = twentyEmaCrossChopMode == "Close Side Flips" ? twentyEmaCloseSideFlipCount : twentyEmaCrossChopMode == "Bar Touches" ? twentyEmaBarTouchCount : math.max(twentyEmaCloseSideFlipCount, twentyEmaBarTouchCount)
+twentyEmaCrossChopBlocked = useTwentyEmaCrossChopFilter and twentyEmaCrossChopEventCount >= twentyEmaCrossChopMaxEvents
+
+longTouchedEma9ForClose = f_recentEmaTouched(ema9, emaTouchedCloseLookbackBars)
+longTouchedEma20ForClose = f_recentEmaTouched(ema20, emaTouchedCloseLookbackBars)
+longTouchedEma50ForClose = f_recentEmaTouched(ema50, emaTouchedCloseLookbackBars)
+shortTouchedEma9ForClose = longTouchedEma9ForClose
+shortTouchedEma20ForClose = longTouchedEma20ForClose
+shortTouchedEma50ForClose = longTouchedEma50ForClose
+longCloseBeyondAllRequiredEmas = close > ema20 and close > ema50 and (not requireCloseBeyondFastEma or close > ema9)
+shortCloseBeyondAllRequiredEmas = close < ema20 and close < ema50 and (not requireCloseBeyondFastEma or close < ema9)
+longCloseBeyondTouchedEmasOnly = (not longTouchedEma20ForClose or close > ema20) and (not longTouchedEma50ForClose or close > ema50) and (not requireCloseBeyondFastEma or not longTouchedEma9ForClose or close > ema9)
+shortCloseBeyondTouchedEmasOnly = (not shortTouchedEma20ForClose or close < ema20) and (not shortTouchedEma50ForClose or close < ema50) and (not requireCloseBeyondFastEma or not shortTouchedEma9ForClose or close < ema9)
+longFinalEmaClosePass = emaCloseRequirementMode == "Close Beyond All Required EMAs" ? longCloseBeyondAllRequiredEmas : longCloseBeyondTouchedEmasOnly
+shortFinalEmaClosePass = emaCloseRequirementMode == "Close Beyond All Required EMAs" ? shortCloseBeyondAllRequiredEmas : shortCloseBeyondTouchedEmasOnly
 longFastEmaStackPass = not requireFastEmaBeyondMidEma or f_geWithTolerance(ema9, ema20)
 shortFastEmaStackPass = not requireFastEmaBeyondMidEma or f_leWithTolerance(ema9, ema20)
 longFastSlowEmaStackPass = not requireFastEmaBeyondSlowEma or f_geWithTolerance(ema9, ema50)
@@ -581,8 +675,8 @@ longMidSlowEmaStackPass = not requireMidEmaBeyondSlowEma or f_geWithTolerance(em
 shortMidSlowEmaStackPass = not requireMidEmaBeyondSlowEma or f_leWithTolerance(ema20, ema50)
 longEmaSlopePass = not useEmaSlopeFilter or midEmaSlope >= minMidEmaSlopePoints
 shortEmaSlopePass = not useEmaSlopeFilter or midEmaSlope <= -minMidEmaSlopePoints
-longContextPass = longEmaSlopePass and longFastEmaStackPass and longFastSlowEmaStackPass and longMidSlowEmaStackPass and not longEmaChopBlocked
-shortContextPass = shortEmaSlopePass and shortFastEmaStackPass and shortFastSlowEmaStackPass and shortMidSlowEmaStackPass and not shortEmaChopBlocked
+longContextPass = longEmaSlopePass and longFastEmaStackPass and longFastSlowEmaStackPass and longMidSlowEmaStackPass and not longEmaChopBlocked and not twentyEmaCrossChopBlocked
+shortContextPass = shortEmaSlopePass and shortFastEmaStackPass and shortFastSlowEmaStackPass and shortMidSlowEmaStackPass and not shortEmaChopBlocked and not twentyEmaCrossChopBlocked
 longTrendPass = longContextPass and longFinalEmaClosePass
 shortTrendPass = shortContextPass and shortFinalEmaClosePass
 
@@ -691,15 +785,68 @@ if barstate.isconfirmed and inRthSession and openingRangeComplete and not inOpen
 longOpeningRangeBiasPass = not useOpeningRangeBiasFilter or openingRangeBullishCloseCount >= requiredOpeningRangeBreakoutCloses
 shortOpeningRangeBiasPass = not useOpeningRangeBiasFilter or openingRangeBearishCloseCount >= requiredOpeningRangeBreakoutCloses
 
-activePrevDayHigh = usePrevDayHighLevel and f_validLevel(effectivePrevDayHigh) ? effectivePrevDayHigh : na
-activePrevDayLow = usePrevDayLowLevel and f_validLevel(effectivePrevDayLow) ? effectivePrevDayLow : na
-activeRthOpen = useRthOpenLevel and f_validLevel(autoRthOpen) ? autoRthOpen : na
-activePremarketHigh = usePremarketHighLevel and f_validLevel(finalizedPremarketHigh) ? finalizedPremarketHigh : na
-activePremarketLow = usePremarketLowLevel and f_validLevel(finalizedPremarketLow) ? finalizedPremarketLow : na
-activeOpeningRangeHigh = useOpeningRangeLevelsForEntries and useOpeningRangeHighLevel and openingRangeComplete and f_validLevel(openingRangeHigh) ? openingRangeHigh : na
-activeOpeningRangeLow = useOpeningRangeLevelsForEntries and useOpeningRangeLowLevel and openingRangeComplete and f_validLevel(openingRangeLow) ? openingRangeLow : na
+// Base levels are calculated/displayed independently from their entry/blocker roles.
+basePrevDayHigh = usePrevDayHighLevel and f_validLevel(effectivePrevDayHigh) ? effectivePrevDayHigh : na
+basePrevDayLow = usePrevDayLowLevel and f_validLevel(effectivePrevDayLow) ? effectivePrevDayLow : na
+baseRthOpen = useRthOpenLevel and f_validLevel(autoRthOpen) ? autoRthOpen : na
+basePremarketHigh = usePremarketHighLevel and f_validLevel(finalizedPremarketHigh) ? finalizedPremarketHigh : na
+basePremarketLow = usePremarketLowLevel and f_validLevel(finalizedPremarketLow) ? finalizedPremarketLow : na
+baseOpeningRangeHigh = useOpeningRangeLevelsForEntries and useOpeningRangeHighLevel and openingRangeComplete and f_validLevel(openingRangeHigh) ? openingRangeHigh : na
+baseOpeningRangeLow = useOpeningRangeLevelsForEntries and useOpeningRangeLowLevel and openingRangeComplete and f_validLevel(openingRangeLow) ? openingRangeLow : na
+
+entryPrevDayHigh = usePdhAsContinuationEntry ? basePrevDayHigh : na
+entryPrevDayLow = usePdlAsContinuationEntry ? basePrevDayLow : na
+entryRthOpen = useRthOpenAsContinuationEntry ? baseRthOpen : na
+entryPremarketHigh = usePmhAsContinuationEntry ? basePremarketHigh : na
+entryPremarketLow = usePmlAsContinuationEntry ? basePremarketLow : na
+entryOpeningRangeHigh = useOrhAsContinuationEntry ? baseOpeningRangeHigh : na
+entryOpeningRangeLow = useOrlAsContinuationEntry ? baseOpeningRangeLow : na
+
+blockerPrevDayHigh = usePdhAsBlocker ? basePrevDayHigh : na
+blockerPrevDayLow = usePdlAsBlocker ? basePrevDayLow : na
+blockerRthOpen = useRthOpenAsBlocker ? baseRthOpen : na
+blockerPremarketHigh = usePmhAsBlocker ? basePremarketHigh : na
+blockerPremarketLow = usePmlAsBlocker ? basePremarketLow : na
+blockerOpeningRangeHigh = useOrhAsBlocker ? baseOpeningRangeHigh : na
+blockerOpeningRangeLow = useOrlAsBlocker ? baseOpeningRangeLow : na
+
+activePrevDayHigh = basePrevDayHigh
+activePrevDayLow = basePrevDayLow
+activeRthOpen = baseRthOpen
+activePremarketHigh = basePremarketHigh
+activePremarketLow = basePremarketLow
+activeOpeningRangeHigh = baseOpeningRangeHigh
+activeOpeningRangeLow = baseOpeningRangeLow
 openingRangeDisplayHigh = openingRangeComplete and f_validLevel(openingRangeHigh) ? openingRangeHigh : na
 openingRangeDisplayLow = openingRangeComplete and f_validLevel(openingRangeLow) ? openingRangeLow : na
+
+f_longHasNearbyOverheadBlocker(float _entry, float _riskPoints, float _atr) =>
+    float threshold = f_badLevelBlockDistance(_riskPoints, _atr)
+    bool valid = useBadLevelContinuationBlocker and not na(_entry) and not na(threshold) and threshold > 0
+    bool blocked = false
+    if valid
+        blocked := blocked or (not na(blockerPrevDayHigh) and blockerPrevDayHigh > _entry + f_priceTolerance() and blockerPrevDayHigh - _entry <= threshold)
+        blocked := blocked or (not na(blockerPrevDayLow) and blockerPrevDayLow > _entry + f_priceTolerance() and blockerPrevDayLow - _entry <= threshold)
+        blocked := blocked or (not na(blockerRthOpen) and blockerRthOpen > _entry + f_priceTolerance() and blockerRthOpen - _entry <= threshold)
+        blocked := blocked or (not na(blockerPremarketHigh) and blockerPremarketHigh > _entry + f_priceTolerance() and blockerPremarketHigh - _entry <= threshold)
+        blocked := blocked or (not na(blockerPremarketLow) and blockerPremarketLow > _entry + f_priceTolerance() and blockerPremarketLow - _entry <= threshold)
+        blocked := blocked or (not na(blockerOpeningRangeHigh) and blockerOpeningRangeHigh > _entry + f_priceTolerance() and blockerOpeningRangeHigh - _entry <= threshold)
+        blocked := blocked or (not na(blockerOpeningRangeLow) and blockerOpeningRangeLow > _entry + f_priceTolerance() and blockerOpeningRangeLow - _entry <= threshold)
+    blocked
+
+f_shortHasNearbyDownsideBlocker(float _entry, float _riskPoints, float _atr) =>
+    float threshold = f_badLevelBlockDistance(_riskPoints, _atr)
+    bool valid = useBadLevelContinuationBlocker and not na(_entry) and not na(threshold) and threshold > 0
+    bool blocked = false
+    if valid
+        blocked := blocked or (not na(blockerPrevDayHigh) and blockerPrevDayHigh < _entry - f_priceTolerance() and _entry - blockerPrevDayHigh <= threshold)
+        blocked := blocked or (not na(blockerPrevDayLow) and blockerPrevDayLow < _entry - f_priceTolerance() and _entry - blockerPrevDayLow <= threshold)
+        blocked := blocked or (not na(blockerRthOpen) and blockerRthOpen < _entry - f_priceTolerance() and _entry - blockerRthOpen <= threshold)
+        blocked := blocked or (not na(blockerPremarketHigh) and blockerPremarketHigh < _entry - f_priceTolerance() and _entry - blockerPremarketHigh <= threshold)
+        blocked := blocked or (not na(blockerPremarketLow) and blockerPremarketLow < _entry - f_priceTolerance() and _entry - blockerPremarketLow <= threshold)
+        blocked := blocked or (not na(blockerOpeningRangeHigh) and blockerOpeningRangeHigh < _entry - f_priceTolerance() and _entry - blockerOpeningRangeHigh <= threshold)
+        blocked := blocked or (not na(blockerOpeningRangeLow) and blockerOpeningRangeLow < _entry - f_priceTolerance() and _entry - blockerOpeningRangeLow <= threshold)
+    blocked
 
 // ===================== Location Filter =====================
 
@@ -712,37 +859,37 @@ shortTouchedEma9 = useEmaLocation and allowFastEmaLocation and f_recentDirection
 shortTouchedEma20 = useEmaLocation and f_recentDirectionalSeriesInteraction(ema20, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
 shortTouchedEma50 = useEmaLocation and f_recentDirectionalSeriesInteraction(ema50, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
 
-longTouchedOrh = useLevelLocation and f_recentDirectionalStaticInteraction(activeOpeningRangeHigh, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
-longTouchedOrl = useLevelLocation and f_recentDirectionalStaticInteraction(activeOpeningRangeLow, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
-longTouchedPdh = useLevelLocation and f_recentDirectionalStaticInteraction(activePrevDayHigh, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
-longTouchedPdl = useLevelLocation and f_recentDirectionalStaticInteraction(activePrevDayLow, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
-longTouchedPmh = useLevelLocation and f_recentDirectionalStaticInteraction(activePremarketHigh, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
-longTouchedPml = useLevelLocation and f_recentDirectionalStaticInteraction(activePremarketLow, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
-longTouchedRthOpen = useLevelLocation and f_recentDirectionalStaticInteraction(activeRthOpen, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
+longTouchedOrh = useLevelLocation and f_recentDirectionalStaticInteraction(entryOpeningRangeHigh, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
+longTouchedOrl = useLevelLocation and f_recentDirectionalStaticInteraction(entryOpeningRangeLow, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
+longTouchedPdh = useLevelLocation and f_recentDirectionalStaticInteraction(entryPrevDayHigh, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
+longTouchedPdl = useLevelLocation and f_recentDirectionalStaticInteraction(entryPrevDayLow, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
+longTouchedPmh = useLevelLocation and f_recentDirectionalStaticInteraction(entryPremarketHigh, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
+longTouchedPml = useLevelLocation and f_recentDirectionalStaticInteraction(entryPremarketLow, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
+longTouchedRthOpen = useLevelLocation and f_recentDirectionalStaticInteraction(entryRthOpen, locationLookbackBars, atrValue, proximityAtrMultiplier, true)
 
-shortTouchedOrh = useLevelLocation and f_recentDirectionalStaticInteraction(activeOpeningRangeHigh, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
-shortTouchedOrl = useLevelLocation and f_recentDirectionalStaticInteraction(activeOpeningRangeLow, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
-shortTouchedPdh = useLevelLocation and f_recentDirectionalStaticInteraction(activePrevDayHigh, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
-shortTouchedPdl = useLevelLocation and f_recentDirectionalStaticInteraction(activePrevDayLow, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
-shortTouchedPmh = useLevelLocation and f_recentDirectionalStaticInteraction(activePremarketHigh, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
-shortTouchedPml = useLevelLocation and f_recentDirectionalStaticInteraction(activePremarketLow, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
-shortTouchedRthOpen = useLevelLocation and f_recentDirectionalStaticInteraction(activeRthOpen, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
+shortTouchedOrh = useLevelLocation and f_recentDirectionalStaticInteraction(entryOpeningRangeHigh, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
+shortTouchedOrl = useLevelLocation and f_recentDirectionalStaticInteraction(entryOpeningRangeLow, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
+shortTouchedPdh = useLevelLocation and f_recentDirectionalStaticInteraction(entryPrevDayHigh, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
+shortTouchedPdl = useLevelLocation and f_recentDirectionalStaticInteraction(entryPrevDayLow, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
+shortTouchedPmh = useLevelLocation and f_recentDirectionalStaticInteraction(entryPremarketHigh, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
+shortTouchedPml = useLevelLocation and f_recentDirectionalStaticInteraction(entryPremarketLow, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
+shortTouchedRthOpen = useLevelLocation and f_recentDirectionalStaticInteraction(entryRthOpen, locationLookbackBars, atrValue, proximityAtrMultiplier, false)
 
-longCleanRetestOrh = useLevelLocation and f_cleanLongLevelRetest(activeOpeningRangeHigh)
-longCleanRetestOrl = useLevelLocation and f_cleanLongLevelRetest(activeOpeningRangeLow)
-longCleanRetestPdh = useLevelLocation and f_cleanLongLevelRetest(activePrevDayHigh)
-longCleanRetestPdl = useLevelLocation and f_cleanLongLevelRetest(activePrevDayLow)
-longCleanRetestPmh = useLevelLocation and f_cleanLongLevelRetest(activePremarketHigh)
-longCleanRetestPml = useLevelLocation and f_cleanLongLevelRetest(activePremarketLow)
-longCleanRetestRthOpen = useLevelLocation and f_cleanLongLevelRetest(activeRthOpen)
+longCleanRetestOrh = useLevelLocation and f_cleanLongLevelRetest(entryOpeningRangeHigh)
+longCleanRetestOrl = useLevelLocation and f_cleanLongLevelRetest(entryOpeningRangeLow)
+longCleanRetestPdh = useLevelLocation and f_cleanLongLevelRetest(entryPrevDayHigh)
+longCleanRetestPdl = useLevelLocation and f_cleanLongLevelRetest(entryPrevDayLow)
+longCleanRetestPmh = useLevelLocation and f_cleanLongLevelRetest(entryPremarketHigh)
+longCleanRetestPml = useLevelLocation and f_cleanLongLevelRetest(entryPremarketLow)
+longCleanRetestRthOpen = useLevelLocation and f_cleanLongLevelRetest(entryRthOpen)
 
-shortCleanRetestOrh = useLevelLocation and f_cleanShortLevelRetest(activeOpeningRangeHigh)
-shortCleanRetestOrl = useLevelLocation and f_cleanShortLevelRetest(activeOpeningRangeLow)
-shortCleanRetestPdh = useLevelLocation and f_cleanShortLevelRetest(activePrevDayHigh)
-shortCleanRetestPdl = useLevelLocation and f_cleanShortLevelRetest(activePrevDayLow)
-shortCleanRetestPmh = useLevelLocation and f_cleanShortLevelRetest(activePremarketHigh)
-shortCleanRetestPml = useLevelLocation and f_cleanShortLevelRetest(activePremarketLow)
-shortCleanRetestRthOpen = useLevelLocation and f_cleanShortLevelRetest(activeRthOpen)
+shortCleanRetestOrh = useLevelLocation and f_cleanShortLevelRetest(entryOpeningRangeHigh)
+shortCleanRetestOrl = useLevelLocation and f_cleanShortLevelRetest(entryOpeningRangeLow)
+shortCleanRetestPdh = useLevelLocation and f_cleanShortLevelRetest(entryPrevDayHigh)
+shortCleanRetestPdl = useLevelLocation and f_cleanShortLevelRetest(entryPrevDayLow)
+shortCleanRetestPmh = useLevelLocation and f_cleanShortLevelRetest(entryPremarketHigh)
+shortCleanRetestPml = useLevelLocation and f_cleanShortLevelRetest(entryPremarketLow)
+shortCleanRetestRthOpen = useLevelLocation and f_cleanShortLevelRetest(entryRthOpen)
 
 longLevelLocationOrhPass = longTouchedOrh and longCleanRetestOrh
 longLevelLocationOrlPass = longTouchedOrl and longCleanRetestOrl
@@ -775,8 +922,8 @@ shortEmaLocationPass = useEmaLocation and (shortTouchedEma20 or shortTouchedEma5
 longLocationPass = longEmaLocationPass or (useLevelLocation and longLevelLocationPass)
 shortLocationPass = shortEmaLocationPass or (useLevelLocation and shortLevelLocationPass)
 
-longTouchedAcceptancePass = f_longCloseBeyondTouchedSeries(ema9) and f_longCloseBeyondTouchedSeries(ema20) and f_longCloseBeyondTouchedSeries(ema50) and f_longCloseBeyondTouchedPrice(activeOpeningRangeHigh) and f_longCloseBeyondTouchedPrice(activeOpeningRangeLow) and f_longCloseBeyondTouchedPrice(activePrevDayHigh) and f_longCloseBeyondTouchedPrice(activePrevDayLow) and f_longCloseBeyondTouchedPrice(activePremarketHigh) and f_longCloseBeyondTouchedPrice(activePremarketLow) and f_longCloseBeyondTouchedPrice(activeRthOpen)
-shortTouchedAcceptancePass = f_shortCloseBeyondTouchedSeries(ema9) and f_shortCloseBeyondTouchedSeries(ema20) and f_shortCloseBeyondTouchedSeries(ema50) and f_shortCloseBeyondTouchedPrice(activeOpeningRangeHigh) and f_shortCloseBeyondTouchedPrice(activeOpeningRangeLow) and f_shortCloseBeyondTouchedPrice(activePrevDayHigh) and f_shortCloseBeyondTouchedPrice(activePrevDayLow) and f_shortCloseBeyondTouchedPrice(activePremarketHigh) and f_shortCloseBeyondTouchedPrice(activePremarketLow) and f_shortCloseBeyondTouchedPrice(activeRthOpen)
+longTouchedAcceptancePass = f_longCloseBeyondTouchedSeries(ema9) and f_longCloseBeyondTouchedSeries(ema20) and f_longCloseBeyondTouchedSeries(ema50) and f_longCloseBeyondTouchedPrice(blockerOpeningRangeHigh) and f_longCloseBeyondTouchedPrice(blockerOpeningRangeLow) and f_longCloseBeyondTouchedPrice(blockerPrevDayHigh) and f_longCloseBeyondTouchedPrice(blockerPrevDayLow) and f_longCloseBeyondTouchedPrice(blockerPremarketHigh) and f_longCloseBeyondTouchedPrice(blockerPremarketLow) and f_longCloseBeyondTouchedPrice(blockerRthOpen)
+shortTouchedAcceptancePass = f_shortCloseBeyondTouchedSeries(ema9) and f_shortCloseBeyondTouchedSeries(ema20) and f_shortCloseBeyondTouchedSeries(ema50) and f_shortCloseBeyondTouchedPrice(blockerOpeningRangeHigh) and f_shortCloseBeyondTouchedPrice(blockerOpeningRangeLow) and f_shortCloseBeyondTouchedPrice(blockerPrevDayHigh) and f_shortCloseBeyondTouchedPrice(blockerPrevDayLow) and f_shortCloseBeyondTouchedPrice(blockerPremarketHigh) and f_shortCloseBeyondTouchedPrice(blockerPremarketLow) and f_shortCloseBeyondTouchedPrice(blockerRthOpen)
 
 // ===================== Stop, Risk, and Target Calculations =====================
 
@@ -821,16 +968,22 @@ var float longPendingEntry = na
 var float longPendingStop = na
 var float longPendingTarget = na
 var float longPendingRisk = na
+var float longPendingRiskDollars = na
 var float longPendingOneRTarget = na
 var float shortPendingEntry = na
 var float shortPendingStop = na
 var float shortPendingTarget = na
 var float shortPendingRisk = na
+var float shortPendingRiskDollars = na
 var float shortPendingOneRTarget = na
 var int longPendingContracts = na
 var int shortPendingContracts = na
 var string longPendingLocation = "N/A"
 var string shortPendingLocation = "N/A"
+var string longPendingSetupType = "N/A"
+var string shortPendingSetupType = "N/A"
+var string longPendingEntryMode = "N/A"
+var string shortPendingEntryMode = "N/A"
 var float activeLongStop = na
 var float activeLongTarget = na
 var float activeShortStop = na
@@ -872,6 +1025,193 @@ var float pendingShortPullbackSwingHigh = na
 var string pendingLongDelayedLocation = "N/A"
 var string pendingShortDelayedLocation = "N/A"
 var string lastSignalReason = "Waiting"
+
+// MFE/MAE analytics is a diagnostic layer only. It does not feed signal,
+// sizing, cancellation, or exit logic unless explicitly wired in later.
+var int activeExcursionDirection = 0
+var float activeExcursionEntry = na
+var float activeExcursionStop = na
+var float activeExcursionRisk = na
+var float activeExcursionMfeR = na
+var float activeExcursionMaeR = na
+var float activeExcursionHigh = na
+var float activeExcursionLow = na
+var int activeExcursionEntryBar = na
+var string activeExcursionSetupType = "N/A"
+var string activeExcursionLocation = "N/A"
+var string activeExcursionEntryMode = "N/A"
+var float activeExcursionRiskDollars = na
+
+var int excursionProcessedClosedTradesCount = 0
+var int excursionClosedTradeRecordsSeen = 0
+var int excursionFallbackRiskTrades = 0
+var int excursionActiveMetadataTrades = 0
+var int excursionFallbackMetadataTrades = 0
+var int excursionCompletedTrades = 0
+var int excursionInvalidTrades = 0
+var float excursionSumMfeR = 0.0
+var float excursionSumMaeR = 0.0
+var float excursionSumFinalExitR = 0.0
+var float excursionSumBarsHeld = 0.0
+var int excursionHitMfe05 = 0
+var int excursionHitMfe10 = 0
+var int excursionHitMfe125 = 0
+var int excursionHitMfe15 = 0
+var int excursionHitMfe20 = 0
+var int excursionHitMfe25 = 0
+var int excursionHitMfe30 = 0
+var int excursionHitMfe40 = 0
+var int excursionHitMae05 = 0
+var int excursionHitMae10 = 0
+var int excursionMfe10To15 = 0
+var int excursionMfe15To20 = 0
+var int excursionMfe20To30 = 0
+var int excursionMfe30Plus = 0
+
+var int excursionLongCount = 0
+var float excursionLongSumMfeR = 0.0
+var float excursionLongSumMaeR = 0.0
+var float excursionLongSumFinalExitR = 0.0
+var int excursionLongHit10 = 0
+var int excursionLongHit15 = 0
+var int excursionLongHit20 = 0
+var int excursionLongHit30 = 0
+var int excursionShortCount = 0
+var float excursionShortSumMfeR = 0.0
+var float excursionShortSumMaeR = 0.0
+var float excursionShortSumFinalExitR = 0.0
+var int excursionShortHit10 = 0
+var int excursionShortHit15 = 0
+var int excursionShortHit20 = 0
+var int excursionShortHit30 = 0
+
+var int excursionStdCount = 0
+var float excursionStdSumMfeR = 0.0
+var float excursionStdSumMaeR = 0.0
+var float excursionStdSumFinalExitR = 0.0
+var int excursionStdHit10 = 0
+var int excursionStdHit15 = 0
+var int excursionStdHit20 = 0
+var int excursionStdHit30 = 0
+var int excursionFiftyCount = 0
+var float excursionFiftySumMfeR = 0.0
+var float excursionFiftySumMaeR = 0.0
+var float excursionFiftySumFinalExitR = 0.0
+var int excursionFiftyHit10 = 0
+var int excursionFiftyHit15 = 0
+var int excursionFiftyHit20 = 0
+var int excursionFiftyHit30 = 0
+var int excursionSetupNaCount = 0
+var float excursionSetupNaSumMfeR = 0.0
+var float excursionSetupNaSumMaeR = 0.0
+var float excursionSetupNaSumFinalExitR = 0.0
+var int excursionSetupNaHit10 = 0
+var int excursionSetupNaHit15 = 0
+var int excursionSetupNaHit20 = 0
+var int excursionSetupNaHit30 = 0
+
+var int excursionImmediateCount = 0
+var float excursionImmediateSumMfeR = 0.0
+var float excursionImmediateSumMaeR = 0.0
+var float excursionImmediateSumFinalExitR = 0.0
+var int excursionImmediateHit10 = 0
+var int excursionImmediateHit15 = 0
+var int excursionImmediateHit20 = 0
+var int excursionImmediateHit30 = 0
+var int excursionDelayedCount = 0
+var float excursionDelayedSumMfeR = 0.0
+var float excursionDelayedSumMaeR = 0.0
+var float excursionDelayedSumFinalExitR = 0.0
+var int excursionDelayedHit10 = 0
+var int excursionDelayedHit15 = 0
+var int excursionDelayedHit20 = 0
+var int excursionDelayedHit30 = 0
+var int excursionEntryNaCount = 0
+var float excursionEntryNaSumMfeR = 0.0
+var float excursionEntryNaSumMaeR = 0.0
+var float excursionEntryNaSumFinalExitR = 0.0
+var int excursionEntryNaHit10 = 0
+var int excursionEntryNaHit15 = 0
+var int excursionEntryNaHit20 = 0
+var int excursionEntryNaHit30 = 0
+
+var int loc9Count = 0
+var float loc9SumMfeR = 0.0
+var float loc9SumMaeR = 0.0
+var float loc9SumFinalExitR = 0.0
+var int loc9Hit10 = 0
+var int loc9Hit15 = 0
+var int loc9Hit20 = 0
+var int loc20Count = 0
+var float loc20SumMfeR = 0.0
+var float loc20SumMaeR = 0.0
+var float loc20SumFinalExitR = 0.0
+var int loc20Hit10 = 0
+var int loc20Hit15 = 0
+var int loc20Hit20 = 0
+var int loc50Count = 0
+var float loc50SumMfeR = 0.0
+var float loc50SumMaeR = 0.0
+var float loc50SumFinalExitR = 0.0
+var int loc50Hit10 = 0
+var int loc50Hit15 = 0
+var int loc50Hit20 = 0
+var int locOrhCount = 0
+var float locOrhSumMfeR = 0.0
+var float locOrhSumMaeR = 0.0
+var float locOrhSumFinalExitR = 0.0
+var int locOrhHit10 = 0
+var int locOrhHit15 = 0
+var int locOrhHit20 = 0
+var int locOrlCount = 0
+var float locOrlSumMfeR = 0.0
+var float locOrlSumMaeR = 0.0
+var float locOrlSumFinalExitR = 0.0
+var int locOrlHit10 = 0
+var int locOrlHit15 = 0
+var int locOrlHit20 = 0
+var int locPdhCount = 0
+var float locPdhSumMfeR = 0.0
+var float locPdhSumMaeR = 0.0
+var float locPdhSumFinalExitR = 0.0
+var int locPdhHit10 = 0
+var int locPdhHit15 = 0
+var int locPdhHit20 = 0
+var int locPdlCount = 0
+var float locPdlSumMfeR = 0.0
+var float locPdlSumMaeR = 0.0
+var float locPdlSumFinalExitR = 0.0
+var int locPdlHit10 = 0
+var int locPdlHit15 = 0
+var int locPdlHit20 = 0
+var int locPmhCount = 0
+var float locPmhSumMfeR = 0.0
+var float locPmhSumMaeR = 0.0
+var float locPmhSumFinalExitR = 0.0
+var int locPmhHit10 = 0
+var int locPmhHit15 = 0
+var int locPmhHit20 = 0
+var int locPmlCount = 0
+var float locPmlSumMfeR = 0.0
+var float locPmlSumMaeR = 0.0
+var float locPmlSumFinalExitR = 0.0
+var int locPmlHit10 = 0
+var int locPmlHit15 = 0
+var int locPmlHit20 = 0
+var int locRthOpenCount = 0
+var float locRthOpenSumMfeR = 0.0
+var float locRthOpenSumMaeR = 0.0
+var float locRthOpenSumFinalExitR = 0.0
+var int locRthOpenHit10 = 0
+var int locRthOpenHit15 = 0
+var int locRthOpenHit20 = 0
+var int locOtherCount = 0
+var float locOtherSumMfeR = 0.0
+var float locOtherSumMaeR = 0.0
+var float locOtherSumFinalExitR = 0.0
+var int locOtherHit10 = 0
+var int locOtherHit15 = 0
+var int locOtherHit20 = 0
 
 bool longSetupPlacedEvent = false
 bool shortSetupPlacedEvent = false
@@ -949,16 +1289,22 @@ if newRthSession and not (longFilledNow or shortFilledNow)
     longPendingStop := na
     longPendingTarget := na
     longPendingRisk := na
+    longPendingRiskDollars := na
     longPendingOneRTarget := na
     shortPendingEntry := na
     shortPendingStop := na
     shortPendingTarget := na
     shortPendingRisk := na
+    shortPendingRiskDollars := na
     shortPendingOneRTarget := na
     longPendingContracts := na
     shortPendingContracts := na
     longPendingLocation := "N/A"
     shortPendingLocation := "N/A"
+    longPendingSetupType := "N/A"
+    shortPendingSetupType := "N/A"
+    longPendingEntryMode := "N/A"
+    shortPendingEntryMode := "N/A"
     activeLongStop := na
     activeLongTarget := na
     activeShortStop := na
@@ -1017,16 +1363,22 @@ if pendingSessionResetNow
     longPendingStop := na
     longPendingTarget := na
     longPendingRisk := na
+    longPendingRiskDollars := na
     longPendingOneRTarget := na
     shortPendingEntry := na
     shortPendingStop := na
     shortPendingTarget := na
     shortPendingRisk := na
+    shortPendingRiskDollars := na
     shortPendingOneRTarget := na
     longPendingContracts := na
     shortPendingContracts := na
     longPendingLocation := "N/A"
     shortPendingLocation := "N/A"
+    longPendingSetupType := "N/A"
+    shortPendingSetupType := "N/A"
+    longPendingEntryMode := "N/A"
+    shortPendingEntryMode := "N/A"
     if hadPendingOnSessionReset
         lastSignalReason := "Pending cancelled: new session"
 
@@ -1059,6 +1411,20 @@ if longFilledNow
     activeShortFilledQty := na
     activeShortTrimQty := na
     activeShortRunnerQty := na
+    bool usePlannedLongExcursionBasis = excursionBasisMode == "Planned Entry / Planned Risk"
+    activeExcursionDirection := 1
+    activeExcursionEntry := usePlannedLongExcursionBasis ? activeLongEntry : activeLongAverageFillPrice
+    activeExcursionStop := activeLongStop
+    activeExcursionRisk := usePlannedLongExcursionBasis ? activeLongRisk : activeLongAverageFillPrice - activeLongStop
+    activeExcursionRiskDollars := activeLongRisk * math.abs(strategy.position_size) * pointValue
+    activeExcursionMfeR := 0.0
+    activeExcursionMaeR := 0.0
+    activeExcursionHigh := high
+    activeExcursionLow := low
+    activeExcursionEntryBar := bar_index
+    activeExcursionSetupType := longPendingSetupType
+    activeExcursionLocation := longPendingLocation
+    activeExcursionEntryMode := longPendingEntryMode
     if activeLongTrimManagementEligible
         strategy.cancel(LONG_EXIT_ID)
     longPendingOrder := false
@@ -1067,9 +1433,12 @@ if longFilledNow
     longPendingStop := na
     longPendingTarget := na
     longPendingRisk := na
+    longPendingRiskDollars := na
     longPendingOneRTarget := na
     longPendingContracts := na
     longPendingLocation := "N/A"
+    longPendingSetupType := "N/A"
+    longPendingEntryMode := "N/A"
     if shortPendingOrder
         strategy.cancel(SHORT_ENTRY_ID)
         shortPendingOrder := false
@@ -1078,9 +1447,12 @@ if longFilledNow
         shortPendingStop := na
         shortPendingTarget := na
         shortPendingRisk := na
+        shortPendingRiskDollars := na
         shortPendingOneRTarget := na
         shortPendingContracts := na
         shortPendingLocation := "N/A"
+        shortPendingSetupType := "N/A"
+        shortPendingEntryMode := "N/A"
     lastSignalReason := "Long filled"
     if showStrategyDebugLabels
         string longFillDebugText = activeLongTrimManagementEligible ? "L trim fill\nQty " + str.tostring(filledLongContracts) + " T " + str.tostring(activeLongTrimQty) + " R " + str.tostring(activeLongRunnerQty) + "\nPlan " + f_priceText(activeLongEntry) + " Avg " + f_priceText(activeLongAverageFillPrice) + "\nStop " + f_priceText(activeLongStop) + " 1R " + f_priceText(activeLongOneRTarget) + "\nFinal " + f_priceText(activeLongTarget) + "\nFixed exit cancelled TRUE" : "L fill\nPlan E " + f_priceText(activeLongEntry) + "\nAvg " + f_priceText(activeLongAverageFillPrice) + "\nStop " + f_priceText(activeLongStop) + "\n1R " + f_priceText(activeLongOneRTarget) + "\nQty " + str.tostring(filledLongContracts)
@@ -1113,6 +1485,20 @@ if shortFilledNow
     activeLongFilledQty := na
     activeLongTrimQty := na
     activeLongRunnerQty := na
+    bool usePlannedShortExcursionBasis = excursionBasisMode == "Planned Entry / Planned Risk"
+    activeExcursionDirection := -1
+    activeExcursionEntry := usePlannedShortExcursionBasis ? activeShortEntry : activeShortAverageFillPrice
+    activeExcursionStop := activeShortStop
+    activeExcursionRisk := usePlannedShortExcursionBasis ? activeShortRisk : activeShortStop - activeShortAverageFillPrice
+    activeExcursionRiskDollars := activeShortRisk * math.abs(strategy.position_size) * pointValue
+    activeExcursionMfeR := 0.0
+    activeExcursionMaeR := 0.0
+    activeExcursionHigh := high
+    activeExcursionLow := low
+    activeExcursionEntryBar := bar_index
+    activeExcursionSetupType := shortPendingSetupType
+    activeExcursionLocation := shortPendingLocation
+    activeExcursionEntryMode := shortPendingEntryMode
     if activeShortTrimManagementEligible
         strategy.cancel(SHORT_EXIT_ID)
     shortPendingOrder := false
@@ -1121,9 +1507,12 @@ if shortFilledNow
     shortPendingStop := na
     shortPendingTarget := na
     shortPendingRisk := na
+    shortPendingRiskDollars := na
     shortPendingOneRTarget := na
     shortPendingContracts := na
     shortPendingLocation := "N/A"
+    shortPendingSetupType := "N/A"
+    shortPendingEntryMode := "N/A"
     if longPendingOrder
         strategy.cancel(LONG_ENTRY_ID)
         longPendingOrder := false
@@ -1132,9 +1521,12 @@ if shortFilledNow
         longPendingStop := na
         longPendingTarget := na
         longPendingRisk := na
+        longPendingRiskDollars := na
         longPendingOneRTarget := na
         longPendingContracts := na
         longPendingLocation := "N/A"
+        longPendingSetupType := "N/A"
+        longPendingEntryMode := "N/A"
     lastSignalReason := "Short filled"
     if showStrategyDebugLabels
         string shortFillDebugText = activeShortTrimManagementEligible ? "S trim fill\nQty " + str.tostring(filledShortContracts) + " T " + str.tostring(activeShortTrimQty) + " R " + str.tostring(activeShortRunnerQty) + "\nPlan " + f_priceText(activeShortEntry) + " Avg " + f_priceText(activeShortAverageFillPrice) + "\nStop " + f_priceText(activeShortStop) + " 1R " + f_priceText(activeShortOneRTarget) + "\nFinal " + f_priceText(activeShortTarget) + "\nFixed exit cancelled TRUE" : "S fill\nPlan E " + f_priceText(activeShortEntry) + "\nAvg " + f_priceText(activeShortAverageFillPrice) + "\nStop " + f_priceText(activeShortStop) + "\n1R " + f_priceText(activeShortOneRTarget) + "\nQty " + str.tostring(filledShortContracts)
@@ -1164,6 +1556,18 @@ bool positionClosedNow = strategy.position_size == 0 and nz(strategy.position_si
 float lastClosedTradeExitPrice = na
 if positionClosedNow and strategy.closedtrades > 0
     lastClosedTradeExitPrice := strategy.closedtrades.exit_price(strategy.closedtrades - 1)
+
+bool validActiveExcursionRisk = not na(activeExcursionRisk) and activeExcursionRisk > 0 and not na(activeExcursionEntry)
+bool updateActiveExcursionNow = validActiveExcursionRisk and activeExcursionDirection != 0 and (strategy.position_size != 0 or positionClosedNow)
+if updateActiveExcursionNow
+    activeExcursionHigh := na(activeExcursionHigh) ? high : math.max(activeExcursionHigh, high)
+    activeExcursionLow := na(activeExcursionLow) ? low : math.min(activeExcursionLow, low)
+    if activeExcursionDirection == 1
+        activeExcursionMfeR := math.max(nz(activeExcursionMfeR, 0.0), math.max(0.0, (activeExcursionHigh - activeExcursionEntry) / activeExcursionRisk))
+        activeExcursionMaeR := math.max(nz(activeExcursionMaeR, 0.0), math.max(0.0, (activeExcursionEntry - activeExcursionLow) / activeExcursionRisk))
+    else if activeExcursionDirection == -1
+        activeExcursionMfeR := math.max(nz(activeExcursionMfeR, 0.0), math.max(0.0, (activeExcursionEntry - activeExcursionLow) / activeExcursionRisk))
+        activeExcursionMaeR := math.max(nz(activeExcursionMaeR, 0.0), math.max(0.0, (activeExcursionHigh - activeExcursionEntry) / activeExcursionRisk))
 int closedTradesSinceLastSync = strategy.closedtrades - trackedClosedTradesCount
 bool latestClosedWasLongTrim = positionClosedNow and strategy.closedtrades > 0 and strategy.closedtrades.exit_id(strategy.closedtrades - 1) == LONG_TRIM_EXIT_ID
 bool previousClosedWasLongTrim = positionClosedNow and closedTradesSinceLastSync >= 2 and strategy.closedtrades > 1 and strategy.closedtrades.exit_id(strategy.closedtrades - 2) == LONG_TRIM_EXIT_ID
@@ -1189,6 +1593,282 @@ if showStrategyDebugLabels and longFullExitAtOriginalStopAfterOneR
     label.new(bar_index, high, "ERROR: Full qty exited original stop after 1R\nQty " + str.tostring(activeLongFilledQty) + " Exit " + f_priceText(lastClosedTradeExitPrice) + "\nOld stop " + f_priceText(activeLongStop) + " BE stop " + f_priceText(activeLongRunnerStop), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.small)
 if showStrategyDebugLabels and shortFullExitAtOriginalStopAfterOneR
     label.new(bar_index, low, "ERROR: Full qty exited original stop after 1R\nQty " + str.tostring(activeShortFilledQty) + " Exit " + f_priceText(lastClosedTradeExitPrice) + "\nOld stop " + f_priceText(activeShortStop) + " BE stop " + f_priceText(activeShortRunnerStop), style=label.style_label_up, textcolor=color.white, color=color.new(color.red, 0), size=size.small)
+
+bool excursionClosedTradesIncreased = strategy.closedtrades > excursionProcessedClosedTradesCount
+if excursionClosedTradesIncreased
+    for tradeIndex = excursionProcessedClosedTradesCount to strategy.closedtrades - 1
+        string closedEntryId = strategy.closedtrades.entry_id(tradeIndex)
+        string closedExitId = strategy.closedtrades.exit_id(tradeIndex)
+        float closedEntryPrice = strategy.closedtrades.entry_price(tradeIndex)
+        float closedExitPrice = strategy.closedtrades.exit_price(tradeIndex)
+        float closedTradeSize = strategy.closedtrades.size(tradeIndex)
+        float closedAbsSize = math.abs(closedTradeSize)
+        float runupDollars = strategy.closedtrades.max_runup(tradeIndex)
+        float drawdownDollars = strategy.closedtrades.max_drawdown(tradeIndex)
+        float profitDollars = strategy.closedtrades.profit(tradeIndex)
+        int closedEntryBarIndex = strategy.closedtrades.entry_bar_index(tradeIndex)
+        int closedExitBarIndex = strategy.closedtrades.exit_bar_index(tradeIndex)
+        bool closedIsLong = closedTradeSize > 0 or closedEntryId == LONG_ENTRY_ID
+        bool closedIsShort = closedTradeSize < 0 or closedEntryId == SHORT_ENTRY_ID
+        int closedDirection = closedIsLong ? 1 : closedIsShort ? -1 : 0
+        float riskDollars = na
+        bool usedFallbackRisk = false
+
+        if activeExcursionDirection == closedDirection and not na(activeExcursionRiskDollars) and activeExcursionRiskDollars > 0
+            riskDollars := activeExcursionRiskDollars
+        else if closedIsLong and not na(longPendingRiskDollars) and longPendingRiskDollars > 0
+            riskDollars := longPendingRiskDollars
+        else if closedIsShort and not na(shortPendingRiskDollars) and shortPendingRiskDollars > 0
+            riskDollars := shortPendingRiskDollars
+        else if closedIsLong and not na(activeLongRisk) and activeLongRisk > 0
+            riskDollars := activeLongRisk * closedAbsSize * pointValue
+        else if closedIsShort and not na(activeShortRisk) and activeShortRisk > 0
+            riskDollars := activeShortRisk * closedAbsSize * pointValue
+        else if maxRiskDollars > 0
+            riskDollars := maxRiskDollars
+            usedFallbackRisk := true
+
+        if usedFallbackRisk
+            excursionFallbackRiskTrades += 1
+
+        bool activeMetadataReady = activeExcursionDirection == closedDirection and (activeExcursionSetupType != "N/A" or activeExcursionLocation != "N/A" or activeExcursionEntryMode != "N/A")
+        string rawSetupType = "N/A"
+        string rawLocation = "Other/N/A"
+        string rawEntryMode = "N/A"
+        if activeMetadataReady
+            rawSetupType := activeExcursionSetupType
+            rawLocation := activeExcursionLocation
+            rawEntryMode := activeExcursionEntryMode
+            excursionActiveMetadataTrades += 1
+        else
+            rawSetupType := closedIsLong ? longPendingSetupType : closedIsShort ? shortPendingSetupType : "N/A"
+            rawLocation := closedIsLong ? longPendingLocation : closedIsShort ? shortPendingLocation : "Other/N/A"
+            rawEntryMode := closedIsLong ? longPendingEntryMode : closedIsShort ? shortPendingEntryMode : "N/A"
+            excursionFallbackMetadataTrades += 1
+
+        bool validRiskDollars = not na(riskDollars) and riskDollars > 0
+        bool validClosedTradeStats = not na(runupDollars) and not na(drawdownDollars) and not na(profitDollars)
+        float closedMfeR = validRiskDollars and not na(runupDollars) ? math.max(0.0, runupDollars / riskDollars) : na
+        float closedMaeR = validRiskDollars and not na(drawdownDollars) ? math.max(0.0, drawdownDollars / riskDollars) : na
+        float closedFinalR = validRiskDollars and not na(profitDollars) ? profitDollars / riskDollars : na
+        int closedBarsHeld = not na(closedEntryBarIndex) and not na(closedExitBarIndex) ? closedExitBarIndex - closedEntryBarIndex + 1 : 0
+        bool validExcursionRecord = closedDirection != 0 and validRiskDollars and validClosedTradeStats and not na(closedMfeR) and not na(closedMaeR) and not na(closedFinalR)
+        string closedSetupType = rawSetupType == "STD" or rawSetupType == "50R" ? rawSetupType : "N/A"
+        string closedEntryMode = rawEntryMode == "Immediate" or rawEntryMode == "Delayed" ? rawEntryMode : "N/A"
+        string closedLocation = rawLocation == "9EMA" or rawLocation == "20EMA" or rawLocation == "50EMA" or rawLocation == "ORH" or rawLocation == "ORL" or rawLocation == "PDH" or rawLocation == "PDL" or rawLocation == "PMH" or rawLocation == "PML" or rawLocation == "RTH Open" ? rawLocation : "Other/N/A"
+
+        excursionClosedTradeRecordsSeen += 1
+
+        if validExcursionRecord
+            int hitMfe05 = closedMfeR >= 0.5 ? 1 : 0
+            int hitMfe10 = closedMfeR >= 1.0 ? 1 : 0
+            int hitMfe125 = closedMfeR >= 1.25 ? 1 : 0
+            int hitMfe15 = closedMfeR >= 1.5 ? 1 : 0
+            int hitMfe20 = closedMfeR >= 2.0 ? 1 : 0
+            int hitMfe25 = closedMfeR >= 2.5 ? 1 : 0
+            int hitMfe30 = closedMfeR >= 3.0 ? 1 : 0
+            int hitMfe40 = closedMfeR >= 4.0 ? 1 : 0
+            int hitMae05 = closedMaeR >= 0.5 ? 1 : 0
+            int hitMae10 = closedMaeR >= 1.0 ? 1 : 0
+
+            excursionCompletedTrades += 1
+            excursionSumMfeR += closedMfeR
+            excursionSumMaeR += closedMaeR
+            excursionSumFinalExitR += closedFinalR
+            excursionSumBarsHeld += closedBarsHeld * 1.0
+            excursionHitMfe05 += hitMfe05
+            excursionHitMfe10 += hitMfe10
+            excursionHitMfe125 += hitMfe125
+            excursionHitMfe15 += hitMfe15
+            excursionHitMfe20 += hitMfe20
+            excursionHitMfe25 += hitMfe25
+            excursionHitMfe30 += hitMfe30
+            excursionHitMfe40 += hitMfe40
+            excursionHitMae05 += hitMae05
+            excursionHitMae10 += hitMae10
+            excursionMfe10To15 += closedMfeR >= 1.0 and closedMfeR < 1.5 ? 1 : 0
+            excursionMfe15To20 += closedMfeR >= 1.5 and closedMfeR < 2.0 ? 1 : 0
+            excursionMfe20To30 += closedMfeR >= 2.0 and closedMfeR < 3.0 ? 1 : 0
+            excursionMfe30Plus += closedMfeR >= 3.0 ? 1 : 0
+
+            if closedDirection == 1
+                excursionLongCount += 1
+                excursionLongSumMfeR += closedMfeR
+                excursionLongSumMaeR += closedMaeR
+                excursionLongSumFinalExitR += closedFinalR
+                excursionLongHit10 += hitMfe10
+                excursionLongHit15 += hitMfe15
+                excursionLongHit20 += hitMfe20
+                excursionLongHit30 += hitMfe30
+            else
+                excursionShortCount += 1
+                excursionShortSumMfeR += closedMfeR
+                excursionShortSumMaeR += closedMaeR
+                excursionShortSumFinalExitR += closedFinalR
+                excursionShortHit10 += hitMfe10
+                excursionShortHit15 += hitMfe15
+                excursionShortHit20 += hitMfe20
+                excursionShortHit30 += hitMfe30
+
+            if closedSetupType == "STD"
+                excursionStdCount += 1
+                excursionStdSumMfeR += closedMfeR
+                excursionStdSumMaeR += closedMaeR
+                excursionStdSumFinalExitR += closedFinalR
+                excursionStdHit10 += hitMfe10
+                excursionStdHit15 += hitMfe15
+                excursionStdHit20 += hitMfe20
+                excursionStdHit30 += hitMfe30
+            else if closedSetupType == "50R"
+                excursionFiftyCount += 1
+                excursionFiftySumMfeR += closedMfeR
+                excursionFiftySumMaeR += closedMaeR
+                excursionFiftySumFinalExitR += closedFinalR
+                excursionFiftyHit10 += hitMfe10
+                excursionFiftyHit15 += hitMfe15
+                excursionFiftyHit20 += hitMfe20
+                excursionFiftyHit30 += hitMfe30
+            else
+                excursionSetupNaCount += 1
+                excursionSetupNaSumMfeR += closedMfeR
+                excursionSetupNaSumMaeR += closedMaeR
+                excursionSetupNaSumFinalExitR += closedFinalR
+                excursionSetupNaHit10 += hitMfe10
+                excursionSetupNaHit15 += hitMfe15
+                excursionSetupNaHit20 += hitMfe20
+                excursionSetupNaHit30 += hitMfe30
+
+            if closedEntryMode == "Immediate"
+                excursionImmediateCount += 1
+                excursionImmediateSumMfeR += closedMfeR
+                excursionImmediateSumMaeR += closedMaeR
+                excursionImmediateSumFinalExitR += closedFinalR
+                excursionImmediateHit10 += hitMfe10
+                excursionImmediateHit15 += hitMfe15
+                excursionImmediateHit20 += hitMfe20
+                excursionImmediateHit30 += hitMfe30
+            else if closedEntryMode == "Delayed"
+                excursionDelayedCount += 1
+                excursionDelayedSumMfeR += closedMfeR
+                excursionDelayedSumMaeR += closedMaeR
+                excursionDelayedSumFinalExitR += closedFinalR
+                excursionDelayedHit10 += hitMfe10
+                excursionDelayedHit15 += hitMfe15
+                excursionDelayedHit20 += hitMfe20
+                excursionDelayedHit30 += hitMfe30
+            else
+                excursionEntryNaCount += 1
+                excursionEntryNaSumMfeR += closedMfeR
+                excursionEntryNaSumMaeR += closedMaeR
+                excursionEntryNaSumFinalExitR += closedFinalR
+                excursionEntryNaHit10 += hitMfe10
+                excursionEntryNaHit15 += hitMfe15
+                excursionEntryNaHit20 += hitMfe20
+                excursionEntryNaHit30 += hitMfe30
+
+            if closedLocation == "9EMA"
+                loc9Count += 1
+                loc9SumMfeR += closedMfeR
+                loc9SumMaeR += closedMaeR
+                loc9SumFinalExitR += closedFinalR
+                loc9Hit10 += hitMfe10
+                loc9Hit15 += hitMfe15
+                loc9Hit20 += hitMfe20
+            else if closedLocation == "20EMA"
+                loc20Count += 1
+                loc20SumMfeR += closedMfeR
+                loc20SumMaeR += closedMaeR
+                loc20SumFinalExitR += closedFinalR
+                loc20Hit10 += hitMfe10
+                loc20Hit15 += hitMfe15
+                loc20Hit20 += hitMfe20
+            else if closedLocation == "50EMA"
+                loc50Count += 1
+                loc50SumMfeR += closedMfeR
+                loc50SumMaeR += closedMaeR
+                loc50SumFinalExitR += closedFinalR
+                loc50Hit10 += hitMfe10
+                loc50Hit15 += hitMfe15
+                loc50Hit20 += hitMfe20
+            else if closedLocation == "ORH"
+                locOrhCount += 1
+                locOrhSumMfeR += closedMfeR
+                locOrhSumMaeR += closedMaeR
+                locOrhSumFinalExitR += closedFinalR
+                locOrhHit10 += hitMfe10
+                locOrhHit15 += hitMfe15
+                locOrhHit20 += hitMfe20
+            else if closedLocation == "ORL"
+                locOrlCount += 1
+                locOrlSumMfeR += closedMfeR
+                locOrlSumMaeR += closedMaeR
+                locOrlSumFinalExitR += closedFinalR
+                locOrlHit10 += hitMfe10
+                locOrlHit15 += hitMfe15
+                locOrlHit20 += hitMfe20
+            else if closedLocation == "PDH"
+                locPdhCount += 1
+                locPdhSumMfeR += closedMfeR
+                locPdhSumMaeR += closedMaeR
+                locPdhSumFinalExitR += closedFinalR
+                locPdhHit10 += hitMfe10
+                locPdhHit15 += hitMfe15
+                locPdhHit20 += hitMfe20
+            else if closedLocation == "PDL"
+                locPdlCount += 1
+                locPdlSumMfeR += closedMfeR
+                locPdlSumMaeR += closedMaeR
+                locPdlSumFinalExitR += closedFinalR
+                locPdlHit10 += hitMfe10
+                locPdlHit15 += hitMfe15
+                locPdlHit20 += hitMfe20
+            else if closedLocation == "PMH"
+                locPmhCount += 1
+                locPmhSumMfeR += closedMfeR
+                locPmhSumMaeR += closedMaeR
+                locPmhSumFinalExitR += closedFinalR
+                locPmhHit10 += hitMfe10
+                locPmhHit15 += hitMfe15
+                locPmhHit20 += hitMfe20
+            else if closedLocation == "PML"
+                locPmlCount += 1
+                locPmlSumMfeR += closedMfeR
+                locPmlSumMaeR += closedMaeR
+                locPmlSumFinalExitR += closedFinalR
+                locPmlHit10 += hitMfe10
+                locPmlHit15 += hitMfe15
+                locPmlHit20 += hitMfe20
+            else if closedLocation == "RTH Open"
+                locRthOpenCount += 1
+                locRthOpenSumMfeR += closedMfeR
+                locRthOpenSumMaeR += closedMaeR
+                locRthOpenSumFinalExitR += closedFinalR
+                locRthOpenHit10 += hitMfe10
+                locRthOpenHit15 += hitMfe15
+                locRthOpenHit20 += hitMfe20
+            else
+                locOtherCount += 1
+                locOtherSumMfeR += closedMfeR
+                locOtherSumMaeR += closedMaeR
+                locOtherSumFinalExitR += closedFinalR
+                locOtherHit10 += hitMfe10
+                locOtherHit15 += hitMfe15
+                locOtherHit20 += hitMfe20
+
+            if showExcursionDebugLabels
+                string closedDirectionText = closedDirection == 1 ? "L" : "S"
+                string excursionLabelText = closedDirectionText + " " + closedSetupType + " " + closedLocation + "\n" +
+                 closedEntryMode + "\n" +
+                 "MFE " + f_rText(closedMfeR) + " / MAE " + f_rText(closedMaeR) + "\n" +
+                 "Final " + f_rText(closedFinalR) + " / Bars " + str.tostring(closedBarsHeld)
+                int labelBarIndex = not na(closedExitBarIndex) ? closedExitBarIndex : bar_index
+                float labelPrice = not na(closedExitPrice) ? closedExitPrice : close
+                label.new(labelBarIndex, labelPrice, excursionLabelText, style=closedDirection == 1 ? label.style_label_down : label.style_label_up, textcolor=color.white, color=color.new(color.gray, 15), size=size.tiny)
+        else if not validRiskDollars
+            excursionInvalidTrades += 1
+
+    excursionProcessedClosedTradesCount := strategy.closedtrades
+
 if positionClosedNow
     activeLongStop := na
     activeLongTarget := na
@@ -1218,6 +1898,20 @@ if positionClosedNow
     activeLongRunnerQty := na
     activeShortTrimQty := na
     activeShortRunnerQty := na
+    if excursionClosedTradesIncreased
+        activeExcursionDirection := 0
+        activeExcursionEntry := na
+        activeExcursionStop := na
+        activeExcursionRisk := na
+        activeExcursionRiskDollars := na
+        activeExcursionMfeR := na
+        activeExcursionMaeR := na
+        activeExcursionHigh := na
+        activeExcursionLow := na
+        activeExcursionEntryBar := na
+        activeExcursionSetupType := "N/A"
+        activeExcursionLocation := "N/A"
+        activeExcursionEntryMode := "N/A"
     if lastSignalReason != "RTH close flatten"
         lastSignalReason := "Position closed"
 
@@ -1238,16 +1932,22 @@ if closedTradeCountIncreased
         longPendingStop := na
         longPendingTarget := na
         longPendingRisk := na
+        longPendingRiskDollars := na
         longPendingOneRTarget := na
         shortPendingEntry := na
         shortPendingStop := na
         shortPendingTarget := na
         shortPendingRisk := na
+        shortPendingRiskDollars := na
         shortPendingOneRTarget := na
         longPendingContracts := na
         shortPendingContracts := na
         longPendingLocation := "N/A"
         shortPendingLocation := "N/A"
+        longPendingSetupType := "N/A"
+        shortPendingSetupType := "N/A"
+        longPendingEntryMode := "N/A"
+        shortPendingEntryMode := "N/A"
         pendingLongDelayedSetup := false
         pendingShortDelayedSetup := false
         pendingLongDelayedSetupBar := na
@@ -1288,6 +1988,19 @@ if closedTradeCountIncreased
         activeLongRunnerQty := na
         activeShortTrimQty := na
         activeShortRunnerQty := na
+        activeExcursionDirection := 0
+        activeExcursionEntry := na
+        activeExcursionStop := na
+        activeExcursionRisk := na
+        activeExcursionRiskDollars := na
+        activeExcursionMfeR := na
+        activeExcursionMaeR := na
+        activeExcursionHigh := na
+        activeExcursionLow := na
+        activeExcursionEntryBar := na
+        activeExcursionSetupType := "N/A"
+        activeExcursionLocation := "N/A"
+        activeExcursionEntryMode := "N/A"
         if lastSignalReason != "RTH close flatten"
             lastSignalReason := "Closed-trade sync"
 
@@ -1336,16 +2049,22 @@ if rthCloseFlattenNow
     longPendingStop := na
     longPendingTarget := na
     longPendingRisk := na
+    longPendingRiskDollars := na
     longPendingOneRTarget := na
     shortPendingEntry := na
     shortPendingStop := na
     shortPendingTarget := na
     shortPendingRisk := na
+    shortPendingRiskDollars := na
     shortPendingOneRTarget := na
     longPendingContracts := na
     shortPendingContracts := na
     longPendingLocation := "N/A"
     shortPendingLocation := "N/A"
+    longPendingSetupType := "N/A"
+    shortPendingSetupType := "N/A"
+    longPendingEntryMode := "N/A"
+    shortPendingEntryMode := "N/A"
     pendingLongDelayedSetup := false
     pendingShortDelayedSetup := false
     pendingLongDelayedSetupBar := na
@@ -1358,6 +2077,12 @@ if rthCloseFlattenNow
     pendingShortPullbackSwingHigh := na
     pendingLongDelayedLocation := "N/A"
     pendingShortDelayedLocation := "N/A"
+    if not longPendingOrder
+        longPendingSetupType := "N/A"
+        longPendingEntryMode := "N/A"
+    if not shortPendingOrder
+        shortPendingSetupType := "N/A"
+        shortPendingEntryMode := "N/A"
     lastSignalReason := "RTH close flatten"
 
 bool pendingInvalidOutsideWindowNow = barstate.isconfirmed and strategy.position_size == 0 and not allowPendingEntryFillsAfterWindow and not inAlertTradingWindow and (longPendingOrder or shortPendingOrder or pendingLongDelayedSetup or pendingShortDelayedSetup)
@@ -1400,16 +2125,22 @@ if pendingInvalidOutsideWindowNow
     longPendingStop := na
     longPendingTarget := na
     longPendingRisk := na
+    longPendingRiskDollars := na
     longPendingOneRTarget := na
     shortPendingEntry := na
     shortPendingStop := na
     shortPendingTarget := na
     shortPendingRisk := na
+    shortPendingRiskDollars := na
     shortPendingOneRTarget := na
     longPendingContracts := na
     shortPendingContracts := na
     longPendingLocation := "N/A"
     shortPendingLocation := "N/A"
+    longPendingSetupType := "N/A"
+    shortPendingSetupType := "N/A"
+    longPendingEntryMode := "N/A"
+    shortPendingEntryMode := "N/A"
     lastSignalReason := "Pending cancelled: outside alert window"
 
 // Cancellation logic: unfilled stop entries are cancelled after the configured
@@ -1418,6 +2149,9 @@ if pendingInvalidOutsideWindowNow
 if barstate.isconfirmed and strategy.position_size == 0
     if longPendingOrder and (na(longPendingSignalBar) or na(longPendingEntry) or na(longPendingStop))
         longPendingOrder := false
+        longPendingRiskDollars := na
+        longPendingSetupType := "N/A"
+        longPendingEntryMode := "N/A"
     if longPendingOrder and bar_index > longPendingSignalBar
         bool longEntryTouched = high >= longPendingEntry
         bool longStopTouched = low <= longPendingStop
@@ -1443,13 +2177,19 @@ if barstate.isconfirmed and strategy.position_size == 0
             longPendingStop := na
             longPendingTarget := na
             longPendingRisk := na
+            longPendingRiskDollars := na
             longPendingOneRTarget := na
             longPendingContracts := na
             longPendingLocation := "N/A"
+            longPendingSetupType := "N/A"
+            longPendingEntryMode := "N/A"
             lastSignalReason := "Long " + cancelReason
 
     if shortPendingOrder and (na(shortPendingSignalBar) or na(shortPendingEntry) or na(shortPendingStop))
         shortPendingOrder := false
+        shortPendingRiskDollars := na
+        shortPendingSetupType := "N/A"
+        shortPendingEntryMode := "N/A"
     if shortPendingOrder and bar_index > shortPendingSignalBar
         bool shortEntryTouched = low <= shortPendingEntry
         bool shortStopTouched = high >= shortPendingStop
@@ -1475,9 +2215,12 @@ if barstate.isconfirmed and strategy.position_size == 0
             shortPendingStop := na
             shortPendingTarget := na
             shortPendingRisk := na
+            shortPendingRiskDollars := na
             shortPendingOneRTarget := na
             shortPendingContracts := na
             shortPendingLocation := "N/A"
+            shortPendingSetupType := "N/A"
+            shortPendingEntryMode := "N/A"
             lastSignalReason := "Short " + cancelReason
 
 // ===================== Setup Evaluation =====================
@@ -1503,6 +2246,12 @@ if not delayedEntryMode
     pendingShortPullbackSwingHigh := na
     pendingLongDelayedLocation := "N/A"
     pendingShortDelayedLocation := "N/A"
+    if not longPendingOrder
+        longPendingSetupType := "N/A"
+        longPendingEntryMode := "N/A"
+    if not shortPendingOrder
+        shortPendingSetupType := "N/A"
+        shortPendingEntryMode := "N/A"
 
 bool longPullbackCandidateExpired = delayedEntryMode and pendingLongDelayedSetup and bar_index - pendingLongDelayedSetupBar > pullbackLookbackBars
 bool shortPullbackCandidateExpired = delayedEntryMode and pendingShortDelayedSetup and bar_index - pendingShortDelayedSetupBar > pullbackLookbackBars
@@ -1514,6 +2263,9 @@ if longPullbackCandidateExpired
     pendingLongDelayedBreakPrice := na
     pendingLongPullbackSwingLow := na
     pendingLongDelayedLocation := "N/A"
+    if not longPendingOrder
+        longPendingSetupType := "N/A"
+        longPendingEntryMode := "N/A"
 
 if shortPullbackCandidateExpired
     pendingShortDelayedSetup := false
@@ -1522,6 +2274,9 @@ if shortPullbackCandidateExpired
     pendingShortDelayedBreakPrice := na
     pendingShortPullbackSwingHigh := na
     pendingShortDelayedLocation := "N/A"
+    if not shortPendingOrder
+        shortPendingSetupType := "N/A"
+        shortPendingEntryMode := "N/A"
 
 bool longStoredPullbackCandidateActive = delayedEntryMode and pendingLongDelayedSetup
 bool shortStoredPullbackCandidateActive = delayedEntryMode and pendingShortDelayedSetup
@@ -1565,18 +2320,31 @@ bool shortMaxDistanceFromMidEmaPass = f_maxDistanceFromMidEmaPass(shortEntryPric
 bool longConfirmationMaxDistanceFromMidEmaPass = f_maxDistanceFromMidEmaPass(longConfirmationEntryPrice, ema20, atrValue)
 bool shortConfirmationMaxDistanceFromMidEmaPass = f_maxDistanceFromMidEmaPass(shortConfirmationEntryPrice, ema20, atrValue)
 
+float longBadLevelBlockerThreshold = f_badLevelBlockDistance(longRiskPoints, atrValue)
+float shortBadLevelBlockerThreshold = f_badLevelBlockDistance(shortRiskPoints, atrValue)
+float longConfirmationBadLevelBlockerThreshold = f_badLevelBlockDistance(longConfirmationRiskPoints, atrValue)
+float shortConfirmationBadLevelBlockerThreshold = f_badLevelBlockDistance(shortConfirmationRiskPoints, atrValue)
+bool longBadLevelBlockerBlocked = f_longHasNearbyOverheadBlocker(longEntryPrice, longRiskPoints, atrValue)
+bool shortBadLevelBlockerBlocked = f_shortHasNearbyDownsideBlocker(shortEntryPrice, shortRiskPoints, atrValue)
+bool longConfirmationBadLevelBlockerBlocked = f_longHasNearbyOverheadBlocker(longConfirmationEntryPrice, longConfirmationRiskPoints, atrValue)
+bool shortConfirmationBadLevelBlockerBlocked = f_shortHasNearbyDownsideBlocker(shortConfirmationEntryPrice, shortConfirmationRiskPoints, atrValue)
+bool longBadLevelBlockerPass = not longBadLevelBlockerBlocked
+bool shortBadLevelBlockerPass = not shortBadLevelBlockerBlocked
+bool longConfirmationBadLevelBlockerPass = not longConfirmationBadLevelBlockerBlocked
+bool shortConfirmationBadLevelBlockerPass = not shortConfirmationBadLevelBlockerBlocked
+
 bool longPullbackStructureGatePass = longCurrentBarIsPullbackStructure
 bool shortPullbackStructureGatePass = shortCurrentBarIsPullbackStructure
 
-bool longStandardSetupQualifies = canPlaceLongOrder and longOpeningRangeBiasPass and longContextPass and longLocationPass and longFinalEmaClosePass and longTouchedAcceptancePass and longMaxDistanceFromMidEmaPass and longTriggerQualityPass and longContracts >= 1
-bool shortStandardSetupQualifies = canPlaceShortOrder and shortOpeningRangeBiasPass and shortContextPass and shortLocationPass and shortFinalEmaClosePass and shortTouchedAcceptancePass and shortMaxDistanceFromMidEmaPass and shortTriggerQualityPass and shortContracts >= 1
-bool longStandardConfirmationQualifies = canPlaceLongOrder and longDelayedClosePass and longOpeningRangeBiasPass and longContextPass and longLocationPass and longFinalEmaClosePass and longTouchedAcceptancePass and longConfirmationMaxDistanceFromMidEmaPass and longConfirmationTriggerQualityPass and longConfirmationContracts >= 1
-bool shortStandardConfirmationQualifies = canPlaceShortOrder and shortDelayedClosePass and shortOpeningRangeBiasPass and shortContextPass and shortLocationPass and shortFinalEmaClosePass and shortTouchedAcceptancePass and shortConfirmationMaxDistanceFromMidEmaPass and shortConfirmationTriggerQualityPass and shortConfirmationContracts >= 1
+bool longStandardSetupQualifies = canPlaceLongOrder and longOpeningRangeBiasPass and longContextPass and longLocationPass and longFinalEmaClosePass and longTouchedAcceptancePass and longMaxDistanceFromMidEmaPass and longBadLevelBlockerPass and longTriggerQualityPass and longContracts >= 1
+bool shortStandardSetupQualifies = canPlaceShortOrder and shortOpeningRangeBiasPass and shortContextPass and shortLocationPass and shortFinalEmaClosePass and shortTouchedAcceptancePass and shortMaxDistanceFromMidEmaPass and shortBadLevelBlockerPass and shortTriggerQualityPass and shortContracts >= 1
+bool longStandardConfirmationQualifies = canPlaceLongOrder and longDelayedClosePass and longOpeningRangeBiasPass and longContextPass and longLocationPass and longFinalEmaClosePass and longTouchedAcceptancePass and longConfirmationMaxDistanceFromMidEmaPass and longConfirmationBadLevelBlockerPass and longConfirmationTriggerQualityPass and longConfirmationContracts >= 1
+bool shortStandardConfirmationQualifies = canPlaceShortOrder and shortDelayedClosePass and shortOpeningRangeBiasPass and shortContextPass and shortLocationPass and shortFinalEmaClosePass and shortTouchedAcceptancePass and shortConfirmationMaxDistanceFromMidEmaPass and shortConfirmationBadLevelBlockerPass and shortConfirmationTriggerQualityPass and shortConfirmationContracts >= 1
 
 bool longFiftyRejectionStackPass = f_geWithTolerance(ema9, ema20) and f_geWithTolerance(ema20, ema50)
 bool shortFiftyRejectionStackPass = f_leWithTolerance(ema9, ema20) and f_leWithTolerance(ema20, ema50)
-bool longFiftyRejectionContextPass = longFiftyRejectionStackPass and longEmaSlopePass and not longEmaChopBlocked
-bool shortFiftyRejectionContextPass = shortFiftyRejectionStackPass and shortEmaSlopePass and not shortEmaChopBlocked
+bool longFiftyRejectionContextPass = longFiftyRejectionStackPass and longEmaSlopePass and not longEmaChopBlocked and not twentyEmaCrossChopBlocked
+bool shortFiftyRejectionContextPass = shortFiftyRejectionStackPass and shortEmaSlopePass and not shortEmaChopBlocked and not twentyEmaCrossChopBlocked
 bool longFiftyRejectionLocationPass = f_directionalPriceInteraction(ema50, open, high, low, close, atrValue, proximityAtrMultiplier, true)
 bool shortFiftyRejectionLocationPass = f_directionalPriceInteraction(ema50, open, high, low, close, atrValue, proximityAtrMultiplier, false)
 bool longFiftyRejectionCleanPullback = not na(ema9) and not na(ema20) and high < math.min(ema9, ema20) - tickSize * 0.05
@@ -1585,10 +2353,10 @@ bool longFiftyRejectionTriggerQualityPass = not na(atrValue) and barRange <= atr
 bool shortFiftyRejectionTriggerQualityPass = not na(atrValue) and barRange <= atrValue * maxTriggerBarAtrMultiplier and not closeInTopQuarter and shortRiskPass
 bool longFiftyRejectionConfirmationQualityPass = not na(atrValue) and barRange <= atrValue * maxTriggerBarAtrMultiplier and not closeInBottomQuarter and longConfirmationRiskPass
 bool shortFiftyRejectionConfirmationQualityPass = not na(atrValue) and barRange <= atrValue * maxTriggerBarAtrMultiplier and not closeInTopQuarter and shortConfirmationRiskPass
-bool longFiftyRejectionSetupQualifies = useFiftyEmaRejectionSetup and canPlaceLongOrder and longOpeningRangeBiasPass and longFiftyRejectionContextPass and longFiftyRejectionLocationPass and longFiftyRejectionCleanPullback and longTouchedAcceptancePass and longMaxDistanceFromMidEmaPass and longFiftyRejectionTriggerQualityPass and longContracts >= 1
-bool shortFiftyRejectionSetupQualifies = useFiftyEmaRejectionSetup and canPlaceShortOrder and shortOpeningRangeBiasPass and shortFiftyRejectionContextPass and shortFiftyRejectionLocationPass and shortFiftyRejectionCleanPullback and shortTouchedAcceptancePass and shortMaxDistanceFromMidEmaPass and shortFiftyRejectionTriggerQualityPass and shortContracts >= 1
-bool longFiftyRejectionConfirmationQualifies = useFiftyEmaRejectionSetup and canPlaceLongOrder and longDelayedClosePass and longOpeningRangeBiasPass and longFiftyRejectionContextPass and longFiftyRejectionLocationPass and longFiftyRejectionCleanPullback and longTouchedAcceptancePass and longConfirmationMaxDistanceFromMidEmaPass and longFiftyRejectionConfirmationQualityPass and longConfirmationContracts >= 1
-bool shortFiftyRejectionConfirmationQualifies = useFiftyEmaRejectionSetup and canPlaceShortOrder and shortDelayedClosePass and shortOpeningRangeBiasPass and shortFiftyRejectionContextPass and shortFiftyRejectionLocationPass and shortFiftyRejectionCleanPullback and shortTouchedAcceptancePass and shortConfirmationMaxDistanceFromMidEmaPass and shortFiftyRejectionConfirmationQualityPass and shortConfirmationContracts >= 1
+bool longFiftyRejectionSetupQualifies = useFiftyEmaRejectionSetup and canPlaceLongOrder and longOpeningRangeBiasPass and longFiftyRejectionContextPass and longFiftyRejectionLocationPass and longFiftyRejectionCleanPullback and longTouchedAcceptancePass and longMaxDistanceFromMidEmaPass and longBadLevelBlockerPass and longFiftyRejectionTriggerQualityPass and longContracts >= 1
+bool shortFiftyRejectionSetupQualifies = useFiftyEmaRejectionSetup and canPlaceShortOrder and shortOpeningRangeBiasPass and shortFiftyRejectionContextPass and shortFiftyRejectionLocationPass and shortFiftyRejectionCleanPullback and shortTouchedAcceptancePass and shortMaxDistanceFromMidEmaPass and shortBadLevelBlockerPass and shortFiftyRejectionTriggerQualityPass and shortContracts >= 1
+bool longFiftyRejectionConfirmationQualifies = useFiftyEmaRejectionSetup and canPlaceLongOrder and longDelayedClosePass and longOpeningRangeBiasPass and longFiftyRejectionContextPass and longFiftyRejectionLocationPass and longFiftyRejectionCleanPullback and longTouchedAcceptancePass and longConfirmationMaxDistanceFromMidEmaPass and longConfirmationBadLevelBlockerPass and longFiftyRejectionConfirmationQualityPass and longConfirmationContracts >= 1
+bool shortFiftyRejectionConfirmationQualifies = useFiftyEmaRejectionSetup and canPlaceShortOrder and shortDelayedClosePass and shortOpeningRangeBiasPass and shortFiftyRejectionContextPass and shortFiftyRejectionLocationPass and shortFiftyRejectionCleanPullback and shortTouchedAcceptancePass and shortConfirmationMaxDistanceFromMidEmaPass and shortConfirmationBadLevelBlockerPass and shortFiftyRejectionConfirmationQualityPass and shortConfirmationContracts >= 1
 
 bool longAnySetupQualifies = longStandardSetupQualifies or longFiftyRejectionSetupQualifies
 bool shortAnySetupQualifies = shortStandardSetupQualifies or shortFiftyRejectionSetupQualifies
@@ -1622,6 +2390,18 @@ bool longDebugMaxDistanceFromMidEmaPass = longFirstBreakAttempted ? longConfirma
 bool shortDebugMaxDistanceFromMidEmaPass = shortFirstBreakAttempted ? shortConfirmationMaxDistanceFromMidEmaPass : shortMaxDistanceFromMidEmaPass
 float longDebugDistanceFromMidEma = longFirstBreakAttempted ? longConfirmationDistanceFromMidEma : longDistanceFromMidEma
 float shortDebugDistanceFromMidEma = shortFirstBreakAttempted ? shortConfirmationDistanceFromMidEma : shortDistanceFromMidEma
+bool longDebugBadLevelBlockerBlocked = longFirstBreakAttempted ? longConfirmationBadLevelBlockerBlocked : longBadLevelBlockerBlocked
+bool shortDebugBadLevelBlockerBlocked = shortFirstBreakAttempted ? shortConfirmationBadLevelBlockerBlocked : shortBadLevelBlockerBlocked
+bool longDebugBadLevelBlockerPass = not longDebugBadLevelBlockerBlocked
+bool shortDebugBadLevelBlockerPass = not shortDebugBadLevelBlockerBlocked
+float longDebugBadLevelBlockerThreshold = longFirstBreakAttempted ? longConfirmationBadLevelBlockerThreshold : longBadLevelBlockerThreshold
+float shortDebugBadLevelBlockerThreshold = shortFirstBreakAttempted ? shortConfirmationBadLevelBlockerThreshold : shortBadLevelBlockerThreshold
+
+if showBadLevelBlockerDebug and barstate.isconfirmed and canEvaluateSignals and useBadLevelContinuationBlocker
+    if (longCurrentBarIsPullbackStructure or longFirstBreakAttempted) and longDebugBadLevelBlockerBlocked
+        label.new(bar_index, high, "L blocked: nearby continuation obstacle\nEntry " + f_priceText(longFirstBreakAttempted ? longConfirmationEntryPrice : longEntryPrice) + "\nRisk " + f_pointsText(longDebugRiskPoints) + " Threshold " + f_pointsText(longDebugBadLevelBlockerThreshold), style=label.style_label_down, textcolor=color.white, color=color.new(color.red, 0), size=size.tiny)
+    if (shortCurrentBarIsPullbackStructure or shortFirstBreakAttempted) and shortDebugBadLevelBlockerBlocked
+        label.new(bar_index, low, "S blocked: nearby continuation obstacle\nEntry " + f_priceText(shortFirstBreakAttempted ? shortConfirmationEntryPrice : shortEntryPrice) + "\nRisk " + f_pointsText(shortDebugRiskPoints) + " Threshold " + f_pointsText(shortDebugBadLevelBlockerThreshold), style=label.style_label_up, textcolor=color.white, color=color.new(color.red, 0), size=size.tiny)
 
 // Stop-entry logic: a confirmed setup submits a buy stop one tick above the
 // trigger bar high, or a sell stop one tick below the trigger bar low.
@@ -1634,7 +2414,10 @@ if longDelayedConfirmationSetup
     longPendingRisk := longConfirmationRiskPoints
     longPendingOneRTarget := longConfirmationEntryPrice + longConfirmationRiskPoints
     longPendingContracts := longConfirmationContracts
+    longPendingRiskDollars := longPendingRisk * longPendingContracts * pointValue
     longPendingLocation := longConfirmationLocation
+    longPendingSetupType := longConfirmationSetupType
+    longPendingEntryMode := "Delayed"
     activeLongStop := longConfirmationStopPrice
     activeLongTarget := longConfirmationTargetPrice
     longSetupPlacedEvent := true
@@ -1666,7 +2449,10 @@ if shortDelayedConfirmationSetup and (not onlyOneActiveTradeOrOrder or not longP
     shortPendingRisk := shortConfirmationRiskPoints
     shortPendingOneRTarget := shortConfirmationEntryPrice - shortConfirmationRiskPoints
     shortPendingContracts := shortConfirmationContracts
+    shortPendingRiskDollars := shortPendingRisk * shortPendingContracts * pointValue
     shortPendingLocation := shortConfirmationLocation
+    shortPendingSetupType := shortConfirmationSetupType
+    shortPendingEntryMode := "Delayed"
     activeShortStop := shortConfirmationStopPrice
     activeShortTarget := shortConfirmationTargetPrice
     shortSetupPlacedEvent := true
@@ -1701,7 +2487,10 @@ if longImmediateCanStillPlace
     longPendingRisk := longRiskPoints
     longPendingOneRTarget := longEntryPrice + longRiskPoints
     longPendingContracts := longContracts
+    longPendingRiskDollars := longPendingRisk * longPendingContracts * pointValue
     longPendingLocation := longSetupLocation
+    longPendingSetupType := longSetupType
+    longPendingEntryMode := "Immediate"
     activeLongStop := longStopPrice
     activeLongTarget := longTargetPrice
     longSetupPlacedEvent := true
@@ -1733,7 +2522,10 @@ if shortImmediateCanStillPlace and (not onlyOneActiveTradeOrOrder or not longPen
     shortPendingRisk := shortRiskPoints
     shortPendingOneRTarget := shortEntryPrice - shortRiskPoints
     shortPendingContracts := shortContracts
+    shortPendingRiskDollars := shortPendingRisk * shortPendingContracts * pointValue
     shortPendingLocation := shortSetupLocation
+    shortPendingSetupType := shortSetupType
+    shortPendingEntryMode := "Immediate"
     activeShortStop := shortStopPrice
     activeShortTarget := shortTargetPrice
     shortSetupPlacedEvent := true
@@ -1763,6 +2555,9 @@ if longFirstBreakAttempted and not longSetupPlacedEvent
     pendingLongDelayedBreakPrice := na
     pendingLongPullbackSwingLow := na
     pendingLongDelayedLocation := "N/A"
+    if not longPendingOrder
+        longPendingSetupType := "N/A"
+        longPendingEntryMode := "N/A"
     if not longSetupPlacedEvent and not shortSetupPlacedEvent
         lastSignalReason := longFirstBreakFailed ? "Long first-break failed" : "Long first-break blocked"
 
@@ -1773,6 +2568,9 @@ if shortFirstBreakAttempted and not shortSetupPlacedEvent
     pendingShortDelayedBreakPrice := na
     pendingShortPullbackSwingHigh := na
     pendingShortDelayedLocation := "N/A"
+    if not shortPendingOrder
+        shortPendingSetupType := "N/A"
+        shortPendingEntryMode := "N/A"
     if not longSetupPlacedEvent and not shortSetupPlacedEvent
         lastSignalReason := shortFirstBreakFailed ? "Short first-break failed" : "Short first-break blocked"
 
@@ -2018,11 +2816,11 @@ plot(ema9, "EMA 9", color=color.new(color.yellow, 0), linewidth=1)
 plot(ema20, "EMA 20", color=color.new(color.orange, 0), linewidth=2)
 plot(ema50, "EMA 50", color=color.new(color.red, 0), linewidth=2)
 
-plot(showLevels and inRthSession ? activePrevDayHigh : na, "RTH Previous Day High", color=majorHighLevelColor, linewidth=2, style=plot.style_linebr)
-plot(showLevels and inRthSession ? activePrevDayLow : na, "RTH Previous Day Low", color=majorLowLevelColor, linewidth=2, style=plot.style_linebr)
-plot(showLevels and (inPremarketSession or inRthSession) ? (inPremarketSession ? autoPremarketHigh : activePremarketHigh) : na, "Premarket High", color=premarketLevelColor, linewidth=1, style=plot.style_linebr)
-plot(showLevels and (inPremarketSession or inRthSession) ? (inPremarketSession ? autoPremarketLow : activePremarketLow) : na, "Premarket Low", color=premarketLevelColor, linewidth=1, style=plot.style_linebr)
-plot(showLevels and inRthSession ? activeRthOpen : na, "RTH Open", color=openLevelColor, linewidth=2, style=plot.style_linebr)
+plot(showLevels and inRthSession ? basePrevDayHigh : na, "RTH Previous Day High", color=majorHighLevelColor, linewidth=2, style=plot.style_linebr)
+plot(showLevels and inRthSession ? basePrevDayLow : na, "RTH Previous Day Low", color=majorLowLevelColor, linewidth=2, style=plot.style_linebr)
+plot(showLevels and (inPremarketSession or inRthSession) ? (inPremarketSession ? autoPremarketHigh : basePremarketHigh) : na, "Premarket High", color=premarketLevelColor, linewidth=1, style=plot.style_linebr)
+plot(showLevels and (inPremarketSession or inRthSession) ? (inPremarketSession ? autoPremarketLow : basePremarketLow) : na, "Premarket Low", color=premarketLevelColor, linewidth=1, style=plot.style_linebr)
+plot(showLevels and inRthSession ? baseRthOpen : na, "RTH Open", color=openLevelColor, linewidth=2, style=plot.style_linebr)
 plot(showOpeningRange and inRthSession ? openingRangeDisplayHigh : na, "15m Opening Range High", color=openingRangeHighColor, linewidth=1, style=plot.style_linebr)
 plot(showOpeningRange and inRthSession ? openingRangeDisplayLow : na, "15m Opening Range Low", color=openingRangeLowColor, linewidth=1, style=plot.style_linebr)
 
@@ -2067,14 +2865,120 @@ f_addStatusRow(table _table, int _row, string _name, string _value, color _value
     table.cell(_table, 1, _row, _value, text_color=_valueColor, bgcolor=rowBg, text_size=size.tiny, text_halign=text.align_right)
     _row + 1
 
-var table debugTable = table.new(position.bottom_right, 2, 90, bgcolor=color.new(color.black, 85), border_width=0)
+f_addExcursionSection(table _table, int _row, string _title) =>
+    color sectionBg = color.rgb(35, 35, 35)
+    table.cell(_table, 0, _row, _title, text_color=color.white, bgcolor=sectionBg, text_size=size.tiny, text_halign=text.align_left)
+    for col = 1 to 6
+        table.cell(_table, col, _row, "", text_color=color.white, bgcolor=sectionBg, text_size=size.tiny)
+    _row + 1
+
+f_addExcursionMetricRow(table _table, int _row, string _name, string _value, color _valueColor) =>
+    color rowBg = color.new(color.black, 84)
+    table.cell(_table, 0, _row, _name, text_color=color.rgb(190, 190, 190), bgcolor=rowBg, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(_table, 1, _row, _value, text_color=_valueColor, bgcolor=rowBg, text_size=size.tiny, text_halign=text.align_right)
+    for col = 2 to 6
+        table.cell(_table, col, _row, "", text_color=color.rgb(220, 220, 220), bgcolor=rowBg, text_size=size.tiny)
+    _row + 1
+
+f_addExcursionStatsHeader(table _table, int _row, bool _showHit3) =>
+    color headerBg = color.new(color.black, 72)
+    table.cell(_table, 0, _row, "Bucket", text_color=color.white, bgcolor=headerBg, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(_table, 1, _row, "Records", text_color=color.white, bgcolor=headerBg, text_size=size.tiny, text_halign=text.align_right)
+    table.cell(_table, 2, _row, "Avg MFE", text_color=color.white, bgcolor=headerBg, text_size=size.tiny, text_halign=text.align_right)
+    table.cell(_table, 3, _row, "Avg MAE", text_color=color.white, bgcolor=headerBg, text_size=size.tiny, text_halign=text.align_right)
+    table.cell(_table, 4, _row, "Final R", text_color=color.white, bgcolor=headerBg, text_size=size.tiny, text_halign=text.align_right)
+    table.cell(_table, 5, _row, "Hit 1/1.5", text_color=color.white, bgcolor=headerBg, text_size=size.tiny, text_halign=text.align_right)
+    table.cell(_table, 6, _row, _showHit3 ? "Hit 2/3" : "Hit 2", text_color=color.white, bgcolor=headerBg, text_size=size.tiny, text_halign=text.align_right)
+    _row + 1
+
+f_addExcursionStatsRow(table _table, int _row, string _name, int _count, float _sumMfe, float _sumMae, float _sumFinalExit, int _hit10, int _hit15, int _hit20, int _hit30, bool _showHit3) =>
+    color rowBg = _count > 0 ? color.new(color.black, 84) : color.new(color.black, 90)
+    color valueColor = _count > 0 ? color.rgb(220, 220, 220) : color.rgb(150, 150, 150)
+    string hit10And15Text = f_pctText(f_pct(_hit10, _count)) + " / " + f_pctText(f_pct(_hit15, _count))
+    string hit20And30Text = _showHit3 ? f_pctText(f_pct(_hit20, _count)) + " / " + f_pctText(f_pct(_hit30, _count)) : f_pctText(f_pct(_hit20, _count))
+    table.cell(_table, 0, _row, _name, text_color=color.rgb(190, 190, 190), bgcolor=rowBg, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(_table, 1, _row, str.tostring(_count), text_color=valueColor, bgcolor=rowBg, text_size=size.tiny, text_halign=text.align_right)
+    table.cell(_table, 2, _row, f_rText(f_avg(_sumMfe, _count)), text_color=valueColor, bgcolor=rowBg, text_size=size.tiny, text_halign=text.align_right)
+    table.cell(_table, 3, _row, f_rText(f_avg(_sumMae, _count)), text_color=valueColor, bgcolor=rowBg, text_size=size.tiny, text_halign=text.align_right)
+    table.cell(_table, 4, _row, f_rText(f_avg(_sumFinalExit, _count)), text_color=valueColor, bgcolor=rowBg, text_size=size.tiny, text_halign=text.align_right)
+    table.cell(_table, 5, _row, hit10And15Text, text_color=valueColor, bgcolor=rowBg, text_size=size.tiny, text_halign=text.align_right)
+    table.cell(_table, 6, _row, hit20And30Text, text_color=valueColor, bgcolor=rowBg, text_size=size.tiny, text_halign=text.align_right)
+    _row + 1
+
+var table debugTable = table.new(position.bottom_right, 2, 120, bgcolor=color.new(color.black, 85), border_width=0)
 var table timeframeWarningTable = table.new(position.top_right, 1, 1, bgcolor=color.new(color.black, 85), border_width=1)
+var table excursionStatsTable = table.new(position.bottom_left, 7, 60, bgcolor=color.new(color.black, 86), border_width=0)
 
 if barstate.islast
     if isFiveMinuteChart
         table.cell(timeframeWarningTable, 0, 0, "", text_color=color.new(color.white, 100), bgcolor=color.new(color.black, 100), text_size=size.tiny)
     else
         table.cell(timeframeWarningTable, 0, 0, "Warning: designed for 5-minute ES/NQ/MES/MNQ charts", text_color=color.white, bgcolor=color.rgb(145, 0, 0), text_size=size.small)
+
+    table.clear(excursionStatsTable, 0, 0, 6, 59)
+    if showExcursionStats
+        int excursionRow = 0
+        excursionRow := f_addExcursionSection(excursionStatsTable, excursionRow, "MFE / MAE Closed Trade Records")
+        if excursionCompletedTrades == 0
+            excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Status", "No completed MFE records counted yet", color.yellow)
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Closed trade records seen", str.tostring(excursionClosedTradeRecordsSeen), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "MFE records counted", str.tostring(excursionCompletedTrades), excursionCompletedTrades > 0 ? color.lime : color.yellow)
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Invalid risk records", str.tostring(excursionInvalidTrades), excursionInvalidTrades > 0 ? color.yellow : color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Fallback risk records", str.tostring(excursionFallbackRiskTrades), excursionFallbackRiskTrades > 0 ? color.yellow : color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Active metadata records", str.tostring(excursionActiveMetadataTrades), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Fallback metadata records", str.tostring(excursionFallbackMetadataTrades), excursionFallbackMetadataTrades > 0 ? color.yellow : color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Avg MFE", f_rText(f_avg(excursionSumMfeR, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Avg MAE", f_rText(f_avg(excursionSumMaeR, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Avg Final R", f_rText(f_avg(excursionSumFinalExitR, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Avg Bars Held", f_numText(f_avg(excursionSumBarsHeld, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Hit 0.5R", f_pctText(f_pct(excursionHitMfe05, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Hit 1R", f_pctText(f_pct(excursionHitMfe10, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Hit 1.25R", f_pctText(f_pct(excursionHitMfe125, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Hit 1.5R", f_pctText(f_pct(excursionHitMfe15, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Hit 2R", f_pctText(f_pct(excursionHitMfe20, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Hit 2.5R", f_pctText(f_pct(excursionHitMfe25, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Hit 3R", f_pctText(f_pct(excursionHitMfe30, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "Hit 4R", f_pctText(f_pct(excursionHitMfe40, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "MAE >= 0.5R", f_pctText(f_pct(excursionHitMae05, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "MAE >= 1R", f_pctText(f_pct(excursionHitMae10, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "1R but not 1.5R", f_pctText(f_pct(excursionMfe10To15, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "1.5R but not 2R", f_pctText(f_pct(excursionMfe15To20, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "2R but not 3R", f_pctText(f_pct(excursionMfe20To30, excursionCompletedTrades)), color.rgb(220, 220, 220))
+        excursionRow := f_addExcursionMetricRow(excursionStatsTable, excursionRow, "3R+", f_pctText(f_pct(excursionMfe30Plus, excursionCompletedTrades)), color.rgb(220, 220, 220))
+
+        if showDirectionBreakdown
+            excursionRow := f_addExcursionSection(excursionStatsTable, excursionRow, "Direction")
+            excursionRow := f_addExcursionStatsHeader(excursionStatsTable, excursionRow, true)
+            excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "Long", excursionLongCount, excursionLongSumMfeR, excursionLongSumMaeR, excursionLongSumFinalExitR, excursionLongHit10, excursionLongHit15, excursionLongHit20, excursionLongHit30, true)
+            excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "Short", excursionShortCount, excursionShortSumMfeR, excursionShortSumMaeR, excursionShortSumFinalExitR, excursionShortHit10, excursionShortHit15, excursionShortHit20, excursionShortHit30, true)
+
+        if showSetupBreakdown
+            excursionRow := f_addExcursionSection(excursionStatsTable, excursionRow, "Setup")
+            excursionRow := f_addExcursionStatsHeader(excursionStatsTable, excursionRow, true)
+            excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "STD", excursionStdCount, excursionStdSumMfeR, excursionStdSumMaeR, excursionStdSumFinalExitR, excursionStdHit10, excursionStdHit15, excursionStdHit20, excursionStdHit30, true)
+            excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "50R", excursionFiftyCount, excursionFiftySumMfeR, excursionFiftySumMaeR, excursionFiftySumFinalExitR, excursionFiftyHit10, excursionFiftyHit15, excursionFiftyHit20, excursionFiftyHit30, true)
+            excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "N/A", excursionSetupNaCount, excursionSetupNaSumMfeR, excursionSetupNaSumMaeR, excursionSetupNaSumFinalExitR, excursionSetupNaHit10, excursionSetupNaHit15, excursionSetupNaHit20, excursionSetupNaHit30, true)
+
+        excursionRow := f_addExcursionSection(excursionStatsTable, excursionRow, "Entry Mode")
+        excursionRow := f_addExcursionStatsHeader(excursionStatsTable, excursionRow, true)
+        excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "Immediate", excursionImmediateCount, excursionImmediateSumMfeR, excursionImmediateSumMaeR, excursionImmediateSumFinalExitR, excursionImmediateHit10, excursionImmediateHit15, excursionImmediateHit20, excursionImmediateHit30, true)
+        excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "Delayed", excursionDelayedCount, excursionDelayedSumMfeR, excursionDelayedSumMaeR, excursionDelayedSumFinalExitR, excursionDelayedHit10, excursionDelayedHit15, excursionDelayedHit20, excursionDelayedHit30, true)
+        excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "N/A", excursionEntryNaCount, excursionEntryNaSumMfeR, excursionEntryNaSumMaeR, excursionEntryNaSumFinalExitR, excursionEntryNaHit10, excursionEntryNaHit15, excursionEntryNaHit20, excursionEntryNaHit30, true)
+
+        if showLocationBreakdown and excursionTableMode == "Full"
+            excursionRow := f_addExcursionSection(excursionStatsTable, excursionRow, "Location")
+            excursionRow := f_addExcursionStatsHeader(excursionStatsTable, excursionRow, false)
+            excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "9EMA", loc9Count, loc9SumMfeR, loc9SumMaeR, loc9SumFinalExitR, loc9Hit10, loc9Hit15, loc9Hit20, 0, false)
+            excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "20EMA", loc20Count, loc20SumMfeR, loc20SumMaeR, loc20SumFinalExitR, loc20Hit10, loc20Hit15, loc20Hit20, 0, false)
+            excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "50EMA", loc50Count, loc50SumMfeR, loc50SumMaeR, loc50SumFinalExitR, loc50Hit10, loc50Hit15, loc50Hit20, 0, false)
+            excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "ORH", locOrhCount, locOrhSumMfeR, locOrhSumMaeR, locOrhSumFinalExitR, locOrhHit10, locOrhHit15, locOrhHit20, 0, false)
+            excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "ORL", locOrlCount, locOrlSumMfeR, locOrlSumMaeR, locOrlSumFinalExitR, locOrlHit10, locOrlHit15, locOrlHit20, 0, false)
+            excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "PDH", locPdhCount, locPdhSumMfeR, locPdhSumMaeR, locPdhSumFinalExitR, locPdhHit10, locPdhHit15, locPdhHit20, 0, false)
+            excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "PDL", locPdlCount, locPdlSumMfeR, locPdlSumMaeR, locPdlSumFinalExitR, locPdlHit10, locPdlHit15, locPdlHit20, 0, false)
+            excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "PMH", locPmhCount, locPmhSumMfeR, locPmhSumMaeR, locPmhSumFinalExitR, locPmhHit10, locPmhHit15, locPmhHit20, 0, false)
+            excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "PML", locPmlCount, locPmlSumMfeR, locPmlSumMaeR, locPmlSumFinalExitR, locPmlHit10, locPmlHit15, locPmlHit20, 0, false)
+            excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "RTH Open", locRthOpenCount, locRthOpenSumMfeR, locRthOpenSumMaeR, locRthOpenSumFinalExitR, locRthOpenHit10, locRthOpenHit15, locRthOpenHit20, 0, false)
+            excursionRow := f_addExcursionStatsRow(excursionStatsTable, excursionRow, "Other/N/A", locOtherCount, locOtherSumMfeR, locOtherSumMaeR, locOtherSumFinalExitR, locOtherHit10, locOtherHit15, locOtherHit20, 0, false)
 
     if showDebugTable
         bool currentAnyPendingOrder = longPendingOrder or shortPendingOrder
@@ -2103,6 +3007,11 @@ if barstate.islast
         string managementStateText = managementMode + (strategy.position_size > 0 ? " L eligible " + f_boolText(activeLongTrimManagementEligible) : strategy.position_size < 0 ? " S eligible " + f_boolText(activeShortTrimManagementEligible) : "")
         string exitSubmittedText = strategy.position_size > 0 ? "F " + f_boolText(longFixedExitSubmitted) + " T " + f_boolText(longTrimExitSubmitted) + " R " + f_boolText(longRunnerExitSubmitted) : strategy.position_size < 0 ? "F " + f_boolText(shortFixedExitSubmitted) + " T " + f_boolText(shortTrimExitSubmitted) + " R " + f_boolText(shortRunnerExitSubmitted) : "Flat"
         string pendingCancelDebugText = "Win " + f_boolText(pendingCancelledOutsideWindow) + " Sess " + f_boolText(pendingCancelledNewSession) + " RTH " + f_boolText(pendingCancelledRthFlatten)
+        string touchedEmaCloseText = "9 " + f_boolText(longTouchedEma9ForClose) + " / 20 " + f_boolText(longTouchedEma20ForClose) + " / 50 " + f_boolText(longTouchedEma50ForClose)
+        string closeBeyondAllText = f_pairBoolText(longCloseBeyondAllRequiredEmas, shortCloseBeyondAllRequiredEmas)
+        string closeBeyondTouchedText = f_pairBoolText(longCloseBeyondTouchedEmasOnly, shortCloseBeyondTouchedEmasOnly)
+        string badLevelBlockerText = "L " + f_boolText(longDebugBadLevelBlockerBlocked) + " / S " + f_boolText(shortDebugBadLevelBlockerBlocked)
+        string badLevelThresholdText = "L " + f_pointsText(longDebugBadLevelBlockerThreshold) + " / S " + f_pointsText(shortDebugBadLevelBlockerThreshold)
         int row = 0
         table.cell(debugTable, 0, row, "EMA LPB Status", text_color=color.white, bgcolor=color.rgb(35, 35, 35), text_size=size.tiny, text_halign=text.align_left)
         table.cell(debugTable, 1, row, syminfo.ticker + " " + timeframe.period, text_color=color.white, bgcolor=color.rgb(35, 35, 35), text_size=size.tiny, text_halign=text.align_right)
@@ -2119,6 +3028,11 @@ if barstate.islast
         row := f_addStatusRow(debugTable, row, "OR Entry Levels", f_boolText(useOpeningRangeLevelsForEntries), useOpeningRangeLevelsForEntries ? color.lime : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Can Place", f_pairBoolText(canPlaceLongOrder, canPlaceShortOrder), f_pairBoolColor(canPlaceLongOrder, canPlaceShortOrder))
         row := f_addStatusRow(debugTable, row, "Context", f_pairBoolText(longContextPass, shortContextPass), f_pairBoolColor(longContextPass, shortContextPass))
+        row := f_addStatusRow(debugTable, row, "EMA Close Requirement Mode", emaCloseRequirementMode, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Touched EMA Close Lookback", str.tostring(emaTouchedCloseLookbackBars), color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Touched 9/20/50 For Close", touchedEmaCloseText, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Close Beyond All EMAs", closeBeyondAllText, f_pairBoolColor(longCloseBeyondAllRequiredEmas, shortCloseBeyondAllRequiredEmas))
+        row := f_addStatusRow(debugTable, row, "Close Beyond Touched EMAs", closeBeyondTouchedText, f_pairBoolColor(longCloseBeyondTouchedEmasOnly, shortCloseBeyondTouchedEmasOnly))
         row := f_addStatusRow(debugTable, row, "Final EMA Close", f_pairBoolText(longFinalEmaClosePass, shortFinalEmaClosePass), f_pairBoolColor(longFinalEmaClosePass, shortFinalEmaClosePass))
         row := f_addStatusRow(debugTable, row, "Fast/Mid Stack", f_pairBoolText(longFastEmaStackPass, shortFastEmaStackPass), f_pairBoolColor(longFastEmaStackPass, shortFastEmaStackPass))
         row := f_addStatusRow(debugTable, row, "Fast/Slow Stack", f_pairBoolText(longFastSlowEmaStackPass, shortFastSlowEmaStackPass), f_pairBoolColor(longFastSlowEmaStackPass, shortFastSlowEmaStackPass))
@@ -2129,11 +3043,19 @@ if barstate.islast
         row := f_addStatusRow(debugTable, row, "EMA Compression", f_boolText(emaClusterCompression), emaClusterCompression ? color.yellow : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, emaChopOverlapSource + " Overlap Count Prior Bars", str.tostring(emaChopOverlapCount) + " / " + str.tostring(emaChopOverlapLookbackBars) + " req " + str.tostring(emaChopEffectiveRequiredOverlapBars), emaChopOverlapChopBlocked ? color.yellow : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "EMA Chop Blocked", f_pairBoolText(longEmaChopBlocked, shortEmaChopBlocked), not longEmaChopBlocked and not shortEmaChopBlocked ? color.lime : color.yellow)
+        row := f_addStatusRow(debugTable, row, "20 EMA Cross Chop Enabled", f_boolText(useTwentyEmaCrossChopFilter), useTwentyEmaCrossChopFilter ? color.yellow : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "20 EMA Close-Side Flips", str.tostring(twentyEmaCloseSideFlipCount), color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "20 EMA Bar Touch Count", str.tostring(twentyEmaBarTouchCount), color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "20 EMA Chop Event Count", str.tostring(twentyEmaCrossChopEventCount) + " / " + str.tostring(twentyEmaCrossChopMaxEvents), twentyEmaCrossChopBlocked ? color.yellow : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "20 EMA Cross Chop Blocked", f_boolText(twentyEmaCrossChopBlocked), twentyEmaCrossChopBlocked ? color.yellow : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Max Trigger ATR", f_pointsText(maxTriggerBarAtrMultiplier), color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Bar / ATR", f_pointsText(triggerBarAtrRatio), not na(triggerBarAtrRatio) and triggerBarAtrRatio <= maxTriggerBarAtrMultiplier ? color.lime : color.red)
         row := f_addStatusRow(debugTable, row, "Location", "L " + f_boolText(longLocationPass) + " " + longLocationName + " / S " + f_boolText(shortLocationPass) + " " + shortLocationName, f_pairBoolColor(longLocationPass, shortLocationPass))
         row := f_addStatusRow(debugTable, row, "Level Retest Refined", f_pairBoolText(longCleanLevelRetestPass, shortCleanLevelRetestPass), f_pairBoolColor(longCleanLevelRetestPass, shortCleanLevelRetestPass))
         row := f_addStatusRow(debugTable, row, "Touched Acceptance", f_pairBoolText(longTouchedAcceptancePass, shortTouchedAcceptancePass), f_pairBoolColor(longTouchedAcceptancePass, shortTouchedAcceptancePass))
+        row := f_addStatusRow(debugTable, row, "Bad Level Blocker", f_boolText(useBadLevelContinuationBlocker), useBadLevelContinuationBlocker ? color.yellow : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Bad Level Blocked", badLevelBlockerText, longDebugBadLevelBlockerBlocked or shortDebugBadLevelBlockerBlocked ? color.red : color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Bad Level Threshold", badLevelThresholdText, color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "9 EMA Location", fastEmaLocationText, allowFastEmaLocation ? f_pairBoolColor(longTouchedEma9, shortTouchedEma9) : color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "20 EMA Distance", "L " + f_pointsText(longDebugDistanceFromMidEma) + " / S " + f_pointsText(shortDebugDistanceFromMidEma), color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Max Dist From 20EMA", maxMidEmaDistanceText, useMaxDistanceFromMidEma ? f_pairBoolColor(longDebugMaxDistanceFromMidEmaPass, shortDebugMaxDistanceFromMidEmaPass) : color.rgb(220, 220, 220))
