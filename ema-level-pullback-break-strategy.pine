@@ -54,6 +54,8 @@ emaFastLength = input.int(9, "Fast EMA Length", minval=1, group=groupEmaTrend)
 emaMidLength = input.int(20, "Mid EMA Length", minval=1, group=groupEmaTrend)
 emaSlowLength = input.int(50, "Slow EMA Length", minval=1, group=groupEmaTrend)
 requireCloseBeyondFastEma = input.bool(true, "Require Close Beyond Fast EMA", group=groupEmaTrend)
+requireCloseBeyondMidEma = input.bool(true, "Require Close Beyond Mid EMA", group=groupEmaTrend)
+requireCloseBeyondSlowEma = input.bool(true, "Require Close Beyond Slow EMA", group=groupEmaTrend)
 emaCloseRequirementMode = input.string("Close Beyond All Required EMAs", "EMA Close Requirement Mode", options=["Close Beyond All Required EMAs", "Close Beyond Touched EMAs Only"], group=groupEmaTrend)
 emaTouchedCloseLookbackBars = input.int(1, "Touched EMA Close Lookback Bars", minval=1, maxval=2, group=groupEmaTrend)
 requireFastEmaBeyondMidEma = input.bool(true, "Require Fast EMA Beyond Mid EMA", group=groupEmaTrend)
@@ -661,12 +663,22 @@ longTouchedEma50ForClose = f_recentEmaTouched(ema50, emaTouchedCloseLookbackBars
 shortTouchedEma9ForClose = longTouchedEma9ForClose
 shortTouchedEma20ForClose = longTouchedEma20ForClose
 shortTouchedEma50ForClose = longTouchedEma50ForClose
-longCloseBeyondAllRequiredEmas = close > ema20 and close > ema50 and (not requireCloseBeyondFastEma or close > ema9)
-shortCloseBeyondAllRequiredEmas = close < ema20 and close < ema50 and (not requireCloseBeyondFastEma or close < ema9)
-longCloseBeyondTouchedEmasOnly = (not longTouchedEma20ForClose or close > ema20) and (not longTouchedEma50ForClose or close > ema50) and (not requireCloseBeyondFastEma or not longTouchedEma9ForClose or close > ema9)
-shortCloseBeyondTouchedEmasOnly = (not shortTouchedEma20ForClose or close < ema20) and (not shortTouchedEma50ForClose or close < ema50) and (not requireCloseBeyondFastEma or not shortTouchedEma9ForClose or close < ema9)
-longFinalEmaClosePass = emaCloseRequirementMode == "Close Beyond All Required EMAs" ? longCloseBeyondAllRequiredEmas : longCloseBeyondTouchedEmasOnly
-shortFinalEmaClosePass = emaCloseRequirementMode == "Close Beyond All Required EMAs" ? shortCloseBeyondAllRequiredEmas : shortCloseBeyondTouchedEmasOnly
+longRequiredEmaClosePass = (not requireCloseBeyondFastEma or close > ema9) and
+     (not requireCloseBeyondMidEma or close > ema20) and
+     (not requireCloseBeyondSlowEma or close > ema50)
+shortRequiredEmaClosePass = (not requireCloseBeyondFastEma or close < ema9) and
+     (not requireCloseBeyondMidEma or close < ema20) and
+     (not requireCloseBeyondSlowEma or close < ema50)
+longTouchedEmaClosePass = (not longTouchedEma9ForClose or close > ema9) and
+     (not longTouchedEma20ForClose or close > ema20) and
+     (not longTouchedEma50ForClose or close > ema50)
+shortTouchedEmaClosePass = (not shortTouchedEma9ForClose or close < ema9) and
+     (not shortTouchedEma20ForClose or close < ema20) and
+     (not shortTouchedEma50ForClose or close < ema50)
+longBaselineEmaClosePass = emaCloseRequirementMode == "Close Beyond All Required EMAs" ? longRequiredEmaClosePass : true
+shortBaselineEmaClosePass = emaCloseRequirementMode == "Close Beyond All Required EMAs" ? shortRequiredEmaClosePass : true
+longFinalEmaClosePass = longBaselineEmaClosePass and longTouchedEmaClosePass
+shortFinalEmaClosePass = shortBaselineEmaClosePass and shortTouchedEmaClosePass
 longFastEmaStackPass = not requireFastEmaBeyondMidEma or f_geWithTolerance(ema9, ema20)
 shortFastEmaStackPass = not requireFastEmaBeyondMidEma or f_leWithTolerance(ema9, ema20)
 longFastSlowEmaStackPass = not requireFastEmaBeyondSlowEma or f_geWithTolerance(ema9, ema50)
@@ -3008,8 +3020,9 @@ if barstate.islast
         string exitSubmittedText = strategy.position_size > 0 ? "F " + f_boolText(longFixedExitSubmitted) + " T " + f_boolText(longTrimExitSubmitted) + " R " + f_boolText(longRunnerExitSubmitted) : strategy.position_size < 0 ? "F " + f_boolText(shortFixedExitSubmitted) + " T " + f_boolText(shortTrimExitSubmitted) + " R " + f_boolText(shortRunnerExitSubmitted) : "Flat"
         string pendingCancelDebugText = "Win " + f_boolText(pendingCancelledOutsideWindow) + " Sess " + f_boolText(pendingCancelledNewSession) + " RTH " + f_boolText(pendingCancelledRthFlatten)
         string touchedEmaCloseText = "9 " + f_boolText(longTouchedEma9ForClose) + " / 20 " + f_boolText(longTouchedEma20ForClose) + " / 50 " + f_boolText(longTouchedEma50ForClose)
-        string closeBeyondAllText = f_pairBoolText(longCloseBeyondAllRequiredEmas, shortCloseBeyondAllRequiredEmas)
-        string closeBeyondTouchedText = f_pairBoolText(longCloseBeyondTouchedEmasOnly, shortCloseBeyondTouchedEmasOnly)
+        string requiredEmaCloseInputsText = "9 " + f_boolText(requireCloseBeyondFastEma) + " / 20 " + f_boolText(requireCloseBeyondMidEma) + " / 50 " + f_boolText(requireCloseBeyondSlowEma)
+        string requiredEmaCloseText = f_pairBoolText(longRequiredEmaClosePass, shortRequiredEmaClosePass)
+        string touchedEmaClosePassText = f_pairBoolText(longTouchedEmaClosePass, shortTouchedEmaClosePass)
         string badLevelBlockerText = "L " + f_boolText(longDebugBadLevelBlockerBlocked) + " / S " + f_boolText(shortDebugBadLevelBlockerBlocked)
         string badLevelThresholdText = "L " + f_pointsText(longDebugBadLevelBlockerThreshold) + " / S " + f_pointsText(shortDebugBadLevelBlockerThreshold)
         int row = 0
@@ -3029,10 +3042,11 @@ if barstate.islast
         row := f_addStatusRow(debugTable, row, "Can Place", f_pairBoolText(canPlaceLongOrder, canPlaceShortOrder), f_pairBoolColor(canPlaceLongOrder, canPlaceShortOrder))
         row := f_addStatusRow(debugTable, row, "Context", f_pairBoolText(longContextPass, shortContextPass), f_pairBoolColor(longContextPass, shortContextPass))
         row := f_addStatusRow(debugTable, row, "EMA Close Requirement Mode", emaCloseRequirementMode, color.rgb(220, 220, 220))
+        row := f_addStatusRow(debugTable, row, "Required EMA Close Inputs", requiredEmaCloseInputsText, color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Touched EMA Close Lookback", str.tostring(emaTouchedCloseLookbackBars), color.rgb(220, 220, 220))
         row := f_addStatusRow(debugTable, row, "Touched 9/20/50 For Close", touchedEmaCloseText, color.rgb(220, 220, 220))
-        row := f_addStatusRow(debugTable, row, "Close Beyond All EMAs", closeBeyondAllText, f_pairBoolColor(longCloseBeyondAllRequiredEmas, shortCloseBeyondAllRequiredEmas))
-        row := f_addStatusRow(debugTable, row, "Close Beyond Touched EMAs", closeBeyondTouchedText, f_pairBoolColor(longCloseBeyondTouchedEmasOnly, shortCloseBeyondTouchedEmasOnly))
+        row := f_addStatusRow(debugTable, row, "Required EMA Close Pass", requiredEmaCloseText, f_pairBoolColor(longRequiredEmaClosePass, shortRequiredEmaClosePass))
+        row := f_addStatusRow(debugTable, row, "Touched EMA Close Pass", touchedEmaClosePassText, f_pairBoolColor(longTouchedEmaClosePass, shortTouchedEmaClosePass))
         row := f_addStatusRow(debugTable, row, "Final EMA Close", f_pairBoolText(longFinalEmaClosePass, shortFinalEmaClosePass), f_pairBoolColor(longFinalEmaClosePass, shortFinalEmaClosePass))
         row := f_addStatusRow(debugTable, row, "Fast/Mid Stack", f_pairBoolText(longFastEmaStackPass, shortFastEmaStackPass), f_pairBoolColor(longFastEmaStackPass, shortFastEmaStackPass))
         row := f_addStatusRow(debugTable, row, "Fast/Slow Stack", f_pairBoolText(longFastSlowEmaStackPass, shortFastSlowEmaStackPass), f_pairBoolColor(longFastSlowEmaStackPass, shortFastSlowEmaStackPass))
